@@ -1,38 +1,90 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
     View,
     Text,
-    FlatList,
     StyleSheet,
-    TouchableOpacity,
-    RefreshControl,
     TextInput,
-    ActivityIndicator
+    TouchableOpacity,
+    FlatList,
+    ActivityIndicator,
+    ScrollView,
+    RefreshControl,
+    Dimensions,
+    Alert,
+    Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../context/ThemeContext";
-import { paymentAPI, pgAPI } from "../services/api";
-import { Feather } from "@expo/vector-icons";
+import { paymentAPI, pgAPI, tenantAPI, statsAPI } from "../services/api";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+
+const { width } = Dimensions.get("window");
+
+const COLORS = {
+    bg: "#0f172a",
+    card: "#1e293b",
+    primary: "#3b82f6",
+    success: "#10b981",
+    warning: "#f59e0b",
+    danger: "#ef4444",
+    text: "#ffffff",
+    textMuted: "#94a3b8",
+    border: "rgba(255,255,255,0.05)"
+};
 
 const PaymentsScreen = () => {
-    const { colors, isDark } = useTheme();
+    const { colors } = useTheme();
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [payments, setPayments] = useState<any[]>([]);
+    const [pgs, setPgs] = useState<any[]>([]);
+    const [stats, setStats] = useState({
+        totalReceived: 0,
+        outstandingDues: 0,
+        totalReceivable: 0,
+        collectionRate: 0
+    });
+    const animatedProgress = React.useRef(new Animated.Value(0)).current;
+
+    // Filters
     const [searchTerm, setSearchTerm] = useState("");
-    const [stats, setStats] = useState({ received: 0, pending: 0 });
+    const [selectedPg, setSelectedPg] = useState("ALL");
+    const [selectedStatus, setSelectedStatus] = useState("ALL");
+    const [selectedFilter, setSelectedFilter] = useState("ALL"); // Paid, Pending
+    const [showFilters, setShowFilters] = useState(false);
 
-    const fetchPayments = useCallback(async () => {
+    const fetchData = useCallback(async () => {
         try {
-            const data: any = await paymentAPI.getAll();
-            setPayments((data || []) as any[]);
+            setLoading(true);
+            const [paymentsRes, pgsRes, dashboardStatsRes]: any = await Promise.all([
+                paymentAPI.getAll(),
+                pgAPI.getAll(),
+                statsAPI.getDashboardStats()
+            ]);
 
-            // Calculate basic stats
-            const received = (data || []).filter((p: any) => p.status === 'COMPLETED' || p.status === 'PAID')
-                .reduce((sum: number, p: any) => sum + (p.amount || 0), 0);
-            setStats(prev => ({ ...prev, received }));
+            setPayments(paymentsRes || []);
+            setPgs(pgsRes || []);
+
+            const ds = dashboardStatsRes.data;
+            if (ds) {
+                const totalReceivable = ds.monthlyRevenue + ds.pendingDues;
+                const collectionRate = totalReceivable > 0 ? Math.round((ds.monthlyRevenue / totalReceivable) * 100) : 0;
+
+                setStats({
+                    totalReceived: ds.totalRevenue,
+                    outstandingDues: ds.pendingDues,
+                    totalReceivable: totalReceivable,
+                    collectionRate: collectionRate
+                });
+
+                Animated.timing(animatedProgress, {
+                    toValue: collectionRate,
+                    duration: 1000,
+                    useNativeDriver: false
+                }).start();
+            }
         } catch (error) {
-            console.error("Failed to fetch payments:", error);
+            console.error("Failed to fetch financial data:", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -40,180 +92,376 @@ const PaymentsScreen = () => {
     }, []);
 
     useEffect(() => {
-        fetchPayments();
-    }, [fetchPayments]);
+        fetchData();
+    }, [fetchData]);
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchPayments();
+        fetchData();
     };
 
-    const filteredPayments = payments.filter(p =>
-        (p.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (p.billing_month || "").toLowerCase().includes(searchTerm.toLowerCase())
-    );
+    const filteredPayments = useMemo(() => {
+        return payments.filter(p => {
+            const matchesSearch =
+                (p.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (p.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (p.billing_month || "").toLowerCase().includes(searchTerm.toLowerCase());
+
+            const matchesPg = selectedPg === "ALL" || p.pg_id === selectedPg;
+
+            const matchesStatus = selectedStatus === "ALL" || p.status === selectedStatus;
+
+            const matchesFilter =
+                selectedFilter === "ALL" ||
+                (selectedFilter === "PAID" && (p.status === "PAID" || p.status === "COMPLETED")) ||
+                (selectedFilter === "PENDING" && p.status === "PENDING");
+
+            return matchesSearch && matchesPg && matchesStatus && matchesFilter;
+        });
+    }, [payments, searchTerm, selectedPg, selectedStatus, selectedFilter]);
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
-            case 'COMPLETED':
-            case 'PAID': return '#10b981';
-            case 'PENDING': return '#f59e0b';
-            case 'FAILED': return '#ef4444';
-            default: return colors.textSecondary;
+            case 'PAID':
+            case 'COMPLETED': return COLORS.success;
+            case 'PENDING': return COLORS.warning;
+            case 'FAILED': return COLORS.danger;
+            default: return COLORS.textMuted;
         }
     };
 
+    const SummaryCard = ({ title, value, icon, color }: any) => (
+        <View style={[styles.summaryCard, { borderColor: color + "10" }]}>
+            <View style={[styles.summaryIcon, { backgroundColor: color + "10" }]}>
+                <MaterialCommunityIcons name={icon} size={18} color={color} />
+            </View>
+            <View>
+                <Text style={styles.summaryLabel}>{title}</Text>
+                <Text style={[styles.summaryValue, { color: COLORS.text }]}>₹{Number(value).toLocaleString()}</Text>
+            </View>
+        </View>
+    );
+
     const renderPaymentItem = ({ item }: { item: any }) => (
-        <TouchableOpacity
-            style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-        >
-            <View style={styles.cardHeader}>
-                <View style={[styles.typeBadge, { backgroundColor: colors.primary + '15' }]}>
-                    <Text style={[styles.typeText, { color: colors.primary }]}>{item.type}</Text>
+        <TouchableOpacity style={styles.paymentCard}>
+            <View style={styles.paymentHeader}>
+                <View style={styles.headerLeft}>
+                    <Text style={styles.residentName} numberOfLines={1}>{item.tenants?.full_name || "Unknown Resident"}</Text>
+                    <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + "15" }]}>
+                        <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
+                        <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+                    </View>
                 </View>
-                <Text style={[styles.amount, { color: colors.text }]}>₹{(item.amount || 0).toLocaleString()}</Text>
+                <View style={styles.amountContainer}>
+                    <Text style={styles.paymentAmount}>₹{Number(item.amount || 0).toLocaleString()}</Text>
+                </View>
             </View>
 
-            <Text style={[styles.tenantName, { color: colors.text }]}>
-                {item.tenants?.full_name || "Unknown Resident"}
-            </Text>
-
-            <View style={styles.infoRow}>
-                <Feather name="calendar" size={14} color={colors.textSecondary} />
-                <Text style={[styles.infoText, { color: colors.textSecondary }]}>
-                    {item.payment_date || item.billing_month || "N/A"}
-                </Text>
-                <View style={styles.dot} />
-                <Text style={[styles.infoText, { color: colors.textSecondary }]}>{item.payment_method}</Text>
-            </View>
-
-            <View style={styles.footer}>
-                <View style={styles.propertyRow}>
-                    <Feather name="home" size={12} color={colors.textSecondary} />
-                    <Text style={[styles.propertyText, { color: colors.textSecondary }]}>
-                        {item.pgs?.name || "N/A"}
+            <View style={styles.paymentContent}>
+                <View style={[styles.infoRow, { marginBottom: 12 }]}>
+                    <Feather name="map-pin" size={12} color={COLORS.textMuted} />
+                    <Text style={styles.infoText} numberOfLines={1}>
+                        {item.pgs?.name || "N/A"} • Room {item.tenants?.rooms?.room_number || "N/A"}
+                        {item.tenants?.beds?.bed_number ? ` (${item.tenants.beds.bed_number})` : ""}
                     </Text>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '15' }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+
+                <View style={styles.infoGrid}>
+                    <View style={styles.gridItem}>
+                        <Text style={styles.gridLabel}>BILLING PERIOD</Text>
+                        <View style={styles.gridValueRow}>
+                            <Feather name="calendar" size={12} color={COLORS.textMuted} style={{ marginRight: 6 }} />
+                            <Text style={styles.gridValue}>{item.billing_month || "N/A"}</Text>
+                        </View>
+                    </View>
+                    <View style={styles.gridItem}>
+                        <Text style={styles.gridLabel}>JOINING DATE</Text>
+                        <View style={styles.gridValueRow}>
+                            <Feather name="user-plus" size={12} color={COLORS.textMuted} style={{ marginRight: 6 }} />
+                            <Text style={styles.gridValue}>
+                                {item.tenants?.move_in_date ? new Date(item.tenants.move_in_date).toLocaleDateString() : "N/A"}
+                            </Text>
+                        </View>
+                    </View>
                 </View>
+            </View>
+
+            <View style={styles.paymentFooter}>
+                <TouchableOpacity style={styles.editButton}>
+                    <Feather name="edit-2" size={14} color={COLORS.primary} />
+                    <Text style={styles.editButtonText}>Edit</Text>
+                </TouchableOpacity>
+                {item.reservation_id && (
+                    <TouchableOpacity style={styles.splitButton}>
+                        <Text style={styles.splitButtonText}>View Split</Text>
+                        <Feather name="chevron-right" size={14} color={COLORS.textMuted} />
+                    </TouchableOpacity>
+                )}
             </View>
         </TouchableOpacity>
     );
 
-    return (
-        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-            <View style={styles.header}>
-                <Text style={[styles.title, { color: colors.text }]}>Payments</Text>
-                <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primary }]}>
-                    <Feather name="plus" size={24} color="#fff" />
-                </TouchableOpacity>
-            </View>
+    const ListHeader = () => (
+        <View>
+            {/* Horizontal Stats */}
+            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsPadding}>
+                <SummaryCard title="Total Received" value={stats.totalReceived} icon="cash-check" color={COLORS.success} />
+                <SummaryCard title="Outstanding Dues" value={stats.outstandingDues} icon="clock-alert-outline" color={COLORS.warning} />
+                <SummaryCard title="Total Receivable" value={stats.totalReceivable} icon="currency-usd" color={COLORS.primary} />
+            </ScrollView>
 
-            {/* Mini Stats */}
-            <View style={styles.statsContainer}>
-                <View style={[styles.statBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <Text style={styles.statLabel}>RECEIVED</Text>
-                    <Text style={[styles.statValue, { color: '#10b981' }]}>₹{stats.received.toLocaleString()}</Text>
+            {/* Collection Rate Inline */}
+            <View style={styles.collectionRateContainer}>
+                <View style={styles.rateHeaderRow}>
+                    <Text style={styles.rateLabelInline}>COLLECTION RATE</Text>
+                    <Text style={styles.ratePercentInline}>{stats.collectionRate}% <Text style={styles.rateSubLabelInline}>collected</Text></Text>
                 </View>
-                <View style={[styles.statBox, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                    <Text style={styles.statLabel}>MONTHLY</Text>
-                    <Text style={[styles.statValue, { color: colors.primary }]}>{filteredPayments.length} TXNS</Text>
+                <View style={styles.progressBarBgSubtle}>
+                    <Animated.View
+                        style={[
+                            styles.progressBarFillSmall,
+                            {
+                                width: animatedProgress.interpolate({
+                                    inputRange: [0, 100],
+                                    outputRange: ['0%', '100%']
+                                }),
+                                backgroundColor: COLORS.success
+                            }
+                        ]}
+                    />
                 </View>
             </View>
 
-            <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Feather name="search" size={20} color={colors.textSecondary} />
-                <TextInput
-                    placeholder="Search resident or month..."
-                    placeholderTextColor={colors.textSecondary}
-                    value={searchTerm}
-                    onChangeText={setSearchTerm}
-                    style={[styles.searchInput, { color: colors.text }]}
-                />
-            </View>
-
-            {loading ? (
-                <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
-            ) : (
-                <FlatList
-                    data={filteredPayments}
-                    renderItem={renderPaymentItem}
-                    keyExtractor={item => item.id}
-                    contentContainerStyle={styles.listContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                    ListEmptyComponent={
-                        <View style={styles.emptyState}>
-                            <Feather name="credit-card" size={48} color={colors.textSecondary} />
-                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No payments recorded</Text>
+            {/* Search and Filters */}
+            <View style={styles.filterSection}>
+                {/* Search and Filters */}
+                <View style={styles.filterSection}>
+                    <View style={styles.searchRow}>
+                        <View style={styles.searchBar}>
+                            <Feather name="search" size={18} color={COLORS.textMuted} />
+                            <TextInput
+                                placeholder="Search records..."
+                                placeholderTextColor={COLORS.textMuted}
+                                style={styles.searchInput}
+                                value={searchTerm}
+                                onChangeText={setSearchTerm}
+                            />
+                            {searchTerm.length > 0 && (
+                                <TouchableOpacity onPress={() => setSearchTerm("")}>
+                                    <Feather name="x-circle" size={16} color={COLORS.textMuted} />
+                                </TouchableOpacity>
+                            )}
                         </View>
-                    }
-                />
-            )}
+                        <TouchableOpacity
+                            style={[styles.filterToggle, showFilters && styles.filterToggleActive]}
+                            onPress={() => setShowFilters(!showFilters)}
+                        >
+                            <Ionicons
+                                name={showFilters ? "close" : "options-outline"}
+                                size={22}
+                                color={showFilters ? "#fff" : COLORS.primary}
+                            />
+                        </TouchableOpacity>
+                    </View>
+
+                    {showFilters && (
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsPadding}>
+                            <FilterChip label="Property" isActive={selectedPg !== "ALL"} onPress={() => { }} />
+                            <FilterChip label="Status" isActive={selectedStatus !== "ALL"} onPress={() => { }} />
+                            <FilterChip label="Date Range" isActive={false} onPress={() => { }} />
+                            <FilterChip
+                                label="Paid"
+                                isActive={selectedFilter === "PAID"}
+                                onPress={() => setSelectedFilter(selectedFilter === "PAID" ? "ALL" : "PAID")}
+                            />
+                            <FilterChip
+                                label="Pending"
+                                isActive={selectedFilter === "PENDING"}
+                                onPress={() => setSelectedFilter(selectedFilter === "PENDING" ? "ALL" : "PENDING")}
+                            />
+                        </ScrollView>
+                    )}
+                </View>
+            </View>
+        </View>
+    );
+
+    return (
+        <SafeAreaView style={styles.container}>
+            <FlatList
+                data={filteredPayments}
+                keyExtractor={item => item.id}
+                renderItem={renderPaymentItem}
+                ListHeaderComponent={ListHeader}
+                contentContainerStyle={styles.listContainer}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+                ListEmptyComponent={
+                    !loading ? (
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="finance" size={60} color={COLORS.textMuted + "20"} />
+                            <Text style={styles.emptyText}>No financial records found</Text>
+                        </View>
+                    ) : null
+                }
+                ListFooterComponent={loading && !refreshing ? <ActivityIndicator color={COLORS.primary} style={{ marginTop: 20 }} /> : null}
+            />
+
+            <TouchableOpacity
+                style={styles.fab}
+                onPress={() => Alert.alert("Coming Soon", "The feature to add a new financial entry will be available in the next update.")}
+            >
+                <Feather name="plus" size={24} color="#fff" />
+            </TouchableOpacity>
         </SafeAreaView>
     );
 };
 
+const FilterChip = ({ label, isActive, onPress }: any) => (
+    <TouchableOpacity
+        style={[styles.chip, isActive && styles.chipActive]}
+        onPress={onPress}
+    >
+        <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{label}</Text>
+        <Feather name="chevron-down" size={12} color={isActive ? "#fff" : COLORS.textMuted} style={{ marginLeft: 4 }} />
+    </TouchableOpacity>
+);
+
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    header: {
+    container: { flex: 1, backgroundColor: COLORS.bg },
+
+    statsPadding: { paddingHorizontal: 20, paddingVertical: 12, gap: 10 },
+    summaryCard: {
+        width: width * 0.44,
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: COLORS.card,
+        borderRadius: 16,
+        padding: 12,
+        borderWidth: 1,
+        gap: 12
+    },
+    summaryIcon: { width: 32, height: 32, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+    summaryLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 2, letterSpacing: 0.5 },
+    summaryValue: { fontSize: 15, fontWeight: "900" },
+
+    collectionRateContainer: {
+        marginHorizontal: 20,
+        marginVertical: 24,
+    },
+    rateHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 },
+    rateLabelInline: { fontSize: 11, fontWeight: "900", color: COLORS.text, letterSpacing: 1 },
+    ratePercentInline: { fontSize: 16, fontWeight: "900", color: COLORS.success },
+    rateSubLabelInline: { fontSize: 10, fontWeight: "600", color: COLORS.textMuted },
+    progressBarBgSubtle: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
+    progressBarFillSmall: { height: "100%", borderRadius: 3 },
+
+    filterSection: { backgroundColor: COLORS.bg, marginBottom: 24 },
+    searchRow: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, gap: 10, marginBottom: 16 },
+    searchBar: {
+        flex: 1,
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: COLORS.card,
+        borderRadius: 14,
+        paddingHorizontal: 16,
+        height: 50,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+    filterToggle: {
+        width: 50,
+        height: 50,
+        borderRadius: 14,
+        backgroundColor: COLORS.card,
+        justifyContent: "center",
+        alignItems: "center",
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    filterToggleActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+    chipsPadding: { paddingHorizontal: 20, gap: 10, paddingBottom: 10 },
+    chip: {
+        flexDirection: "row",
+        alignItems: "center",
+        paddingHorizontal: 12,
+        paddingVertical: 6,
+        borderRadius: 14,
+        backgroundColor: COLORS.card,
+        borderWidth: 1,
+        borderColor: COLORS.border
+    },
+    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+    chipText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
+    chipTextActive: { color: "#fff" },
+
+    listContainer: { paddingHorizontal: 20, paddingBottom: 160 },
+    paymentCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 20,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    paymentHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
+    headerLeft: { flex: 1, marginRight: 10 },
+    residentName: { fontSize: 17, fontWeight: "800", color: COLORS.text, marginBottom: 8 },
+    statusBadge: {
+        flexDirection: "row",
+        alignItems: "center",
+        alignSelf: "flex-start",
+        paddingHorizontal: 10,
+        paddingVertical: 4,
+        borderRadius: 10,
+        gap: 6
+    },
+    statusDot: { width: 6, height: 6, borderRadius: 3 },
+    statusText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+    amountContainer: { backgroundColor: "rgba(16, 185, 129, 0.1)", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14 },
+    paymentAmount: { fontSize: 20, fontWeight: "900", color: COLORS.success },
+
+    paymentContent: { marginBottom: 20 },
+    infoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+    infoText: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
+
+    infoGrid: { flexDirection: "row", justifyContent: "space-between" },
+    gridItem: { flex: 1 },
+    gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8, letterSpacing: 0.5 },
+    gridValueRow: { flexDirection: "row", alignItems: "center" },
+    gridValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+
+    paymentFooter: {
         flexDirection: "row",
         justifyContent: "space-between",
         alignItems: "center",
-        paddingHorizontal: 20,
-        paddingVertical: 16
+        paddingTop: 18,
+        borderTopWidth: 1,
+        borderTopColor: "rgba(255,255,255,0.05)"
     },
-    title: { fontSize: 24, fontWeight: "900", letterSpacing: -0.5 },
-    addButton: {
-        width: 44,
-        height: 44,
-        borderRadius: 14,
+    editButton: { flexDirection: "row", alignItems: "center", gap: 8, padding: 4 },
+    editButtonText: { fontSize: 13, fontWeight: "700", color: COLORS.primary },
+    splitButton: { flexDirection: "row", alignItems: "center", gap: 6, padding: 4 },
+    splitButtonText: { fontSize: 12, fontWeight: "700", color: COLORS.textMuted },
+
+    fab: {
+        position: "absolute",
+        bottom: 30,
+        right: 20,
+        width: 48,
+        height: 48,
+        borderRadius: 16,
+        backgroundColor: COLORS.primary,
         justifyContent: "center",
         alignItems: "center",
-        elevation: 4
-    },
-    statsContainer: { flexDirection: "row", paddingHorizontal: 20, gap: 12, marginBottom: 16 },
-    statBox: { flex: 1, padding: 12, borderRadius: 16, borderWidth: 1 },
-    statLabel: { fontSize: 10, fontWeight: "800", color: "#64748b", marginBottom: 4 },
-    statValue: { fontSize: 18, fontWeight: "800" },
-    searchContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        marginHorizontal: 20,
-        paddingHorizontal: 16,
-        height: 50,
-        borderRadius: 12,
-        borderWidth: 1,
-        marginBottom: 16
-    },
-    searchInput: { flex: 1, marginLeft: 12, fontSize: 15, fontWeight: "500" },
-    listContent: { padding: 20, paddingTop: 0 },
-    card: {
-        padding: 16,
-        borderRadius: 24,
-        borderWidth: 1,
-        marginBottom: 16,
-        elevation: 2,
-        shadowColor: "#000",
+        elevation: 4,
+        shadowColor: COLORS.primary,
         shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
+        shadowOpacity: 0.3,
         shadowRadius: 4
     },
-    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-    typeBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    typeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
-    amount: { fontSize: 18, fontWeight: "900" },
-    tenantName: { fontSize: 16, fontWeight: "800", marginBottom: 6 },
-    infoRow: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-    infoText: { fontSize: 12, marginLeft: 6, fontWeight: "600" },
-    dot: { width: 4, height: 4, borderRadius: 2, backgroundColor: "#cbd5e1", marginHorizontal: 8 },
-    footer: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: 'rgba(0,0,0,0.05)', paddingTop: 12 },
-    propertyRow: { flexDirection: "row", alignItems: "center", gap: 4 },
-    propertyText: { fontSize: 11, fontWeight: "700" },
-    statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    statusText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
     emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
-    emptyText: { fontSize: 16, fontWeight: "600" }
+    emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" }
 });
 
 export default PaymentsScreen;

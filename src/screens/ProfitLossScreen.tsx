@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
     View,
     Text,
@@ -6,33 +6,58 @@ import {
     ScrollView,
     RefreshControl,
     ActivityIndicator,
-    Dimensions
+    Dimensions,
+    TouchableOpacity,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../context/ThemeContext";
 import { pnlAPI } from "../services/api";
-import { Feather } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import {
+    VictoryBar,
+    VictoryChart,
+    VictoryAxis,
+    VictoryGroup,
+    VictoryLegend,
+    VictoryPie,
+    VictoryTooltip,
+    VictoryLabel
+} from "victory-native";
+
+const { width } = Dimensions.get("window");
+
+const COLORS = {
+    bg: "#0f172a",
+    card: "#1e293b",
+    primary: "#3b82f6",
+    success: "#10b981",
+    warning: "#f59e0b",
+    danger: "#ef4444",
+    text: "#ffffff",
+    textMuted: "#94a3b8",
+    border: "rgba(255,255,255,0.05)"
+};
 
 const ProfitLossScreen = () => {
-    const { colors, isDark } = useTheme();
+    const { colors } = useTheme();
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [summary, setSummary] = useState<any[]>([]);
-    const [totals, setTotals] = useState({ revenue: 0, expense: 0, profit: 0 });
+    const [categoryStats, setCategoryStats] = useState<any[]>([]);
+    const [selectedTimeFilter, setSelectedTimeFilter] = useState("Monthly");
 
     const fetchData = useCallback(async () => {
         try {
-            const response: any = await pnlAPI.getSummary();
-            const data = response.data || [];
-            setSummary(data);
+            setLoading(true);
+            const [summaryRes, categoryRes]: any = await Promise.all([
+                pnlAPI.getSummary(),
+                pnlAPI.getCategoryStats()
+            ]);
 
-            const rev = data.reduce((sum: number, item: any) => sum + (Number(item.total_revenue) || 0), 0);
-            const exp = data.reduce((sum: number, item: any) => sum + (Number(item.total_expense) || 0), 0);
-            const pro = data.reduce((sum: number, item: any) => sum + (Number(item.net_profit) || 0), 0);
-
-            setTotals({ revenue: rev, expense: exp, profit: pro });
+            setSummary(summaryRes.data || []);
+            setCategoryStats(categoryRes.data || []);
         } catch (error) {
-            console.error("Failed to fetch P&L summary:", error);
+            console.error("Failed to fetch P&L data:", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -48,133 +73,324 @@ const ProfitLossScreen = () => {
         fetchData();
     };
 
-    const StatCard = ({ label, value, color, icon, sub }: any) => (
-        <View style={[styles.statCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <View style={styles.statHeader}>
-                <View style={[styles.iconBox, { backgroundColor: color + '15' }]}>
-                    <Feather name={icon} size={20} color={color} />
-                </View>
-                <Text style={[styles.statLabel, { color: colors.textSecondary }]}>{label}</Text>
+    const stats = useMemo(() => {
+        const rev = summary.reduce((sum, item) => sum + (Number(item.total_revenue) || 0), 0);
+        const exp = summary.reduce((sum, item) => sum + (Number(item.total_expense) || 0), 0);
+        const profit = rev - exp;
+        const margin = rev > 0 ? (profit / rev) * 100 : 0;
+
+        return {
+            totalRevenue: rev,
+            totalExpenses: exp,
+            netProfit: profit,
+            profitMargin: margin.toFixed(1)
+        };
+    }, [summary]);
+
+    const chartData = useMemo(() => {
+        // Take last 6 months for chart
+        const sorted = [...summary].sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
+        const recent = sorted.slice(-6);
+
+        return recent.map(item => ({
+            month: new Date(item.month).toLocaleDateString(undefined, { month: 'short' }),
+            revenue: Number(item.total_revenue),
+            expense: Number(item.total_expense)
+        }));
+    }, [summary]);
+
+    const pieData = useMemo(() => {
+        const categories: { [key: string]: number } = {};
+        categoryStats.forEach(item => {
+            const cat = item.category || "Other";
+            categories[cat] = (categories[cat] || 0) + (Number(item.amount) || 0);
+        });
+
+        return Object.keys(categories).map(key => ({
+            x: key,
+            y: categories[key]
+        })).sort((a, b) => b.y - a.y).slice(0, 5); // Top 5 categories
+    }, [categoryStats]);
+
+    const StatCard = ({ title, value, icon, color, isPercent = false }: any) => (
+        <View style={[styles.statCard, { borderColor: COLORS.border }]}>
+            <View style={[styles.statIcon, { backgroundColor: color + "10" }]}>
+                <MaterialCommunityIcons name={icon} size={20} color={color} />
             </View>
-            <Text style={[styles.statValue, { color: colors.text }]}>₹{value.toLocaleString()}</Text>
-            {sub && <Text style={[styles.statSub, { color: color }]}>{sub}</Text>}
+            <Text style={styles.statLabel}>{title}</Text>
+            <Text style={[styles.statValue, { color: color }]}>
+                {isPercent ? `${value}%` : `₹${Number(value).toLocaleString()}`}
+            </Text>
         </View>
     );
 
-    return (
-        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-            <View style={styles.header}>
-                <Text style={[styles.title, { color: colors.text }]}>Profit & Loss</Text>
+    const BreakdownCard = ({ item }: { item: any }) => (
+        <View style={styles.breakdownCard}>
+            <View style={styles.breakdownHeader}>
+                <View>
+                    <Text style={styles.breakdownMonth}>
+                        {new Date(item.month).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
+                    </Text>
+                    <Text style={styles.breakdownProperty}>{item.pgs?.name || "All Properties"}</Text>
+                </View>
+                <View style={[styles.profitBadge, { backgroundColor: item.net_profit >= 0 ? COLORS.success + "15" : COLORS.danger + "15" }]}>
+                    <Text style={[styles.profitBadgeText, { color: item.net_profit >= 0 ? COLORS.success : COLORS.danger }]}>
+                        {item.net_profit >= 0 ? "PROFIT" : "LOSS"}
+                    </Text>
+                </View>
             </View>
 
-            {loading ? (
-                <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
-            ) : (
-                <ScrollView
-                    contentContainerStyle={styles.scrollContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                >
-                    {/* Main Highlights */}
-                    <View style={styles.highlights}>
-                        <StatCard
-                            label="TOTAL REVENUE"
-                            value={totals.revenue}
-                            color="#10b981"
-                            icon="trending-up"
-                        />
-                        <StatCard
-                            label="TOTAL EXPENSES"
-                            value={totals.expense}
-                            color="#ef4444"
-                            icon="trending-down"
-                        />
-                        <StatCard
-                            label="NET PROFIT"
-                            value={totals.profit}
-                            color={colors.primary}
-                            icon="pie-chart"
-                            sub={`${((totals.profit / (totals.revenue || 1)) * 100).toFixed(1)}% margin`}
-                        />
-                    </View>
+            <View style={styles.breakdownGrid}>
+                <View style={styles.gridItem}>
+                    <Text style={styles.gridLabel}>REVENUE</Text>
+                    <Text style={[styles.gridValue, { color: COLORS.success }]}>₹{Number(item.total_revenue).toLocaleString()}</Text>
+                </View>
+                <View style={styles.gridItem}>
+                    <Text style={styles.gridLabel}>EXPENSES</Text>
+                    <Text style={[styles.gridValue, { color: COLORS.danger }]}>₹{Number(item.total_expense).toLocaleString()}</Text>
+                </View>
+                <View style={styles.gridItem}>
+                    <Text style={styles.gridLabel}>NET PROFIT</Text>
+                    <Text style={[styles.gridValue, { color: COLORS.text }]}>₹{Number(item.net_profit).toLocaleString()}</Text>
+                </View>
+            </View>
+        </View>
+    );
 
-                    <Text style={[styles.sectionTitle, { color: colors.text }]}>Monthly Breakdown</Text>
+    if (loading && !refreshing) {
+        return (
+            <SafeAreaView style={[styles.container, { justifyContent: "center", alignItems: "center" }]}>
+                <ActivityIndicator size="large" color={COLORS.primary} />
+            </SafeAreaView>
+        );
+    }
 
-                    {summary.map((item, index) => (
-                        <View key={index} style={[styles.monthRow, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                            <View style={styles.monthHeader}>
-                                <Text style={[styles.monthText, { color: colors.text }]}>
-                                    {new Date(item.month).toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}
-                                </Text>
-                                <Text style={[styles.pgText, { color: colors.primary }]}>{item.pgs?.name || 'All Properties'}</Text>
+    return (
+        <SafeAreaView style={styles.container}>
+            <ScrollView
+                showsVerticalScrollIndicator={false}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+            >
+                <View style={styles.header}>
+                    <Text style={styles.title}>Profit & Loss</Text>
+                    <Text style={styles.subtitle}>Financial performance analysis</Text>
+                </View>
+
+                {/* KPI Cards */}
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kpiPadding}>
+                    <StatCard title="TOTAL REVENUE" value={stats.totalRevenue} icon="cash-plus" color={COLORS.success} />
+                    <StatCard title="TOTAL EXPENSES" value={stats.totalExpenses} icon="cash-minus" color={COLORS.danger} />
+                    <StatCard title="NET PROFIT" value={stats.netProfit} icon="bank" color={COLORS.primary} />
+                    <StatCard title="PROFIT MARGIN" value={stats.profitMargin} icon="percent" color={COLORS.warning} isPercent />
+                </ScrollView>
+
+                {/* Filters */}
+                <View style={styles.filtersRow}>
+                    {["All Time", "Monthly", "Yearly"].map(filter => (
+                        <TouchableOpacity
+                            key={filter}
+                            style={[styles.filterChip, selectedTimeFilter === filter && styles.filterChipActive]}
+                            onPress={() => setSelectedTimeFilter(filter)}
+                        >
+                            <Text style={[styles.filterChipText, selectedTimeFilter === filter && styles.filterChipTextActive]}>{filter}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
+
+                {/* Monthly Performance Chart */}
+                <View style={styles.chartSection}>
+                    <Text style={styles.sectionTitle}>Monthly Performance</Text>
+                    <View style={styles.chartContainer}>
+                        {chartData.length > 0 ? (
+                            <VictoryChart
+                                width={width - 40}
+                                height={220}
+                                domainPadding={{ x: 20 }}
+                                padding={{ top: 20, bottom: 40, left: 50, right: 30 }}
+                            >
+                                <VictoryAxis
+                                    style={{
+                                        axis: { stroke: COLORS.border },
+                                        tickLabels: { fill: COLORS.textMuted, fontSize: 10, fontWeight: "600" }
+                                    }}
+                                />
+                                <VictoryAxis
+                                    dependentAxis
+                                    tickFormat={(t) => `₹${t >= 1000 ? (t / 1000).toFixed(1) + 'k' : t}`}
+                                    style={{
+                                        axis: { stroke: COLORS.border },
+                                        grid: { stroke: COLORS.border, strokeDasharray: "4, 4" },
+                                        tickLabels: { fill: COLORS.textMuted, fontSize: 8 }
+                                    }}
+                                />
+                                <VictoryGroup offset={12}>
+                                    <VictoryBar
+                                        data={chartData}
+                                        x="month"
+                                        y="revenue"
+                                        style={{ data: { fill: COLORS.success, width: 10, borderRadius: 5 } }}
+                                        animate={{ duration: 500 }}
+                                    />
+                                    <VictoryBar
+                                        data={chartData}
+                                        x="month"
+                                        y="expense"
+                                        style={{ data: { fill: COLORS.danger, width: 10, borderRadius: 5 } }}
+                                        animate={{ duration: 500 }}
+                                    />
+                                </VictoryGroup>
+                            </VictoryChart>
+                        ) : (
+                            <View style={styles.emptyChart}>
+                                <Text style={styles.emptyText}>Not enough data for chart</Text>
                             </View>
-
-                            <View style={styles.rowDetails}>
-                                <View style={styles.detailItem}>
-                                    <Text style={styles.detailLabel}>REVENUE</Text>
-                                    <Text style={[styles.detailValue, { color: '#10b981' }]}>₹{Number(item.total_revenue).toLocaleString()}</Text>
-                                </View>
-                                <View style={styles.detailItem}>
-                                    <Text style={styles.detailLabel}>EXPENSE</Text>
-                                    <Text style={[styles.detailValue, { color: '#ef4444' }]}>₹{Number(item.total_expense).toLocaleString()}</Text>
-                                </View>
-                                <View style={[styles.detailItem, styles.lastDetail]}>
-                                    <Text style={styles.detailLabel}>PROFIT</Text>
-                                    <Text style={[styles.detailValue, { color: colors.text, fontWeight: '900' }]}>₹{Number(item.net_profit).toLocaleString()}</Text>
-                                </View>
+                        )}
+                        <View style={styles.legendRow}>
+                            <View style={styles.legendItem}>
+                                <View style={[styles.legendDot, { backgroundColor: COLORS.success }]} />
+                                <Text style={styles.legendText}>Revenue</Text>
+                            </View>
+                            <View style={styles.legendItem}>
+                                <View style={[styles.legendDot, { backgroundColor: COLORS.danger }]} />
+                                <Text style={styles.legendText}>Expenses</Text>
                             </View>
                         </View>
-                    ))}
+                    </View>
+                </View>
 
-                    {summary.length === 0 && (
-                        <View style={styles.emptyContainer}>
-                            <Feather name="bar-chart-2" size={48} color={colors.textSecondary} />
-                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No financial data available yet</Text>
+                {/* Expense Distribution */}
+                <View style={styles.chartSection}>
+                    <Text style={styles.sectionTitle}>Expense Distribution</Text>
+                    <View style={styles.donutContainer}>
+                        {pieData.length > 0 ? (
+                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                                <VictoryPie
+                                    data={pieData}
+                                    innerRadius={70}
+                                    width={width * 0.5}
+                                    height={width * 0.5}
+                                    padding={20}
+                                    colorScale={[COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"]}
+                                    labels={() => null}
+                                />
+                                <View style={styles.pieLegend}>
+                                    {pieData.map((item, i) => (
+                                        <View key={i} style={styles.pieLegendItem}>
+                                            <View style={[styles.legendDot, { backgroundColor: [COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"][i] }]} />
+                                            <Text style={styles.pieLegendText} numberOfLines={1}>{item.x}</Text>
+                                        </View>
+                                    ))}
+                                </View>
+                            </View>
+                        ) : (
+                            <View style={styles.emptyChart}>
+                                <Text style={styles.emptyText}>No expense categories found</Text>
+                            </View>
+                        )}
+                    </View>
+                </View>
+
+                {/* Detailed Breakdown */}
+                <View style={styles.breakdownSection}>
+                    <Text style={styles.sectionTitle}>Detailed Breakdown</Text>
+                    {summary.length > 0 ? (
+                        summary.map((item, index) => (
+                            <BreakdownCard key={index} item={item} />
+                        ))
+                    ) : (
+                        <View style={styles.emptyState}>
+                            <MaterialCommunityIcons name="finance" size={64} color={COLORS.textMuted + "20"} />
+                            <Text style={styles.emptyText}>No financial records found</Text>
                         </View>
                     )}
-                </ScrollView>
-            )}
+                </View>
+
+                <View style={{ height: 40 }} />
+            </ScrollView>
         </SafeAreaView>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1 },
+    container: { flex: 1, backgroundColor: COLORS.bg },
     header: { padding: 20, paddingBottom: 10 },
-    title: { fontSize: 26, fontWeight: "900", letterSpacing: -1 },
-    scrollContent: { padding: 20 },
-    highlights: { gap: 16, marginBottom: 24 },
+    title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
+    subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+
+    kpiPadding: { paddingHorizontal: 20, paddingVertical: 15, gap: 12 },
     statCard: {
-        padding: 20,
-        borderRadius: 24,
-        borderWidth: 1,
-        elevation: 2,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.05,
-        shadowRadius: 10,
-    },
-    statHeader: { flexDirection: "row", alignItems: "center", marginBottom: 12 },
-    iconBox: { width: 40, height: 40, borderRadius: 12, justifyContent: "center", alignItems: "center", marginRight: 12 },
-    statLabel: { fontSize: 12, fontWeight: "800", letterSpacing: 0.5 },
-    statValue: { fontSize: 28, fontWeight: "900" },
-    statSub: { fontSize: 13, fontWeight: "700", marginTop: 4 },
-    sectionTitle: { fontSize: 18, fontWeight: "800", marginBottom: 16, marginTop: 8 },
-    monthRow: {
-        padding: 16,
+        width: width * 0.45,
+        backgroundColor: COLORS.card,
         borderRadius: 20,
+        padding: 16,
         borderWidth: 1,
-        marginBottom: 12
     },
-    monthHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 16 },
-    monthText: { fontSize: 15, fontWeight: "800" },
-    pgText: { fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
-    rowDetails: { flexDirection: "row", justifyContent: "space-between" },
-    detailItem: { flex: 1 },
-    lastDetail: { alignItems: "flex-end" },
-    detailLabel: { fontSize: 9, fontWeight: "800", color: "#64748b", marginBottom: 4 },
-    detailValue: { fontSize: 14, fontWeight: "700" },
-    emptyContainer: { alignItems: "center", marginTop: 40, gap: 12 },
-    emptyText: { fontSize: 14, fontWeight: "600" }
+    statIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center", marginBottom: 12 },
+    statLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8 },
+    statValue: { fontSize: 18, fontWeight: "900" },
+
+    filtersRow: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
+    filterChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 12,
+        backgroundColor: COLORS.card,
+        borderWidth: 1,
+        borderColor: COLORS.border
+    },
+    filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+    filterChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
+    filterChipTextActive: { color: "#fff" },
+
+    chartSection: { marginHorizontal: 20, marginBottom: 24 },
+    sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 16 },
+    chartContainer: {
+        backgroundColor: COLORS.card,
+        borderRadius: 24,
+        paddingVertical: 10,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        alignItems: "center"
+    },
+    legendRow: { flexDirection: "row", gap: 20, marginTop: -10, marginBottom: 10 },
+    legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+    legendDot: { width: 8, height: 8, borderRadius: 4 },
+    legendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
+
+    donutContainer: {
+        backgroundColor: COLORS.card,
+        borderRadius: 24,
+        padding: 10,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    pieLegend: { flex: 1, gap: 10, paddingRight: 10 },
+    pieLegendItem: { flexDirection: "row", alignItems: "center", gap: 8 },
+    pieLegendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, flex: 1 },
+
+    breakdownSection: { paddingHorizontal: 20 },
+    breakdownCard: {
+        backgroundColor: COLORS.card,
+        borderRadius: 24,
+        padding: 20,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+    },
+    breakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
+    breakdownMonth: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+    breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+    profitBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+    profitBadgeText: { fontSize: 9, fontWeight: "900" },
+
+    breakdownGrid: { flexDirection: "row", justifyContent: "space-between" },
+    gridItem: { flex: 1 },
+    gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 6 },
+    gridValue: { fontSize: 14, fontWeight: "800" },
+
+    emptyChart: { height: 150, justifyContent: "center", alignItems: "center" },
+    emptyState: { alignItems: "center", marginTop: 40, gap: 16 },
+    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
 });
 
 export default ProfitLossScreen;

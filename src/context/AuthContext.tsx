@@ -11,6 +11,7 @@ interface UserProfile {
     gender?: string;
     dob?: string;
     avatar_url?: string;
+    created_at?: string;
 }
 
 interface AuthContextType {

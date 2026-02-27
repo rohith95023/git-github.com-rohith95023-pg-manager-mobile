@@ -1,25 +1,32 @@
-import { Href, Link } from 'expo-router';
-import { openBrowserAsync, WebBrowserPresentationStyle } from 'expo-web-browser';
-import { type ComponentProps } from 'react';
+import { Pressable, StyleSheet, Linking, Platform } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
-type Props = Omit<ComponentProps<typeof Link>, 'href'> & { href: Href & string };
+type Props = {
+  url: string;
+  label?: string;
+};
 
-export function ExternalLink({ href, ...rest }: Props) {
+const ExternalLink = ({ url, label }: Props) => {
+  const handlePress = async () => {
+    const supported = await Linking.canOpenURL(url);
+    if (supported) {
+      await Linking.openURL(url);
+    }
+  };
+
   return (
-    <Link
-      target="_blank"
-      {...rest}
-      href={href}
-      onPress={async (event) => {
-        if (process.env.EXPO_OS !== 'web') {
-          // Prevent the default behavior of linking to the default browser on native.
-          event.preventDefault();
-          // Open the link in an in-app browser.
-          await openBrowserAsync(href, {
-            presentationStyle: WebBrowserPresentationStyle.AUTOMATIC,
-          });
-        }
-      }}
-    />
+    <Pressable style={styles.button} onPress={handlePress} android_ripple={{ color: '#E0E7FF' }}>
+      <Ionicons name={Platform.OS === 'ios' ? 'open-outline' : 'open-sharp'} size={18} color="#0F172A" />
+      {label ? <></> : null}
+    </Pressable>
   );
-}
+};
+
+const styles = StyleSheet.create({
+  button: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+});
+
+export default ExternalLink;

@@ -12,6 +12,7 @@ import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 
 import { pgSchema } from "../schemas/pg.schema";
+import { ZodTypeAny } from "zod";
 
 export const usePGs = () => {
 
@@ -207,14 +208,15 @@ export const usePGs = () => {
 
   const validateField = (name: string, value: any) => {
     try {
-      const schemaFieldMap: Record<string, string> = {
-        totalFloors: "total_floors",
-        totalRooms: "total_rooms",
-        genderType: "gender_type"
-      };
+    const schemaFieldMap: Record<string, string> = {
+      totalFloors: "total_floors",
+      totalRooms: "total_rooms",
+      genderType: "gender_type"
+    };
 
-      const schemaKey = schemaFieldMap[name] || name;
-      const fieldSchema = pgSchema.shape[schemaKey];
+    const schemaKey = schemaFieldMap[name] || name;
+    const schemaShape = pgSchema.shape as Record<string, ZodTypeAny>;
+    const fieldSchema = schemaShape[schemaKey];
 
       if (!fieldSchema) return null;
 
@@ -321,8 +323,8 @@ export const usePGs = () => {
       const payload = {
         ...formData,
         total_floors: formData.totalFloors === ("" as any) ? undefined : Number(formData.totalFloors),
-        security_deposit: formData.security_deposit === ("" as any) ? undefined : Number(formData.security_deposit), // Fixed to use snake_case if schema expects it or check schema
-        maintenance_amount: formData.maintenance_amount === ("" as any) ? undefined : Number(formData.maintenance_amount),
+        security_deposit: formData.securityDeposit === ("" as any) ? undefined : Number(formData.securityDeposit),
+        maintenance_amount: formData.maintenanceAmount === ("" as any) ? undefined : Number(formData.maintenanceAmount),
         maintenance_type: formData.maintenanceType,
         gender_type: formData.genderType,
         owner_id: (user as any)?.id || "00000000-0000-0000-0000-000000000000",
@@ -453,7 +455,7 @@ export const usePGs = () => {
         showToast("Property Created Successfully");
       }
       await fetchData(); // Force refresh local state
-      AsyncStoragePlaceholder.removeItem("pg_onboarding_draft");
+      await AsyncStorage.removeItem("pg_onboarding_draft");
       setShowModal(false);
       setEditingPg(null);
       resetForm();

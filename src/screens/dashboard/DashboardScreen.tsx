@@ -1,197 +1,308 @@
-import React, { useMemo, useCallback } from 'react';
-import { View, Text, StyleSheet, SafeAreaView, ScrollView, FlatList, Dimensions } from 'react-native';
-import AppHeader from '../../components/AppHeader';
-import KPIStatCard from '../../components/KPIStatCard';
-import SectionHeader from '../../components/SectionHeader';
-import QuickActionButton from '../../components/QuickActionButton';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
-import { usePGs } from '../../hooks/usePGs';
+import React, { useMemo, useCallback, useState, type ComponentProps } from 'react';
+import { View, FlatList, StyleSheet, Text } from 'react-native';
+import { Ionicons } from '@expo/vector-icons';
 
-const { width } = Dimensions.get('window');
+import AppHeader from '../../components/common/AppHeader';
+import ScreenContainer from '../../components/common/ScreenContainer';
+import SectionHeader from '../../components/common/SectionHeader';
+import KPIStatCard from '../../components/cards/KPIStatCard';
+import FloatingActionButton from '../../components/common/FloatingActionButton';
+import LoadingOverlay from '../../components/common/LoadingOverlay';
+import SkeletonCard from '../../components/common/SkeletonCard';
+
+import { usePGs } from '../../hooks/usePGs';
+import { Colors } from '../../constants/colors';
+import { Spacing } from '../../constants/spacing';
+import { Typography } from '../../constants/typography';
+
+type IoniconsName = ComponentProps<typeof Ionicons>['name'];
+
+type QuickAction = {
+  id: string;
+  label: string;
+  icon: IoniconsName;
+};
+
+type ActivityItem = {
+  id: string;
+  title: string;
+  subtitle: string;
+  type: 'income' | 'expense' | 'info';
+  amount?: string;
+  time: string;
+};
+
+const quickActions: QuickAction[] = [
+  { id: 'add-pg', label: 'Add PG', icon: 'business-outline' },
+  { id: 'add-room', label: 'Add Room', icon: 'door-open-outline' },
+  { id: 'add-tenant', label: 'Add Tenant', icon: 'person-add-outline' },
+  { id: 'record-payment', label: 'Record Payment', icon: 'receipt-outline' },
+];
 
 const DashboardScreen = () => {
-    const { pgs, loading } = usePGs();
+  const { pgs, loading, fetchData } = usePGs();
+  const [refreshing, setRefreshing] = useState(false);
 
-    const stats = useMemo(() => {
-        const totalRooms = pgs.reduce((sum, pg) => sum + (pg.analytics?.totalBeds || 0), 0);
-        const totalTenants = pgs.reduce((sum, pg) => sum + (pg.analytics?.residentsCount || 0), 0);
-        const totalRevenue = pgs.reduce((sum, pg) => sum + (pg.analytics?.currentMonthRevenue || 0), 0);
+  const stats = useMemo(() => {
+    const totalRooms = pgs.reduce((sum, pg) => sum + (pg.analytics?.totalBeds || 0), 0);
+    const totalTenants = pgs.reduce((sum, pg) => sum + (pg.analytics?.residentsCount || 0), 0);
+    const totalRevenue = pgs.reduce((sum, pg) => sum + (pg.analytics?.currentMonthRevenue || 0), 0);
+    const occupancySum = pgs.reduce((sum, pg) => sum + (pg.analytics?.occupiedBeds || 0), 0);
+    const occupancyTotal =
+      pgs.reduce((sum, pg) => sum + (pg.analytics?.totalBeds || 0), 0) || 1;
+    const occupancy = Math.round((occupancySum / occupancyTotal) * 100);
 
-        return {
-            totalRooms,
-            totalTenants,
-            totalRevenue,
-            pgCount: pgs.length
-        };
-    }, [pgs]);
-
-    const kpiData = useMemo(() => [
-        { id: '1', label: 'Total PGs', value: stats.pgCount.toString(), color: '#3B82F6', icon: <Ionicons name={"business" as any} size={20} color="#3B82F6" /> },
-        { id: '2', label: 'Rooms', value: stats.totalRooms.toString(), color: '#10B981', icon: <Ionicons name={"door-open" as any} size={20} color="#10B981" /> },
-        { id: '3', label: 'Tenants', value: stats.totalTenants.toString(), color: '#F59E0B', icon: <Ionicons name={"people" as any} size={20} color="#F59E0B" /> },
-        { id: '4', label: 'Occupancy', value: '92%', color: '#8B5CF6', icon: <Ionicons name={"pie-chart" as any} size={20} color="#8B5CF6" /> },
-        { id: '5', label: 'Revenue', value: `₹${(stats.totalRevenue / 100000).toFixed(1)}L`, color: '#EF4444', icon: <Ionicons name={"cash" as any} size={20} color="#EF4444" /> },
-    ], [stats]);
-
-    const recentActivity = [
-        { id: '1', title: 'Payment Received', subtitle: 'John Doe - Room 102', time: '2 mins ago', amount: '+₹8,500', type: 'income' },
-        { id: '2', title: 'New Tenant Joined', subtitle: 'Alice Smith - PGP Palace', time: '1 hour ago', type: 'info' },
-        { id: '3', title: 'Expense Logged', subtitle: 'Electricity Bill - June', time: '3 hours ago', amount: '-₹4,200', type: 'expense' },
-        { id: '4', title: 'Room Vacated', subtitle: 'Bob Wilson - Room 304', time: '5 hours ago', type: 'warning' },
-    ];
-
-    const getActivityIcon = (type: string) => {
-        switch (type) {
-            case 'income': return 'arrow-down-circle';
-            case 'expense': return 'arrow-up-circle';
-            case 'warning': return 'alert-circle';
-            default: return 'information-circle';
-        }
+    return {
+      pgCount: pgs.length,
+      totalRooms,
+      totalTenants,
+      totalRevenue,
+      occupancy,
     };
+  }, [pgs]);
 
-    const getActivityColor = (type: string) => {
-        switch (type) {
-            case 'income': return '#10B981';
-            case 'expense': return '#EF4444';
-            case 'warning': return '#F59E0B';
-            default: return '#3B82F6';
-        }
-    };
+  const kpiData = useMemo(
+    () => [
+      {
+        id: 'pgs',
+        label: 'Total PGs',
+        value: stats.pgCount.toString(),
+        icon: <Ionicons name="business" size={20} color={Colors.Primary} />,
+        color: Colors.Primary,
+      },
+      {
+        id: 'rooms',
+        label: 'Total Rooms',
+        value: stats.totalRooms.toString(),
+        icon: <Ionicons name="door-open" size={20} color={Colors.Success} />,
+        color: Colors.Success,
+      },
+      {
+        id: 'tenants',
+        label: 'Tenants',
+        value: stats.totalTenants.toString(),
+        icon: <Ionicons name="people" size={20} color={Colors.Warning} />,
+        color: Colors.Warning,
+      },
+      {
+        id: 'occupancy',
+        label: 'Occupancy',
+        value: `${stats.occupancy}%`,
+        icon: <Ionicons name="pie-chart" size={20} color={Colors.PrimaryLight} />,
+        color: Colors.PrimaryLight,
+      },
+      {
+        id: 'revenue',
+        label: 'Monthly Revenue',
+        value: `₹${(stats.totalRevenue / 100000).toFixed(1)}L`,
+        icon: <Ionicons name="cash" size={20} color={Colors.Danger} />,
+        color: Colors.Danger,
+      },
+    ],
+    [stats]
+  );
 
-    const renderKPIItem = useCallback(({ item }: { item: any }) => (
-        <KPIStatCard label={item.label} value={item.value} color={item.color} icon={item.icon} />
-    ), []);
+  const activity = useMemo<ActivityItem[]>(() => {
+    if (!pgs.length) {
+      return [
+        {
+          id: 'empty',
+          title: 'No activity yet',
+          subtitle: 'Create a PG or record a payment to see activity.',
+          type: 'info',
+          amount: '',
+          time: 'Just now',
+        },
+      ];
+    }
+    return pgs.slice(0, 4).map((pg, index) => ({
+      id: `${pg.id}-${index}`,
+      title: `${pg.name} update`,
+      subtitle: `${pg.city || 'Location'} • ${pg.analytics?.residentsCount || 0} tenants`,
+      type: index % 2 === 0 ? 'income' : 'expense',
+      amount: index % 2 === 0 ? `+₹${(pg.analytics?.currentMonthRevenue || 0).toLocaleString()}` : `-₹${(pg.analytics?.pendingDues || 0).toLocaleString()}`,
+      time: `${index + 2}h ago`,
+    }));
+  }, [pgs]);
 
-    const renderActivityItem = useCallback(({ item }: { item: any }) => (
+  const handleRefresh = useCallback(async () => {
+    setRefreshing(true);
+    await fetchData();
+    setRefreshing(false);
+  }, [fetchData]);
+
+  const renderActivityItem = useCallback(
+    ({ item }: { item: ActivityItem }) => {
+      const isIncome = item.type === 'income';
+      return (
         <View style={styles.activityItem}>
-            <View style={[styles.activityIcon, { backgroundColor: getActivityColor(item.type) + '15' }]}>
-                <Ionicons name={getActivityIcon(item.type) as any} size={20} color={getActivityColor(item.type)} />
-            </View>
-            <View style={styles.activityContent}>
-                <Text style={styles.activityTitle}>{item.title}</Text>
-                <Text style={styles.activitySubtitle}>{item.subtitle}</Text>
-            </View>
-            <View style={styles.activityRight}>
-                {item.amount && <Text style={[styles.activityAmount, { color: item.type === 'income' ? '#10B981' : '#EF4444' }]}>{item.amount}</Text>}
-                <Text style={styles.activityTime}>{item.time}</Text>
-            </View>
+          <View style={[styles.activityBadge, { backgroundColor: (isIncome ? Colors.Success : Colors.Danger) + '12' }]}>
+            <Ionicons
+              name={isIncome ? 'arrow-down-circle' : 'arrow-up-circle'}
+              size={20}
+              color={isIncome ? Colors.Success : Colors.Danger}
+            />
+          </View>
+          <View style={styles.activityDetails}>
+            <Text style={styles.activityTitle}>{item.title}</Text>
+            <Text style={styles.activitySubtitle}>{item.subtitle}</Text>
+          </View>
+          <View style={styles.activityMeta}>
+            {item.amount ? (
+              <Text style={[styles.activityAmount, { color: isIncome ? Colors.Success : Colors.Danger }]}>
+                {item.amount}
+              </Text>
+            ) : null}
+            <Text style={styles.activityTime}>{item.time}</Text>
+          </View>
         </View>
-    ), []);
+      );
+    },
+    []
+  );
 
-    const keyExtractor = useCallback((item: any) => item.id, []);
-
-    return (
-        <SafeAreaView style={styles.container}>
-            <AppHeader />
-            <ScrollView showsVerticalScrollIndicator={false}>
-                {/* KPI Scroll */}
-                <View style={styles.kpiContainer}>
-                    <FlatList
-                        data={kpiData}
-                        horizontal
-                        showsHorizontalScrollIndicator={false}
-                        renderItem={renderKPIItem}
-                        keyExtractor={keyExtractor}
-                        contentContainerStyle={styles.kpiList}
-                        initialNumToRender={5}
-                        removeClippedSubviews={true}
-                    />
+  return (
+    <ScreenContainer>
+      <AppHeader subtitle="Overview" />
+      <FlatList
+        data={activity}
+        keyExtractor={(item) => item.id}
+        renderItem={renderActivityItem}
+        contentContainerStyle={styles.listContent}
+        ListHeaderComponent={
+          <>
+            <SectionHeader title="Key Metrics" />
+            {loading ? (
+              <>
+                <SkeletonCard />
+                <SkeletonCard />
+              </>
+            ) : (
+              <View style={styles.kpiStack}>
+                {kpiData.map((item) => (
+                  <KPIStatCard
+                    key={item.id}
+                    label={item.label}
+                    value={item.value}
+                    icon={item.icon}
+                    color={item.color}
+                  />
+                ))}
+              </View>
+            )}
+            <SectionHeader title="Quick Actions" />
+            <View style={styles.quickActionGrid}>
+              {quickActions.map((action) => (
+                <View key={action.id} style={styles.quickActionCard}>
+                  <View style={styles.quickIcon}>
+                    <Ionicons name={action.icon as any} size={20} color={Colors.Primary} />
+                  </View>
+                  <Text style={styles.quickLabel}>{action.label}</Text>
                 </View>
-
-                {/* Quick Actions */}
-                <SectionHeader title="Quick Actions" />
-                <View style={styles.quickActionsContainer}>
-                    <QuickActionButton label="Add PG" icon={<Ionicons name={"add-circle" as any} size={24} color="#3B82F6" />} onPress={() => { }} />
-                    <QuickActionButton label="Add Room" icon={<MaterialCommunityIcons name={"door-plus" as any} size={24} color="#10B981" />} onPress={() => { }} color="#10B981" />
-                    <QuickActionButton label="Add Tenant" icon={<Ionicons name={"person-add" as any} size={24} color="#F59E0B" />} onPress={() => { }} color="#F59E0B" />
-                    <QuickActionButton label="Record Pay" icon={<Ionicons name={"receipt" as any} size={24} color="#EF4444" />} onPress={() => { }} color="#EF4444" />
-                </View>
-
-                {/* Recent Activity */}
-                <SectionHeader title="Recent Activity" actionLabel="View All" onActionPress={() => { }} />
-                <View style={styles.activityContainer}>
-                    {recentActivity.map((item) => (
-                        <View key={item.id}>
-                            {renderActivityItem({ item })}
-                        </View>
-                    ))}
-                </View>
-
-                <View style={{ height: 40 }} />
-            </ScrollView>
-        </SafeAreaView>
-    );
+              ))}
+            </View>
+            <SectionHeader title="Recent Activity" actionLabel="View All" onActionPress={() => fetchData()} />
+          </>
+        }
+        ListFooterComponent={<View style={styles.footerSpacer} />}
+        refreshing={refreshing}
+        onRefresh={handleRefresh}
+        initialNumToRender={4}
+        windowSize={5}
+      />
+      {loading && <LoadingOverlay />}
+      <FloatingActionButton label="New" onPress={() => fetchData()} />
+    </ScreenContainer>
+  );
 };
 
 const styles = StyleSheet.create({
-    container: {
-        flex: 1,
-        backgroundColor: '#F8FAFC',
-    },
-    kpiContainer: {
-        marginTop: 8,
-    },
-    kpiList: {
-        paddingHorizontal: 20,
-        paddingVertical: 8,
-    },
-    quickActionsContainer: {
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'space-between',
-        paddingHorizontal: 20,
-    },
-    activityContainer: {
-        backgroundColor: '#FFFFFF',
-        marginHorizontal: 20,
-        borderRadius: 16,
-        padding: 16,
-        shadowColor: '#000',
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 8,
-        elevation: 3,
-    },
-    activityItem: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F1F5F9',
-    },
-    activityIcon: {
-        width: 40,
-        height: 40,
-        borderRadius: 10,
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 12,
-    },
-    activityContent: {
-        flex: 1,
-    },
-    activityTitle: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#1E293B',
-    },
-    activitySubtitle: {
-        fontSize: 12,
-        color: '#64748B',
-        marginTop: 2,
-    },
-    activityRight: {
-        alignItems: 'flex-end',
-    },
-    activityAmount: {
-        fontSize: 14,
-        fontWeight: '700',
-    },
-    activityTime: {
-        fontSize: 10,
-        color: '#94A3B8',
-        marginTop: 4,
-    },
+  listContent: {
+    paddingBottom: 120,
+  },
+  kpiStack: {
+    paddingHorizontal: Spacing.lg,
+  },
+  quickActionGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'space-between',
+    paddingHorizontal: Spacing.lg,
+    marginTop: Spacing.sm,
+  },
+  quickActionCard: {
+    width: '48%',
+    backgroundColor: Colors.Card,
+    borderRadius: 16,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+    borderWidth: 1,
+    borderColor: Colors.Border,
+    minHeight: 100,
+    justifyContent: 'space-between',
+  },
+  quickIcon: {
+    width: 38,
+    height: 38,
+    borderRadius: 12,
+    backgroundColor: '#EFF6FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  quickLabel: {
+    marginTop: Spacing.md,
+    color: Colors.TextPrimary,
+    ...Typography.Body,
+    fontWeight: '600',
+  },
+  activityItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: Colors.Card,
+    marginHorizontal: Spacing.lg,
+    marginBottom: Spacing.sm,
+    padding: Spacing.md,
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: Colors.Border,
+    minHeight: 64,
+  },
+  activityBadge: {
+    width: 44,
+    height: 44,
+    borderRadius: 12,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: Spacing.md,
+  },
+  activityDetails: {
+    flex: 1,
+  },
+  activityTitle: {
+    ...Typography.Body,
+    fontWeight: '600',
+    color: Colors.TextPrimary,
+  },
+  activitySubtitle: {
+    ...Typography.Caption,
+    color: Colors.TextSecondary,
+    marginTop: 2,
+  },
+  activityMeta: {
+    alignItems: 'flex-end',
+  },
+  activityAmount: {
+    ...Typography.Body,
+    fontWeight: '700',
+  },
+  activityTime: {
+    ...Typography.Caption,
+    color: Colors.TextSecondary,
+    marginTop: 4,
+  },
+  footerSpacer: {
+    height: Spacing.xxxl,
+  },
 });
 
 export default DashboardScreen;

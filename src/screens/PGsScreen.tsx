@@ -12,26 +12,15 @@ import {
     Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { pgAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const PGsScreen = ({ navigation }: any) => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [pgs, setPgs] = useState<any[]>([]);
@@ -266,120 +255,123 @@ const PGsScreen = ({ navigation }: any) => {
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-    title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-    subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-    syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    tabBar: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
-    tab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
-    tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    tabText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "700" },
-    tabTextActive: { color: "#fff" },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
+        subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+        syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border },
 
-    searchSection: { marginHorizontal: 20, marginBottom: 20 },
-    searchBar: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 16,
-        paddingHorizontal: 16,
-        height: 52,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        marginBottom: 10
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
-    totalDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
-    totalText: { fontSize: 11, fontWeight: "800", color: COLORS.text, letterSpacing: 1 },
+        tabBar: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
+        tab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+        tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        tabText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "700" },
+        tabTextActive: { color: "#fff" },
 
-    listContent: { paddingHorizontal: 20, paddingBottom: 100 },
-    card: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
-    headerTitleContainer: { flex: 1 },
-    propertyName: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 6 },
-    badgeRow: { flexDirection: "row", gap: 8 },
-    badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-    badgeText: { fontSize: 9, fontWeight: "900" },
-    headerIcons: { flexDirection: "row", gap: 10 },
-    iconBtn: { padding: 4 },
+        searchSection: { marginHorizontal: 20, marginBottom: 20 },
+        searchBar: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 16,
+            paddingHorizontal: 16,
+            height: 52,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            marginBottom: 10
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
+        totalDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
+        totalText: { fontSize: 11, fontWeight: "800", color: COLORS.text, letterSpacing: 1 },
 
-    locationContainer: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
-    locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
+        listContent: { paddingHorizontal: 20, paddingBottom: 100 },
+        card: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
+        headerTitleContainer: { flex: 1 },
+        propertyName: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 6 },
+        badgeRow: { flexDirection: "row", gap: 8 },
+        badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+        badgeText: { fontSize: 9, fontWeight: "900" },
+        headerIcons: { flexDirection: "row", gap: 10 },
+        iconBtn: { padding: 4 },
 
-    divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
+        locationContainer: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
+        locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
 
-    statsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
-    statContainer: { flex: 1.2 },
-    statBox: {
-        flexDirection: "row",
-        backgroundColor: COLORS.bg,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        padding: 8,
-        marginBottom: 8
-    },
-    statSubBox: { flex: 1, alignItems: "center" },
-    statSubValue: { fontSize: 15, fontWeight: "800", color: COLORS.text },
-    statSubLabel: { fontSize: 8, fontWeight: "800", color: COLORS.textMuted, marginTop: 2 },
-    statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5 },
+        divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
 
-    occupancyContainer: { flex: 1.2, marginHorizontal: 15 },
-    occupancyHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, height: 44, justifyContent: "center" },
-    progressBarBg: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
-    progressBarFill: { height: "100%", borderRadius: 3 },
-    occupancyValue: { fontSize: 13, fontWeight: "800" },
+        statsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
+        statContainer: { flex: 1.2 },
+        statBox: {
+            flexDirection: "row",
+            backgroundColor: COLORS.bg,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            padding: 8,
+            marginBottom: 8
+        },
+        statSubBox: { flex: 1, alignItems: "center" },
+        statSubValue: { fontSize: 15, fontWeight: "800", color: COLORS.text },
+        statSubLabel: { fontSize: 8, fontWeight: "800", color: COLORS.textMuted, marginTop: 2 },
+        statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5 },
 
-    statusContainer: { flex: 1, alignItems: "flex-end" },
-    statusBadge: {
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 12,
-        gap: 6,
-        marginBottom: 8,
-        height: 44,
-        justifyContent: "center"
-    },
-    statusDot: { width: 6, height: 6, borderRadius: 3 },
-    statusText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+        occupancyContainer: { flex: 1.2, marginHorizontal: 15 },
+        occupancyHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, height: 44, justifyContent: "center" },
+        progressBarBg: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
+        progressBarFill: { height: "100%", borderRadius: 3 },
+        occupancyValue: { fontSize: 13, fontWeight: "800" },
 
-    loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-    loadingText: { color: COLORS.textMuted, marginTop: 12, fontWeight: "600" },
-    emptyContainer: { alignItems: "center", marginTop: 60, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+        statusContainer: { flex: 1, alignItems: "flex-end" },
+        statusBadge: {
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 12,
+            gap: 6,
+            marginBottom: 8,
+            height: 44,
+            justifyContent: "center"
+        },
+        statusDot: { width: 6, height: 6, borderRadius: 3 },
+        statusText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
 
-    fab: {
-        position: "absolute",
-        bottom: 30,
-        right: 20,
-        flexDirection: "row",
-        paddingHorizontal: 20,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: COLORS.primary,
-        justifyContent: "center",
-        alignItems: "center",
-        elevation: 8,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 6,
-        gap: 10
-    },
-    fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
-});
+        loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+        loadingText: { color: COLORS.textMuted, marginTop: 12, fontWeight: "600" },
+        emptyContainer: { alignItems: "center", marginTop: 60, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+
+        fab: {
+            position: "absolute",
+            bottom: 30,
+            right: 20,
+            flexDirection: "row",
+            paddingHorizontal: 20,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: COLORS.primary,
+            justifyContent: "center",
+            alignItems: "center",
+            elevation: 8,
+            shadowColor: COLORS.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 6,
+            gap: 10
+        },
+        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
+    });
 
 export default PGsScreen;

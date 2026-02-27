@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useMemo } from "react";
 import {
     View,
     Text,
@@ -10,24 +10,13 @@ import {
     ActivityIndicator,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
-
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
+import useThemePalette from "../hooks/useThemePalette";
 
 const ChangePasswordScreen = () => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const navigation = useNavigation();
     const [loading, setLoading] = useState(false);
 
@@ -150,7 +139,10 @@ const ChangePasswordScreen = () => {
     );
 };
 
-const styles = StyleSheet.create({
+type ThemePalette = ReturnType<typeof useThemePalette>;
+
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
     header: {
         flexDirection: "row",

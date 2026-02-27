@@ -17,6 +17,7 @@ import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import { Feather, Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
+import ThemeToggleButton from "../components/ThemeToggleButton";
 
 // Screens
 import Dashboard from "../screens/Dashboard";
@@ -40,13 +41,13 @@ const CustomDrawerContent = (props: any) => {
     const { user, logout } = useAuth();
 
     return (
-        <View style={[styles.drawerContainer, { backgroundColor: "#0f172a" }]}>
+        <View style={[styles.drawerContainer, { backgroundColor: colors.background }]}>
             {/* Header / Logo */}
             <View style={styles.drawerHeader}>
                 <View style={[styles.logoBox, { backgroundColor: colors.primary }]}>
                     <Feather name="home" size={24} color="#fff" />
                 </View>
-                <Text style={styles.logoText}>PG Manager</Text>
+                <Text style={[styles.logoText, { color: colors.text }]}>PG Manager</Text>
             </View>
 
             {/* Navigation Items */}
@@ -60,19 +61,19 @@ const CustomDrawerContent = (props: any) => {
             </DrawerContentScrollView>
 
             {/* Footer / User Profile */}
-            <View style={styles.drawerFooter}>
+            <View style={[styles.drawerFooter, { borderTopColor: colors.border }]}>
                 <TouchableOpacity
-                    style={[styles.profileCard, { backgroundColor: "#1e293b" }]}
+                    style={[styles.profileCard, { backgroundColor: colors.card, borderColor: colors.border }]}
                     onPress={() => props.navigation.navigate("Profile")}
                 >
                     <View style={[styles.avatar, { backgroundColor: colors.primary }]}>
                         <Text style={styles.avatarText}>{(user?.full_name || "U")[0]}</Text>
                     </View>
                     <View style={styles.userInfo}>
-                        <Text style={styles.userName} numberOfLines={1}>{user?.full_name || "User"}</Text>
-                        <Text style={styles.userRole}>{user?.role || "ADMIN"}</Text>
+                        <Text style={[styles.userName, { color: colors.text }]} numberOfLines={1}>{user?.full_name || "User"}</Text>
+                        <Text style={[styles.userRole, { color: colors.textSecondary }]}>{user?.role || "ADMIN"}</Text>
                     </View>
-                    <Feather name="settings" size={18} color="#94a3b8" />
+                    <Feather name="settings" size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
 
                 <TouchableOpacity style={styles.logoutButton} onPress={logout}>
@@ -90,12 +91,12 @@ const HeaderTitle = ({ title, colors }: any) => (
 );
 
 // Custom Header Left Component
-const CustomHeaderLeft = ({ navigation }: any) => (
+const CustomHeaderLeft = ({ navigation, tintColor }: any) => (
     <TouchableOpacity
         style={{ marginLeft: 20 }}
         onPress={() => navigation.toggleDrawer()}
     >
-        <Ionicons name="menu" size={26} color="#ffffff" />
+        <Ionicons name="menu" size={26} color={tintColor || "#fff"} />
     </TouchableOpacity>
 );
 
@@ -103,38 +104,44 @@ const MainNavigator = () => {
     const { colors, isDark } = useTheme();
 
     return (
-        <Drawer.Navigator
-            drawerContent={(props) => <CustomDrawerContent {...props} />}
-            screenOptions={({ navigation }) => ({
-                headerShown: true,
-                headerLeft: () => <CustomHeaderLeft navigation={navigation} />,
-                headerStyle: {
-                    backgroundColor: "#0b1120",
-                    elevation: 0,
-                    shadowOpacity: 0,
-                    height: 100,
-                },
-                headerTintColor: "#fff",
-                headerTitleAlign: "center",
-                drawerStyle: {
-                    width: 300,
-                },
-                drawerActiveTintColor: colors.primary,
-                drawerInactiveTintColor: "#94a3b8",
-                drawerActiveBackgroundColor: "rgba(59, 130, 246, 0.1)",
-                drawerLabelStyle: {
-                    fontSize: 15,
-                    fontWeight: "600",
-                    marginLeft: -10,
-                },
-                drawerItemStyle: {
-                    borderRadius: 12,
-                    marginHorizontal: 12,
-                    marginVertical: 4,
-                    paddingHorizontal: 8,
-                }
-            })}
-        >
+            <Drawer.Navigator
+                drawerContent={(props) => <CustomDrawerContent {...props} />}
+                screenOptions={({ navigation }) => ({
+                    headerShown: true,
+                    headerLeft: () => <CustomHeaderLeft navigation={navigation} tintColor={colors.text} />,
+                    headerRight: () => <ThemeToggleButton style={{ marginRight: 20 }} />,
+                    headerRightContainerStyle: { paddingRight: 16 },
+                    headerStyle: {
+                        backgroundColor: colors.card,
+                        elevation: 0,
+                        shadowOpacity: 0,
+                        height: 100,
+                    },
+                    headerTintColor: colors.text,
+                    headerTitleAlign: "center",
+                    headerTitleStyle: {
+                        color: colors.text,
+                    },
+                    drawerStyle: {
+                        width: 300,
+                        backgroundColor: colors.background,
+                    },
+                    drawerActiveTintColor: colors.primary,
+                    drawerInactiveTintColor: colors.textSecondary,
+                    drawerActiveBackgroundColor: isDark ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.15)",
+                    drawerLabelStyle: {
+                        fontSize: 15,
+                        fontWeight: "600",
+                        marginLeft: -10,
+                    },
+                    drawerItemStyle: {
+                        borderRadius: 12,
+                        marginHorizontal: 12,
+                        marginVertical: 4,
+                        paddingHorizontal: 8,
+                    }
+                })}
+            >
             <Drawer.Screen
                 name="Dashboard"
                 component={Dashboard}
@@ -142,12 +149,15 @@ const MainNavigator = () => {
                     drawerIcon: ({ color }) => <Feather name="grid" size={20} color={color} />,
                     headerTitle: "Dashboard",
                     headerRight: () => (
-                        <TouchableOpacity
-                            onPress={() => navigation.setParams({ refresh: Date.now() })}
-                            style={{ marginRight: 20 }}
-                        >
-                            <Ionicons name="refresh-outline" size={24} color="#fff" />
-                        </TouchableOpacity>
+                        <View style={{ flexDirection: "row", alignItems: "center", marginRight: 16 }}>
+                            <TouchableOpacity
+                                onPress={() => navigation.setParams({ refresh: Date.now() })}
+                                style={{ marginRight: 16 }}
+                            >
+                                <Ionicons name="refresh-outline" size={24} color={colors.text} />
+                            </TouchableOpacity>
+                            <ThemeToggleButton />
+                        </View>
                     )
                 })}
             />
@@ -288,6 +298,7 @@ const styles = StyleSheet.create({
         padding: 12,
         borderRadius: 16,
         marginBottom: 20,
+        borderWidth: 1,
     },
     avatar: {
         width: 40,

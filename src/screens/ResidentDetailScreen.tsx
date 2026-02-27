@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
     View,
     Text,
@@ -10,26 +10,15 @@ import {
     Linking
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const ResidentDetailScreen = ({ route, navigation }: any) => {
     const { tenant } = route.params;
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -221,7 +210,10 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
     );
 };
 
-const styles = StyleSheet.create({
+type ThemePalette = ReturnType<typeof useThemePalette>;
+
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
     navHeader: {
         flexDirection: "row",

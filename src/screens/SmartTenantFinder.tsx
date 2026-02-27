@@ -8,29 +8,13 @@ import {
     FlatList,
     ActivityIndicator,
     ScrollView,
-    RefreshControl,
-    Dimensions,
-    Pressable,
-    Modal
+    RefreshControl
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { tenantAPI, pgAPI } from "../services/api";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-
-const { width, height } = Dimensions.get("window");
-
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
 
 const PROFESSION_OPTIONS = [
     "ALL",
@@ -48,10 +32,23 @@ const PROFESSION_OPTIONS = [
 ];
 
 const STATUS_OPTIONS = ["ALL", "ACTIVE", "UPCOMING", "OVERDUE", "NOTICE", "INACTIVE", "COMPLETED"];
-const SORT_OPTIONS = ["Newest First", "Oldest First", "Name (A-Z)", "Name (Z-A)"];
+const SORT_PRESETS = [
+    { label: "Newest First", sortBy: "move_in_date", sortOrder: "desc" },
+    { label: "Oldest First", sortBy: "move_in_date", sortOrder: "asc" },
+    { label: "Name (A-Z)", sortBy: "full_name", sortOrder: "asc" },
+    { label: "Name (Z-A)", sortBy: "full_name", sortOrder: "desc" }
+];
+const DEFAULT_FINDER_FILTERS = {
+    propertyId: "ALL",
+    profession: "ALL",
+    status: "ALL",
+    sortBy: "move_in_date",
+    sortOrder: "desc"
+};
 
 const SmartTenantFinder = ({ navigation }: any) => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
@@ -59,13 +56,15 @@ const SmartTenantFinder = ({ navigation }: any) => {
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
-    const [selectedPg, setSelectedPg] = useState("ALL");
-    const [selectedProfession, setSelectedProfession] = useState("ALL");
-    const [selectedStatus, setSelectedStatus] = useState("ALL");
-    const [selectedSort, setSelectedSort] = useState("Newest First");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [filters, setFilters] = useState(DEFAULT_FINDER_FILTERS);
+    const [pendingFilters, setPendingFilters] = useState(DEFAULT_FINDER_FILTERS);
+    const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
 
-    // Bottom Sheet Control
-    const [activeFilterType, setActiveFilterType] = useState<string | null>(null);
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(searchTerm), 400);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
 
     const fetchData = useCallback(async () => {
         try {
@@ -75,38 +74,24 @@ const SmartTenantFinder = ({ navigation }: any) => {
                 tenantAPI.search({
                     page: 1,
                     limit: 200,
-                    search: searchTerm,
-                    status: selectedStatus,
-                    pgId: selectedPg,
+                    search: debouncedSearch,
+                    status: filters.status,
+                    pgId: filters.propertyId,
+                    profession: filters.profession,
+                    sortBy: filters.sortBy,
+                    sortOrder: filters.sortOrder
                 })
             ]);
 
             setPgs(pgsRes || []);
-
-            let data = tenantsRes.data || [];
-
-            // Local Filter for Profession
-            if (selectedProfession !== "ALL") {
-                data = data.filter((t: any) => t.profession === selectedProfession);
-            }
-
-            // Local Sorting
-            data = [...data].sort((a: any, b: any) => {
-                if (selectedSort === "Newest First") return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
-                if (selectedSort === "Oldest First") return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
-                if (selectedSort === "Name (A-Z)") return (a.full_name || "").localeCompare(b.full_name || "");
-                if (selectedSort === "Name (Z-A)") return (b.full_name || "").localeCompare(a.full_name || "");
-                return 0;
-            });
-
-            setTenants(data);
+            setTenants(tenantsRes.data || []);
         } catch (error) {
             console.error("Failed to fetch tenant finder data:", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [searchTerm, selectedPg, selectedStatus, selectedProfession, selectedSort]);
+    }, [debouncedSearch, filters]);
 
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -195,45 +180,33 @@ const SmartTenantFinder = ({ navigation }: any) => {
         <SafeAreaView style={styles.container}>
             {/* Search Section */}
             <View style={styles.topSection}>
-                <View style={styles.searchBar}>
-                    <Feather name="search" size={20} color={COLORS.textMuted} />
-                    <TextInput
-                        placeholder="Search name, phone, email, ID..."
-                        placeholderTextColor={COLORS.textMuted}
-                        style={styles.searchInput}
-                        value={searchTerm}
-                        onChangeText={setSearchTerm}
-                    />
-                    {searchTerm !== "" && (
-                        <TouchableOpacity onPress={() => setSearchTerm("")}>
-                            <Feather name="x-circle" size={18} color={COLORS.textMuted} />
-                        </TouchableOpacity>
-                    )}
+                <View style={styles.searchRow}>
+                    <View style={styles.searchBar}>
+                        <Feather name="search" size={20} color={COLORS.textMuted} />
+                        <TextInput
+                            placeholder="Search name, phone, email, ID..."
+                            placeholderTextColor={COLORS.textMuted}
+                            style={styles.searchInput}
+                            value={searchTerm}
+                            onChangeText={setSearchTerm}
+                        />
+                        {searchTerm !== "" && (
+                            <TouchableOpacity onPress={() => setSearchTerm("")}>
+                                <Feather name="x-circle" size={18} color={COLORS.textMuted} />
+                            </TouchableOpacity>
+                        )}
+                    </View>
+                    <TouchableOpacity
+                        style={styles.filterButton}
+                        onPress={() => {
+                            setPendingFilters(filters);
+                            setFilterSheetVisible(true);
+                        }}
+                    >
+                        <Feather name="sliders" size={18} color="#fff" />
+                        <Text style={styles.filterButtonText}>Filter</Text>
+                    </TouchableOpacity>
                 </View>
-
-                {/* Filter Chips Row */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll} contentContainerStyle={styles.chipsContent}>
-                    <FilterChip
-                        label={selectedPg === "ALL" ? "Property" : pgs.find(p => p.id === selectedPg)?.name || "Property"}
-                        isActive={selectedPg !== "ALL"}
-                        onPress={() => setActiveFilterType("PROPERTY")}
-                    />
-                    <FilterChip
-                        label={selectedProfession === "ALL" ? "Profession" : selectedProfession}
-                        isActive={selectedProfession !== "ALL"}
-                        onPress={() => setActiveFilterType("PROFESSION")}
-                    />
-                    <FilterChip
-                        label={selectedStatus === "ALL" ? "Status" : selectedStatus}
-                        isActive={selectedStatus !== "ALL"}
-                        onPress={() => setActiveFilterType("STATUS")}
-                    />
-                    <FilterChip
-                        label={selectedSort}
-                        isActive={true}
-                        onPress={() => setActiveFilterType("SORT")}
-                    />
-                </ScrollView>
             </View>
 
             {/* Results List */}
@@ -257,108 +230,154 @@ const SmartTenantFinder = ({ navigation }: any) => {
                 />
             )}
 
-            {/* Filter Bottom Sheet Modal */}
-            <Modal
-                visible={!!activeFilterType}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setActiveFilterType(null)}
+            <FilterBottomSheet
+                visible={isFilterSheetVisible}
+                title="Finder Filters"
+                description="Property, status, profession, and sort settings carried over from web"
+                onClose={() => setFilterSheetVisible(false)}
+                onApply={() => {
+                    const applied = { ...pendingFilters };
+                    setFilters(applied);
+                    setPendingFilters(applied);
+                    setFilterSheetVisible(false);
+                }}
+                onReset={() => {
+                    setFilters(DEFAULT_FINDER_FILTERS);
+                    setPendingFilters(DEFAULT_FINDER_FILTERS);
+                    setFilterSheetVisible(false);
+                }}
             >
-                <Pressable style={styles.modalOverlay} onPress={() => setActiveFilterType(null)}>
-                    <View style={styles.bottomSheet}>
-                        <View style={styles.sheetHeader}>
-                            <View style={styles.sheetHandle} />
-                            <Text style={styles.sheetTitle}>
-                                {activeFilterType === "PROPERTY" && "Select Property"}
-                                {activeFilterType === "PROFESSION" && "Select Profession"}
-                                {activeFilterType === "STATUS" && "Select Status"}
-                                {activeFilterType === "SORT" && "Sort By"}
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Property</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetChip, pendingFilters.propertyId === "ALL" && styles.sheetChipActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: "ALL" }))}
+                        >
+                            <Text style={[styles.sheetChipText, pendingFilters.propertyId === "ALL" && styles.sheetChipTextActive]}>
+                                All Properties
                             </Text>
-                        </View>
+                        </TouchableOpacity>
+                        {pgs.map(pg => (
+                            <TouchableOpacity
+                                key={pg.id}
+                                style={[styles.sheetChip, pendingFilters.propertyId === pg.id && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: pg.id }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.propertyId === pg.id && styles.sheetChipTextActive]}>
+                                    {pg.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
 
-                        <ScrollView style={styles.sheetContent}>
-                            {activeFilterType === "PROPERTY" && (
-                                <>
-                                    <BottomSheetItem label="All Properties" isSelected={selectedPg === "ALL"} onPress={() => { setSelectedPg("ALL"); setActiveFilterType(null); }} />
-                                    {pgs.map(pg => (
-                                        <BottomSheetItem key={pg.id} label={pg.name} isSelected={selectedPg === pg.id} onPress={() => { setSelectedPg(pg.id); setActiveFilterType(null); }} />
-                                    ))}
-                                </>
-                            )}
-                            {activeFilterType === "PROFESSION" && (
-                                PROFESSION_OPTIONS.map(prof => (
-                                    <BottomSheetItem key={prof} label={prof} isSelected={selectedProfession === prof} onPress={() => { setSelectedProfession(prof); setActiveFilterType(null); }} />
-                                ))
-                            )}
-                            {activeFilterType === "STATUS" && (
-                                STATUS_OPTIONS.map(stat => (
-                                    <BottomSheetItem key={stat} label={stat} isSelected={selectedStatus === stat} onPress={() => { setSelectedStatus(stat); setActiveFilterType(null); }} />
-                                ))
-                            )}
-                            {activeFilterType === "SORT" && (
-                                SORT_OPTIONS.map(opt => (
-                                    <BottomSheetItem key={opt} label={opt} isSelected={selectedSort === opt} onPress={() => { setSelectedSort(opt); setActiveFilterType(null); }} />
-                                ))
-                            )}
-                        </ScrollView>
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Status</Text>
+                    <View style={styles.sheetChipsRow}>
+                        {STATUS_OPTIONS.map(stat => (
+                            <TouchableOpacity
+                                key={stat}
+                                style={[styles.sheetChip, pendingFilters.status === stat && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, status: stat }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.status === stat && styles.sheetChipTextActive]}>
+                                    {stat}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
                     </View>
-                </Pressable>
-            </Modal>
+                </View>
+
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Profession</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetChip, pendingFilters.profession === "ALL" && styles.sheetChipActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, profession: "ALL" }))}
+                        >
+                            <Text style={[styles.sheetChipText, pendingFilters.profession === "ALL" && styles.sheetChipTextActive]}>
+                                All Professions
+                            </Text>
+                        </TouchableOpacity>
+                        {PROFESSION_OPTIONS.map(prof => (
+                            <TouchableOpacity
+                                key={prof}
+                                style={[styles.sheetChip, pendingFilters.profession === prof && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, profession: prof }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.profession === prof && styles.sheetChipTextActive]}>
+                                    {prof}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Sort</Text>
+                    <View style={styles.sheetSortRow}>
+                        {SORT_PRESETS.map(preset => (
+                            <TouchableOpacity
+                                key={preset.label}
+                                style={[
+                                    styles.sheetSortButton,
+                                    pendingFilters.sortBy === preset.sortBy && pendingFilters.sortOrder === preset.sortOrder && styles.sheetSortButtonActive
+                                ]}
+                                onPress={() =>
+                                    setPendingFilters(prev => ({
+                                        ...prev,
+                                        sortBy: preset.sortBy,
+                                        sortOrder: preset.sortOrder
+                                    }))
+                                }
+                            >
+                                <Text
+                                    style={[
+                                        styles.sheetSortText,
+                                        pendingFilters.sortBy === preset.sortBy && pendingFilters.sortOrder === preset.sortOrder && styles.sheetSortTextActive
+                                    ]}
+                                >
+                                    {preset.label}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            </FilterBottomSheet>
         </SafeAreaView>
     );
 };
 
-const FilterChip = ({ label, isActive, onPress }: any) => (
-    <TouchableOpacity
-        style={[styles.chip, isActive && styles.chipActive]}
-        onPress={onPress}
-    >
-        <Text style={[styles.chipText, isActive && styles.chipTextActive]} numberOfLines={1}>{label}</Text>
-        <Feather name="chevron-down" size={12} color={isActive ? "#fff" : COLORS.textMuted} style={{ marginLeft: 6 }} />
-    </TouchableOpacity>
-);
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-const BottomSheetItem = ({ label, isSelected, onPress }: any) => (
-    <TouchableOpacity style={[styles.sheetItem, isSelected && styles.sheetItemActive]} onPress={onPress}>
-        <Text style={[styles.sheetItemText, isSelected && styles.sheetItemTextActive]}>{label}</Text>
-        {isSelected && <Feather name="check" size={18} color={COLORS.primary} />}
-    </TouchableOpacity>
-);
-
-const styles = StyleSheet.create({
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
-    topSection: { paddingVertical: 10 },
+    topSection: { paddingVertical: 10, paddingHorizontal: 20 },
+    searchRow: { flexDirection: "row", alignItems: "center", gap: 10 },
     searchBar: {
+        flex: 1,
         flexDirection: "row",
         alignItems: "center",
         backgroundColor: COLORS.card,
         borderRadius: 25,
         paddingHorizontal: 20,
         height: 50,
-        marginHorizontal: 20,
-        marginBottom: 15,
         borderWidth: 1,
         borderColor: COLORS.border
     },
     searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-
-    chipsScroll: { maxHeight: 50 },
-    chipsContent: { paddingHorizontal: 20, gap: 10, paddingBottom: 10 },
-    chip: {
+    filterButton: {
         flexDirection: "row",
         alignItems: "center",
-        paddingHorizontal: 14,
-        paddingVertical: 8,
-        borderRadius: 20,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        minWidth: 80,
-        justifyContent: "center"
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 14,
+        gap: 6
     },
-    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    chipText: { fontSize: 12, fontWeight: "700", color: COLORS.textMuted },
-    chipTextActive: { color: "#fff" },
+    filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
     listContent: { padding: 20, paddingTop: 10, paddingBottom: 40 },
     card: {
@@ -395,29 +414,33 @@ const styles = StyleSheet.create({
     emptyContainer: { alignItems: "center", marginTop: 80, gap: 16 },
     emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
 
-    modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-    bottomSheet: {
+    sheetSection: { marginBottom: 18 },
+    sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+    sheetChipsRow: { flexDirection: "row", gap: 10 },
+    sheetChip: {
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 14,
         backgroundColor: COLORS.card,
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
-        maxHeight: height * 0.7,
-        paddingBottom: 40
+        borderWidth: 1,
+        borderColor: COLORS.border
     },
-    sheetHeader: { alignItems: "center", padding: 15 },
-    sheetHandle: { width: 40, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 15 },
-    sheetTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    sheetContent: { paddingHorizontal: 20 },
-    sheetItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        paddingVertical: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: "rgba(255,255,255,0.05)"
+    sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+    sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+    sheetChipTextActive: { color: COLORS.primary },
+
+    sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    sheetSortButton: {
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        backgroundColor: COLORS.card
     },
-    sheetItemActive: {},
-    sheetItemText: { fontSize: 16, fontWeight: "600", color: COLORS.textMuted },
-    sheetItemTextActive: { color: COLORS.primary, fontWeight: "800" }
+    sheetSortButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+    sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+    sheetSortTextActive: { color: COLORS.primary }
 });
 
 export default SmartTenantFinder;

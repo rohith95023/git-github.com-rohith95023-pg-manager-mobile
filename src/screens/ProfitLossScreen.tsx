@@ -10,7 +10,6 @@ import {
     TouchableOpacity,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { pnlAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import {
@@ -23,23 +22,13 @@ import {
     VictoryTooltip,
     VictoryLabel
 } from "victory-native";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const ProfitLossScreen = () => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [summary, setSummary] = useState<any[]>([]);
@@ -311,86 +300,89 @@ const ProfitLossScreen = () => {
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingBottom: 10 },
-    title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-    subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    kpiPadding: { paddingHorizontal: 20, paddingVertical: 15, gap: 12 },
-    statCard: {
-        width: width * 0.45,
-        backgroundColor: COLORS.card,
-        borderRadius: 20,
-        padding: 16,
-        borderWidth: 1,
-    },
-    statIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center", marginBottom: 12 },
-    statLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8 },
-    statValue: { fontSize: 18, fontWeight: "900" },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingBottom: 10 },
+        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
+        subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
 
-    filtersRow: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
-    filterChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 12,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    filterChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
-    filterChipTextActive: { color: "#fff" },
+        kpiPadding: { paddingHorizontal: 20, paddingVertical: 15, gap: 12 },
+        statCard: {
+            width: width * 0.45,
+            backgroundColor: COLORS.card,
+            borderRadius: 20,
+            padding: 16,
+            borderWidth: 1,
+        },
+        statIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center", marginBottom: 12 },
+        statLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8 },
+        statValue: { fontSize: 18, fontWeight: "900" },
 
-    chartSection: { marginHorizontal: 20, marginBottom: 24 },
-    sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 16 },
-    chartContainer: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        paddingVertical: 10,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        alignItems: "center"
-    },
-    legendRow: { flexDirection: "row", gap: 20, marginTop: -10, marginBottom: 10 },
-    legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-    legendDot: { width: 8, height: 8, borderRadius: 4 },
-    legendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
+        filtersRow: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
+        filterChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 12,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        filterChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
+        filterChipTextActive: { color: "#fff" },
 
-    donutContainer: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 10,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    pieLegend: { flex: 1, gap: 10, paddingRight: 10 },
-    pieLegendItem: { flexDirection: "row", alignItems: "center", gap: 8 },
-    pieLegendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, flex: 1 },
+        chartSection: { marginHorizontal: 20, marginBottom: 24 },
+        sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 16 },
+        chartContainer: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            paddingVertical: 10,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            alignItems: "center"
+        },
+        legendRow: { flexDirection: "row", gap: 20, marginTop: -10, marginBottom: 10 },
+        legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+        legendDot: { width: 8, height: 8, borderRadius: 4 },
+        legendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
 
-    breakdownSection: { paddingHorizontal: 20 },
-    breakdownCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    breakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-    breakdownMonth: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-    breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-    profitBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
-    profitBadgeText: { fontSize: 9, fontWeight: "900" },
+        donutContainer: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 10,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        pieLegend: { flex: 1, gap: 10, paddingRight: 10 },
+        pieLegendItem: { flexDirection: "row", alignItems: "center", gap: 8 },
+        pieLegendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, flex: 1 },
 
-    breakdownGrid: { flexDirection: "row", justifyContent: "space-between" },
-    gridItem: { flex: 1 },
-    gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 6 },
-    gridValue: { fontSize: 14, fontWeight: "800" },
+        breakdownSection: { paddingHorizontal: 20 },
+        breakdownCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        breakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
+        breakdownMonth: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+        breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+        profitBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+        profitBadgeText: { fontSize: 9, fontWeight: "900" },
 
-    emptyChart: { height: 150, justifyContent: "center", alignItems: "center" },
-    emptyState: { alignItems: "center", marginTop: 40, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
-});
+        breakdownGrid: { flexDirection: "row", justifyContent: "space-between" },
+        gridItem: { flex: 1 },
+        gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 6 },
+        gridValue: { fontSize: 14, fontWeight: "800" },
+
+        emptyChart: { height: 150, justifyContent: "center", alignItems: "center" },
+        emptyState: { alignItems: "center", marginTop: 40, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
+    });
 
 export default ProfitLossScreen;

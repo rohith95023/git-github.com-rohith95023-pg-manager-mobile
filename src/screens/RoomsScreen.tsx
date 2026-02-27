@@ -13,37 +13,40 @@ import {
     Pressable
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { roomAPI, bedAPI, pgAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
+const createDefaultRoomFilters = () => ({
+    property: null as string | null,
+    showArchived: false,
+    bedStatus: "ALL",
+});
+const BED_STATUS_OPTIONS = ["ALL", "AVAILABLE", "OCCUPIED", "MAINTENANCE"];
 
 const RoomsScreen = ({ navigation }: any) => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [viewMode, setViewMode] = useState<"ROOMS" | "BEDS">("ROOMS");
-    const [statusMode, setStatusMode] = useState<"ACTIVE" | "ARCHIVED">("ACTIVE");
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [filters, setFilters] = useState(createDefaultRoomFilters());
+    const [pendingFilters, setPendingFilters] = useState(createDefaultRoomFilters());
+    const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
 
     const [rooms, setRooms] = useState<any[]>([]);
     const [beds, setBeds] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
 
     const [searchTerm, setSearchTerm] = useState("");
-    const [selectedPg, setSelectedPg] = useState<string | null>(null);
+    const statusMode = filters.showArchived ? "ARCHIVED" : "ACTIVE";
+    const updateShowArchived = (value: boolean) => {
+        setFilters(prev => ({ ...prev, showArchived: value }));
+        setPendingFilters(prev => ({ ...prev, showArchived: value }));
+    };
 
     const fetchData = useCallback(async () => {
         try {
@@ -75,25 +78,31 @@ const RoomsScreen = ({ navigation }: any) => {
 
     // Filter Logic
     const filteredContent = useMemo(() => {
+        const propertyId = filters.property;
+        const showArchived = filters.showArchived;
+        const matchesArchive = (status: string) =>
+            showArchived ? status === "DELETED" : status !== "DELETED";
+
         if (viewMode === "ROOMS") {
             return rooms.filter(r => {
                 const matchesSearch = (r.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (r.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
-                const matchesPg = !selectedPg || r.pg_id === selectedPg;
-                const matchesStatus = statusMode === "ACTIVE" ? r.status !== "DELETED" : r.status === "DELETED";
+                const matchesPg = !propertyId || r.pg_id === propertyId;
+                const matchesStatus = matchesArchive(r.status);
                 return matchesSearch && matchesPg && matchesStatus;
             });
         } else {
-            return beds.filter(b => {
-                const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+        return beds.filter(b => {
+            const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
-                const matchesPg = !selectedPg || b.rooms?.pg_id === selectedPg;
-                const matchesStatus = statusMode === "ACTIVE" ? b.status !== "DELETED" : b.status === "DELETED";
-                return matchesSearch && matchesPg && matchesStatus;
+                const matchesPg = !propertyId || b.rooms?.pg_id === propertyId;
+                const matchesStatus = matchesArchive(b.status);
+                const matchesBedStatus = filters.bedStatus === "ALL" || b.status === filters.bedStatus;
+                return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
         }
-    }, [viewMode, statusMode, rooms, beds, searchTerm, selectedPg]);
+    }, [viewMode, rooms, beds, searchTerm, filters]);
 
     // Stats Logic
     const stats = useMemo(() => {
@@ -213,13 +222,13 @@ const RoomsScreen = ({ navigation }: any) => {
                     <View style={styles.subSegmentedControl}>
                         <TouchableOpacity
                             style={[styles.subSegment, statusMode === "ACTIVE" && styles.subSegmentActive]}
-                            onPress={() => setStatusMode("ACTIVE")}
+                            onPress={() => updateShowArchived(false)}
                         >
                             <Text style={[styles.subSegmentText, statusMode === "ACTIVE" && styles.subSegmentTextActive]}>Available</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                             style={[styles.subSegment, statusMode === "ARCHIVED" && styles.subSegmentActive]}
-                            onPress={() => setStatusMode("ARCHIVED")}
+                            onPress={() => updateShowArchived(true)}
                         >
                             <Text style={[styles.subSegmentText, statusMode === "ARCHIVED" && styles.subSegmentTextActive]}>Archived</Text>
                         </TouchableOpacity>
@@ -260,41 +269,35 @@ const RoomsScreen = ({ navigation }: any) => {
                             ))}
                         </ScrollView>
 
-                        {/* Search and Filters */}
+                        {/* Search Row with Filter button */}
                         <View style={styles.filterSection}>
-                            <View style={styles.searchBar}>
-                                <Feather name="search" size={18} color={COLORS.textMuted} />
-                                <TextInput
-                                    placeholder={viewMode === "ROOMS" ? "Search room or property..." : "Search bed, room or tenant..."}
-                                    placeholderTextColor={COLORS.textMuted}
-                                    style={styles.searchInput}
-                                    value={searchTerm}
-                                    onChangeText={setSearchTerm}
-                                />
-                                {searchTerm !== "" && (
-                                    <TouchableOpacity onPress={() => setSearchTerm("")}>
-                                        <Feather name="x-circle" size={18} color={COLORS.textMuted} />
-                                    </TouchableOpacity>
-                                )}
-                            </View>
-
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
+                            <View style={styles.searchFilterRow}>
+                                <View style={styles.searchBar}>
+                                    <Feather name="search" size={18} color={COLORS.textMuted} />
+                                    <TextInput
+                                        placeholder={viewMode === "ROOMS" ? "Search room or property..." : "Search bed, room or tenant..."}
+                                        placeholderTextColor={COLORS.textMuted}
+                                        style={styles.searchInput}
+                                        value={searchTerm}
+                                        onChangeText={setSearchTerm}
+                                    />
+                                    {searchTerm !== "" && (
+                                        <TouchableOpacity onPress={() => setSearchTerm("")}>
+                                            <Feather name="x-circle" size={18} color={COLORS.textMuted} />
+                                        </TouchableOpacity>
+                                    )}
+                                </View>
                                 <TouchableOpacity
-                                    style={[styles.chip, !selectedPg && styles.chipActive]}
-                                    onPress={() => setSelectedPg(null)}
+                                    style={styles.filterButton}
+                                    onPress={() => {
+                                        setPendingFilters({ ...filters });
+                                        setFilterSheetVisible(true);
+                                    }}
                                 >
-                                    <Text style={[styles.chipText, !selectedPg && styles.chipTextActive]}>All Properties</Text>
+                                    <Feather name="sliders" size={18} color="#fff" />
+                                    <Text style={styles.filterButtonText}>Filter</Text>
                                 </TouchableOpacity>
-                                {pgs.map((pg) => (
-                                    <TouchableOpacity
-                                        key={pg.id}
-                                        style={[styles.chip, selectedPg === pg.id && styles.chipActive]}
-                                        onPress={() => setSelectedPg(pg.id)}
-                                    >
-                                        <Text style={[styles.chipText, selectedPg === pg.id && styles.chipTextActive]}>{pg.name}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
+                            </View>
                         </View>
                     </>
                 }
@@ -312,6 +315,85 @@ const RoomsScreen = ({ navigation }: any) => {
                 }
             />
 
+            <FilterBottomSheet
+                visible={isFilterSheetVisible}
+                title="Room & Bed Filters"
+                description="Property, inventory status, and archive controls copied from web"
+                onClose={() => setFilterSheetVisible(false)}
+                onApply={() => {
+                    const applied = { ...pendingFilters };
+                    setFilters(applied);
+                    setPendingFilters(applied);
+                    setFilterSheetVisible(false);
+                }}
+                onReset={() => {
+                    const defaults = createDefaultRoomFilters();
+                    setFilters(defaults);
+                    setPendingFilters(defaults);
+                    setFilterSheetVisible(false);
+                }}
+                applyLabel="Apply"
+                resetLabel="Reset"
+            >
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Property</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetChip, !pendingFilters.property && styles.sheetChipActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, property: null }))}
+                        >
+                            <Text style={[styles.sheetChipText, !pendingFilters.property && styles.sheetChipTextActive]}>All Properties</Text>
+                        </TouchableOpacity>
+                        {pgs.map(pg => (
+                            <TouchableOpacity
+                                key={pg.id}
+                                style={[styles.sheetChip, pendingFilters.property === pg.id && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, property: pg.id }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.property === pg.id && styles.sheetChipTextActive]} numberOfLines={1}>
+                                    {pg.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+                {viewMode === "BEDS" && (
+                    <View style={styles.sheetSection}>
+                        <Text style={styles.sheetLabel}>Bed Status</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                            {BED_STATUS_OPTIONS.map(status => (
+                                <TouchableOpacity
+                                    key={status}
+                                    style={[styles.sheetChip, pendingFilters.bedStatus === status && styles.sheetChipActive]}
+                                    onPress={() => setPendingFilters(prev => ({ ...prev, bedStatus: status }))}
+                                >
+                                    <Text style={[styles.sheetChipText, pendingFilters.bedStatus === status && styles.sheetChipTextActive]}>
+                                        {status === "ALL" ? "All Beds" : status.charAt(0) + status.slice(1).toLowerCase()}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Inventory Status</Text>
+                    <View style={styles.sheetStatusRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetStatusOption, !pendingFilters.showArchived && styles.sheetStatusOptionActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, showArchived: false }))}
+                        >
+                            <Text style={[styles.sheetStatusText, !pendingFilters.showArchived && styles.sheetStatusTextActive]}>Active</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.sheetStatusOption, pendingFilters.showArchived && styles.sheetStatusOptionActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, showArchived: true }))}
+                        >
+                            <Text style={[styles.sheetStatusText, pendingFilters.showArchived && styles.sheetStatusTextActive]}>Archived</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
+            </FilterBottomSheet>
+
             {/* FAB */}
             <TouchableOpacity
                 style={styles.fab}
@@ -324,7 +406,10 @@ const RoomsScreen = ({ navigation }: any) => {
     );
 };
 
-const styles = StyleSheet.create({
+type ThemePalette = ReturnType<typeof useThemePalette>;
+
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
     header: { padding: 20, paddingBottom: 10 },
     headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 20 },
@@ -377,6 +462,25 @@ const styles = StyleSheet.create({
     statLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase" },
 
     filterSection: { paddingHorizontal: 20, marginBottom: 12 },
+    searchFilterRow: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 10,
+    },
+    filterButton: {
+        paddingVertical: 12,
+        paddingHorizontal: 16,
+        borderRadius: 14,
+        backgroundColor: "#2563eb",
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 6,
+    },
+    filterButtonText: {
+        color: "#fff",
+        fontWeight: "700",
+        fontSize: 14,
+    },
     searchBar: {
         flexDirection: "row",
         alignItems: "center",
@@ -388,19 +492,38 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border
     },
     searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    chipsScroll: { marginTop: 16, marginHorizontal: -20, paddingLeft: 20 },
-    chip: {
+    sheetSection: { marginBottom: 18 },
+    sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+    sheetChipsRow: { gap: 8 },
+    sheetChip: {
         paddingHorizontal: 16,
         paddingVertical: 8,
         borderRadius: 14,
         backgroundColor: COLORS.card,
-        marginRight: 10,
         borderWidth: 1,
-        borderColor: COLORS.border
+        borderColor: COLORS.border,
+        marginRight: 10,
+        minWidth: 100,
     },
-    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    chipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
-    chipTextActive: { color: "#fff" },
+    sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+    sheetChipText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
+    sheetChipTextActive: { color: "#fff" },
+    sheetStatusRow: { flexDirection: "row", gap: 10 },
+    sheetStatusOption: {
+        flex: 1,
+        paddingVertical: 12,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        alignItems: "center",
+        backgroundColor: COLORS.card,
+    },
+    sheetStatusOptionActive: {
+        borderColor: COLORS.primary,
+        backgroundColor: COLORS.primary + "15",
+    },
+    sheetStatusText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
+    sheetStatusTextActive: { color: COLORS.primary },
 
     listContent: { paddingBottom: 100 },
     card: {

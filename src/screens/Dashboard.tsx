@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
     View,
     Text,
@@ -12,27 +12,16 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
-import { useTheme } from "../context/ThemeContext";
 import { statsAPI, paymentAPI, tenantAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const Dashboard = ({ navigation, route }: any) => {
     const { user } = useAuth();
-    const { colors, isDark } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [stats, setStats] = useState<any>(null);
@@ -75,7 +64,7 @@ const Dashboard = ({ navigation, route }: any) => {
 
     if (loading && !refreshing) {
         return (
-            <View style={[styles.container, { backgroundColor: COLORS.bg, justifyContent: 'center', alignItems: 'center' }]}>
+        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
                 <ActivityIndicator size="large" color={COLORS.primary} />
             </View>
         );
@@ -84,7 +73,7 @@ const Dashboard = ({ navigation, route }: any) => {
     const KPICard = ({ title, value, icon, iconType = "Feather", color = COLORS.primary }: any) => {
         const IconComponent = iconType === "Material" ? MaterialCommunityIcons : Feather;
         return (
-            <View style={styles.kpiCard}>
+                <View style={styles.kpiCard}>
                 <View style={[styles.kpiIconBox, { backgroundColor: color + "15" }]}>
                     <IconComponent name={icon as any} size={20} color={color} />
                 </View>
@@ -247,116 +236,119 @@ const Dashboard = ({ navigation, route }: any) => {
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    scrollContent: { padding: 20 },
-    welcomeSection: { marginBottom: 24, marginTop: 8 },
-    welcomeSubtitle: { fontSize: 20, fontWeight: "800", color: COLORS.text, letterSpacing: -0.5 },
-    dateText: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-    kpiGrid: {
-        flexDirection: "row",
-        flexWrap: "wrap",
-        justifyContent: "space-between",
-        marginBottom: 24
-    },
-    kpiCard: {
-        width: "48%",
-        backgroundColor: COLORS.card,
-        padding: 16,
-        borderRadius: 20,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    kpiIconBox: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        justifyContent: "center",
-        alignItems: "center",
-        marginBottom: 12
-    },
-    kpiValue: { fontSize: 20, fontWeight: "800", color: COLORS.text, marginBottom: 2 },
-    kpiTitle: { fontSize: 11, color: COLORS.textMuted, fontWeight: "600", textTransform: "uppercase" },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    financeCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 28,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        elevation: 4,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.2,
-        shadowRadius: 10
-    },
-    financeHeader: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 16,
-        paddingBottom: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border
-    },
-    financeTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-    financeGrid: { flexDirection: "row", flexWrap: "wrap" },
-    financeItem: { width: "50%", marginBottom: 16 },
-    financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase", marginBottom: 4 },
-    financeValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        scrollContent: { padding: 20 },
+        welcomeSection: { marginBottom: 24, marginTop: 8 },
+        welcomeSubtitle: { fontSize: 20, fontWeight: "800", color: COLORS.text, letterSpacing: -0.5 },
+        dateText: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+        kpiGrid: {
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "space-between",
+            marginBottom: 24
+        },
+        kpiCard: {
+            width: "48%",
+            backgroundColor: COLORS.card,
+            padding: 16,
+            borderRadius: 20,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        kpiIconBox: {
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: 12
+        },
+        kpiValue: { fontSize: 20, fontWeight: "800", color: COLORS.text, marginBottom: 2 },
+        kpiTitle: { fontSize: 11, color: COLORS.textMuted, fontWeight: "600", textTransform: "uppercase" },
 
-    sectionHeader: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginBottom: 16,
-        marginTop: 8
-    },
-    sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    seeAllBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
-    seeAllText: { fontSize: 13, color: COLORS.primary, fontWeight: "700" },
+        financeCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 28,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            elevation: 4,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.2,
+            shadowRadius: 10
+        },
+        financeHeader: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 16,
+            paddingBottom: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border
+        },
+        financeTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+        financeGrid: { flexDirection: "row", flexWrap: "wrap" },
+        financeItem: { width: "50%", marginBottom: 16 },
+        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase", marginBottom: 4 },
+        financeValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
 
-    listContainer: { gap: 12, marginBottom: 20 },
-    listItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        padding: 14,
-        borderRadius: 18,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    listIcon: { marginRight: 12 },
-    avatar: {
-        width: 44,
-        height: 44,
-        borderRadius: 14,
-        justifyContent: "center",
-        alignItems: "center"
-    },
-    avatarText: { fontSize: 18, fontWeight: "800" },
-    listMain: { flex: 1 },
-    listTitle: { fontSize: 15, fontWeight: "700", color: COLORS.text },
-    listSubTitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
-    listRight: { alignItems: "flex-end" },
-    listPrice: { fontSize: 14, fontWeight: "800", color: COLORS.warning },
-    listDate: { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
-    paymentAmount: { fontSize: 15, fontWeight: "900", color: COLORS.success },
+        sectionHeader: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginBottom: 16,
+            marginTop: 8
+        },
+        sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        seeAllBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
+        seeAllText: { fontSize: 13, color: COLORS.primary, fontWeight: "700" },
 
-    emptyCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 20,
-        padding: 24,
-        alignItems: "center",
-        gap: 12,
-        borderStyle: "dashed",
-        borderWidth: 1,
-        borderColor: "rgba(255,255,255,0.1)",
-        marginBottom: 20
-    },
-    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
-});
+        listContainer: { gap: 12, marginBottom: 20 },
+        listItem: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            padding: 14,
+            borderRadius: 18,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        listIcon: { marginRight: 12 },
+        avatar: {
+            width: 44,
+            height: 44,
+            borderRadius: 14,
+            justifyContent: "center",
+            alignItems: "center"
+        },
+        avatarText: { fontSize: 18, fontWeight: "800" },
+        listMain: { flex: 1 },
+        listTitle: { fontSize: 15, fontWeight: "700", color: COLORS.text },
+        listSubTitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
+        listRight: { alignItems: "flex-end" },
+        listPrice: { fontSize: 14, fontWeight: "800", color: COLORS.warning },
+        listDate: { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
+        paymentAmount: { fontSize: 15, fontWeight: "900", color: COLORS.success },
+
+        emptyCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 20,
+            padding: 24,
+            alignItems: "center",
+            gap: 12,
+            borderStyle: "dashed",
+            borderWidth: 1,
+            borderColor: "rgba(255,255,255,0.1)",
+            marginBottom: 20
+        },
+        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
+    });
 
 export default Dashboard;

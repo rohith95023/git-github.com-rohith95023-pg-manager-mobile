@@ -14,26 +14,21 @@ import {
     Animated,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { paymentAPI, pgAPI, tenantAPI, statsAPI } from "../services/api";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
 
 const { width } = Dimensions.get("window");
-
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
+const DEFAULT_PAYMENT_FILTERS = {
+    propertyId: "ALL",
+    status: ""
 };
+const PAYMENT_STATUS_OPTIONS = ["", "PAID", "PENDING", "COMPLETED", "FAILED", "PARTIAL"];
 
 const PaymentsScreen = () => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [payments, setPayments] = useState<any[]>([]);
@@ -48,10 +43,9 @@ const PaymentsScreen = () => {
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
-    const [selectedPg, setSelectedPg] = useState("ALL");
-    const [selectedStatus, setSelectedStatus] = useState("ALL");
-    const [selectedFilter, setSelectedFilter] = useState("ALL"); // Paid, Pending
-    const [showFilters, setShowFilters] = useState(false);
+    const [filters, setFilters] = useState(DEFAULT_PAYMENT_FILTERS);
+    const [pendingFilters, setPendingFilters] = useState(DEFAULT_PAYMENT_FILTERS);
+    const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
 
     const fetchData = useCallback(async () => {
         try {
@@ -102,23 +96,29 @@ const PaymentsScreen = () => {
 
     const filteredPayments = useMemo(() => {
         return payments.filter(p => {
+            const lowerSearch = searchTerm.toLowerCase();
             const matchesSearch =
-                (p.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (p.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (p.billing_month || "").toLowerCase().includes(searchTerm.toLowerCase());
+                (p.tenants?.full_name || "").toLowerCase().includes(lowerSearch) ||
+                (p.pgs?.name || "").toLowerCase().includes(lowerSearch) ||
+                (p.billing_month || "").toLowerCase().includes(lowerSearch);
 
-            const matchesPg = selectedPg === "ALL" || p.pg_id === selectedPg;
+            const matchesPg = filters.propertyId === "ALL" || p.pg_id === filters.propertyId;
 
-            const matchesStatus = selectedStatus === "ALL" || p.status === selectedStatus;
+            const statusValue = (p.status || "").toUpperCase();
+            let matchesStatus = true;
+            if (filters.status) {
+                if (filters.status === "PAID") {
+                    matchesStatus = statusValue === "PAID" || statusValue === "COMPLETED";
+                } else if (filters.status === "PENDING") {
+                    matchesStatus = statusValue === "PENDING" || statusValue === "PENDING_DUE";
+                } else {
+                    matchesStatus = statusValue === filters.status;
+                }
+            }
 
-            const matchesFilter =
-                selectedFilter === "ALL" ||
-                (selectedFilter === "PAID" && (p.status === "PAID" || p.status === "COMPLETED")) ||
-                (selectedFilter === "PENDING" && p.status === "PENDING");
-
-            return matchesSearch && matchesPg && matchesStatus && matchesFilter;
+            return matchesSearch && matchesPg && matchesStatus;
         });
-    }, [payments, searchTerm, selectedPg, selectedStatus, selectedFilter]);
+    }, [payments, searchTerm, filters]);
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -234,53 +234,32 @@ const PaymentsScreen = () => {
 
             {/* Search and Filters */}
             <View style={styles.filterSection}>
-                {/* Search and Filters */}
-                <View style={styles.filterSection}>
-                    <View style={styles.searchRow}>
-                        <View style={styles.searchBar}>
-                            <Feather name="search" size={18} color={COLORS.textMuted} />
-                            <TextInput
-                                placeholder="Search records..."
-                                placeholderTextColor={COLORS.textMuted}
-                                style={styles.searchInput}
-                                value={searchTerm}
-                                onChangeText={setSearchTerm}
-                            />
-                            {searchTerm.length > 0 && (
-                                <TouchableOpacity onPress={() => setSearchTerm("")}>
-                                    <Feather name="x-circle" size={16} color={COLORS.textMuted} />
-                                </TouchableOpacity>
-                            )}
-                        </View>
-                        <TouchableOpacity
-                            style={[styles.filterToggle, showFilters && styles.filterToggleActive]}
-                            onPress={() => setShowFilters(!showFilters)}
-                        >
-                            <Ionicons
-                                name={showFilters ? "close" : "options-outline"}
-                                size={22}
-                                color={showFilters ? "#fff" : COLORS.primary}
-                            />
-                        </TouchableOpacity>
+                <View style={styles.searchRow}>
+                    <View style={styles.searchBar}>
+                        <Feather name="search" size={18} color={COLORS.textMuted} />
+                        <TextInput
+                            placeholder="Search records..."
+                            placeholderTextColor={COLORS.textMuted}
+                            style={styles.searchInput}
+                            value={searchTerm}
+                            onChangeText={setSearchTerm}
+                        />
+                        {searchTerm.length > 0 && (
+                            <TouchableOpacity onPress={() => setSearchTerm("")}>
+                                <Feather name="x-circle" size={16} color={COLORS.textMuted} />
+                            </TouchableOpacity>
+                        )}
                     </View>
-
-                    {showFilters && (
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chipsPadding}>
-                            <FilterChip label="Property" isActive={selectedPg !== "ALL"} onPress={() => { }} />
-                            <FilterChip label="Status" isActive={selectedStatus !== "ALL"} onPress={() => { }} />
-                            <FilterChip label="Date Range" isActive={false} onPress={() => { }} />
-                            <FilterChip
-                                label="Paid"
-                                isActive={selectedFilter === "PAID"}
-                                onPress={() => setSelectedFilter(selectedFilter === "PAID" ? "ALL" : "PAID")}
-                            />
-                            <FilterChip
-                                label="Pending"
-                                isActive={selectedFilter === "PENDING"}
-                                onPress={() => setSelectedFilter(selectedFilter === "PENDING" ? "ALL" : "PENDING")}
-                            />
-                        </ScrollView>
-                    )}
+                    <TouchableOpacity
+                        style={styles.filterButton}
+                        onPress={() => {
+                            setPendingFilters(filters);
+                            setFilterSheetVisible(true);
+                        }}
+                    >
+                        <Feather name="sliders" size={18} color="#fff" />
+                        <Text style={styles.filterButtonText}>Filter</Text>
+                    </TouchableOpacity>
                 </View>
             </View>
         </View>
@@ -306,6 +285,63 @@ const PaymentsScreen = () => {
                 ListFooterComponent={loading && !refreshing ? <ActivityIndicator color={COLORS.primary} style={{ marginTop: 20 }} /> : null}
             />
 
+            <FilterBottomSheet
+                visible={isFilterSheetVisible}
+                title="Payment Filters"
+                description="Filtered by property and status just like the web"
+                onClose={() => setFilterSheetVisible(false)}
+                onApply={() => {
+                    const applied = { ...pendingFilters };
+                    setFilters(applied);
+                    setPendingFilters(applied);
+                    setFilterSheetVisible(false);
+                }}
+                onReset={() => {
+                    setFilters(DEFAULT_PAYMENT_FILTERS);
+                    setPendingFilters(DEFAULT_PAYMENT_FILTERS);
+                    setFilterSheetVisible(false);
+                }}
+            >
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Property</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetChip, pendingFilters.propertyId === "ALL" && styles.sheetChipActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: "ALL" }))}
+                        >
+                            <Text style={[styles.sheetChipText, pendingFilters.propertyId === "ALL" && styles.sheetChipTextActive]}>All Properties</Text>
+                        </TouchableOpacity>
+                        {pgs.map(pg => (
+                            <TouchableOpacity
+                                key={pg.id}
+                                style={[styles.sheetChip, pendingFilters.propertyId === pg.id && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: pg.id }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.propertyId === pg.id && styles.sheetChipTextActive]}>
+                                    {pg.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Status</Text>
+                    <View style={styles.sheetChipsRow}>
+                        {PAYMENT_STATUS_OPTIONS.map(stat => (
+                            <TouchableOpacity
+                                key={stat}
+                                style={[styles.sheetChip, pendingFilters.status === stat && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, status: stat }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.status === stat && styles.sheetChipTextActive]}>
+                                    {stat === "" ? "All Statuses" : stat.charAt(0) + stat.slice(1).toLowerCase()}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            </FilterBottomSheet>
+
             <TouchableOpacity
                 style={styles.fab}
                 onPress={() => Alert.alert("Coming Soon", "The feature to add a new financial entry will be available in the next update.")}
@@ -316,18 +352,11 @@ const PaymentsScreen = () => {
     );
 };
 
-const FilterChip = ({ label, isActive, onPress }: any) => (
-    <TouchableOpacity
-        style={[styles.chip, isActive && styles.chipActive]}
-        onPress={onPress}
-    >
-        <Text style={[styles.chipText, isActive && styles.chipTextActive]}>{label}</Text>
-        <Feather name="chevron-down" size={12} color={isActive ? "#fff" : COLORS.textMuted} style={{ marginLeft: 4 }} />
-    </TouchableOpacity>
-);
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
 
     statsPadding: { paddingHorizontal: 20, paddingVertical: 12, gap: 10 },
     summaryCard: {
@@ -369,31 +398,16 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
     },
     searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    filterToggle: {
-        width: 50,
-        height: 50,
-        borderRadius: 14,
-        backgroundColor: COLORS.card,
-        justifyContent: "center",
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    filterToggleActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    chipsPadding: { paddingHorizontal: 20, gap: 10, paddingBottom: 10 },
-    chip: {
+    filterButton: {
         flexDirection: "row",
         alignItems: "center",
-        paddingHorizontal: 12,
-        paddingVertical: 6,
+        backgroundColor: COLORS.primary,
+        paddingHorizontal: 16,
+        paddingVertical: 12,
         borderRadius: 14,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border
+        gap: 6
     },
-    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    chipText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
-    chipTextActive: { color: "#fff" },
+    filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
     listContainer: { paddingHorizontal: 20, paddingBottom: 160 },
     paymentCard: {
@@ -460,8 +474,34 @@ const styles = StyleSheet.create({
         shadowOpacity: 0.3,
         shadowRadius: 4
     },
-    emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" }
+        emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+        sheetSection: { marginBottom: 18, paddingHorizontal: 20 },
+        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+        sheetChipsRow: { flexDirection: "row", gap: 10 },
+        sheetChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetChipTextActive: { color: COLORS.primary },
+        sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+        sheetSortButton: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            backgroundColor: COLORS.card
+        },
+        sheetSortButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+        sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetSortTextActive: { color: COLORS.primary }
 });
 
 export default PaymentsScreen;

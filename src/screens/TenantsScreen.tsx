@@ -10,66 +10,146 @@ import {
     RefreshControl,
     ActivityIndicator,
     Dimensions,
-    Pressable,
-    Modal,
     Linking
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { tenantAPI, pgAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import { supabase } from "../lib/supabaseClient";
 
 const { width, height } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
+const RESIDENT_STATUS_OPTIONS = ["ALL", "ACTIVE", "INACTIVE", "UPCOMING", "OVERDUE", "NOTICE", "COMPLETED"];
+const PROFESSION_OPTIONS = [
+    "Software Engineer",
+    "IT Professional",
+    "Student",
+    "Business Owner",
+    "Sales/Marketing",
+    "Medical Professional",
+    "Government Employee",
+    "Hospitallity",
+    "Freelancer",
+    "Teacher/Professor",
+    "Other"
+];
+const SORT_OPTIONS = [
+    { label: "Newest First", sortBy: "move_in_date", sortOrder: "desc" },
+    { label: "Oldest First", sortBy: "move_in_date", sortOrder: "asc" },
+    { label: "Name (A-Z)", sortBy: "full_name", sortOrder: "asc" },
+    { label: "Property (A-Z)", sortBy: "pg_name", sortOrder: "asc" },
+    { label: "Floor (Low-High)", sortBy: "floor", sortOrder: "asc" }
+];
+const createDefaultTenantFilters = () => ({
+    propertyId: "",
+    status: "ALL",
+    profession: "ALL",
+    floor: "ALL",
+    room: "ALL",
+    sortBy: "move_in_date",
+    sortOrder: "desc"
+});
 
 const TenantsScreen = ({ navigation }: any) => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
 
-    // Filters
     const [searchTerm, setSearchTerm] = useState("");
-    const [selectedPg, setSelectedPg] = useState<string | null>(null);
-    const [showFilterTabs, setShowFilterTabs] = useState(false);
-    const [selectedStatus, setSelectedStatus] = useState<string>("ACTIVE");
-    const [showFilters, setShowFilters] = useState(false);
+    const [debouncedSearch, setDebouncedSearch] = useState("");
+    const [filters, setFilters] = useState(createDefaultTenantFilters());
+    const [pendingFilters, setPendingFilters] = useState(createDefaultTenantFilters());
+    const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
+    const [sheetFloorOptions, setSheetFloorOptions] = useState<string[]>([]);
+    const [sheetRoomOptions, setSheetRoomOptions] = useState<any[]>([]);
 
-    const statuses = ["ACTIVE", "INACTIVE", "UPCOMING", "OVERDUE", "NOTICE", "COMPLETED"];
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
 
-    const fetchData = useCallback(async () => {
+    const loadTenants = useCallback(async () => {
+        setLoading(true);
         try {
-            setLoading(true);
-            const [tenantsData, pgsData]: any = await Promise.all([
-                tenantAPI.search({ page: 1, limit: 200, status: "ALL" }),
-                pgAPI.getAll()
-            ]);
-            setTenants(tenantsData.data || []);
-            setPgs(pgsData || []);
+            const { data } = await tenantAPI.search({
+                page: 1,
+                limit: 200,
+                search: debouncedSearch,
+                status: filters.status,
+                profession: filters.profession,
+                pgId: filters.propertyId,
+                floor: filters.floor,
+                roomId: filters.room,
+                sortBy: filters.sortBy,
+                sortOrder: filters.sortOrder,
+            });
+            setTenants(data || []);
         } catch (error) {
             console.error("Failed to fetch Resident Directory data:", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
+    }, [debouncedSearch, filters]);
+
+    const fetchFloors = useCallback(async (pgId: string) => {
+        if (!pgId || pgId === "ALL") return [];
+        try {
+            const { data, error } = await supabase
+                .from("rooms")
+                .select("floor")
+                .eq("pg_id", pgId);
+            if (error) throw error;
+            const uniqueFloors = [...new Set(data.map((room: any) => room.floor))]
+                .filter((floor) => floor !== null && floor !== undefined && floor !== "")
+                .sort((a, b) => {
+                    const numA = Number(a);
+                    const numB = Number(b);
+                    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
+                    return String(a).localeCompare(String(b));
+                });
+            return uniqueFloors;
+        } catch (error) {
+            console.error("Error fetching floors:", error);
+            return [];
+        }
+    }, []);
+
+    const fetchRoomFilterList = useCallback(async (pgId: string, floor: string) => {
+        if (!pgId || pgId === "ALL") return [];
+        try {
+            let query = supabase.from("rooms").select("*").eq("pg_id", pgId);
+            if (floor && floor !== "ALL") {
+                query = query.eq("floor", floor);
+            }
+            const { data, error } = await query.order("floor").order("room_number");
+            if (error) throw error;
+            return data || [];
+        } catch (error) {
+            console.error("Error fetching rooms for filter sheet:", error);
+            return [];
+        }
     }, []);
 
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        loadTenants();
+    }, [loadTenants]);
+
+    useEffect(() => {
+        if (!isFilterSheetVisible) return;
+        (async () => {
+            const floors = await fetchFloors(pendingFilters.propertyId);
+            setSheetFloorOptions(floors);
+            const rooms = await fetchRoomFilterList(pendingFilters.propertyId, pendingFilters.floor);
+            setSheetRoomOptions(rooms);
+        })();
+    }, [pendingFilters.propertyId, pendingFilters.floor, isFilterSheetVisible, fetchFloors, fetchRoomFilterList]);
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -77,16 +157,17 @@ const TenantsScreen = ({ navigation }: any) => {
     };
 
     const filteredTenants = useMemo(() => {
-        return tenants.filter(t => {
-            const matchesSearch =
-                (t.full_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (t.phone || "").includes(searchTerm) ||
-                (t.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
-            const matchesPg = !selectedPg || t.pg_id === selectedPg;
-            const matchesStatus = !selectedStatus || t.status === selectedStatus;
-            return matchesSearch && matchesPg && matchesStatus;
+        const searchLower = searchTerm.toLowerCase();
+        return tenants.filter((tenant) => {
+            const fullName = (tenant.full_name || "").toLowerCase();
+            const propertyName = (tenant.pgs?.name || "").toLowerCase();
+            return (
+                fullName.includes(searchLower) ||
+                (tenant.phone || "").includes(searchTerm) ||
+                propertyName.includes(searchLower)
+            );
         });
-    }, [tenants, searchTerm, selectedPg, selectedStatus]);
+    }, [tenants, searchTerm]);
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -226,56 +307,16 @@ const TenantsScreen = ({ navigation }: any) => {
                                 )}
                             </View>
                             <TouchableOpacity
-                                style={[styles.filterToggle, showFilterTabs && styles.filterToggleActive]}
-                                onPress={() => setShowFilterTabs(!showFilterTabs)}
+                                style={styles.filterButton}
+                                onPress={() => {
+                                    setPendingFilters(filters);
+                                    setFilterSheetVisible(true);
+                                }}
                             >
-                                <Ionicons
-                                    name={showFilterTabs ? "close" : "options-outline"}
-                                    size={22}
-                                    color={showFilterTabs ? "#fff" : COLORS.primary}
-                                />
+                                <Feather name="sliders" size={18} color="#fff" />
+                                <Text style={styles.filterButtonText}>Filter</Text>
                             </TouchableOpacity>
                         </View>
-
-                        {/* Filter Tabs (Conditional) */}
-                        {showFilterTabs && (
-                            <View style={styles.filterTabsWrapper}>
-                                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-                                    <TouchableOpacity
-                                        style={[styles.chip, !selectedPg && styles.chipActive]}
-                                        onPress={() => setSelectedPg(null)}
-                                    >
-                                        <Text style={[styles.chipText, !selectedPg && styles.chipTextActive]}>All Properties</Text>
-                                    </TouchableOpacity>
-                                    {pgs.map((pg) => (
-                                        <TouchableOpacity
-                                            key={pg.id}
-                                            style={[styles.chip, selectedPg === pg.id && styles.chipActive]}
-                                            onPress={() => setSelectedPg(pg.id)}
-                                        >
-                                            <Text style={[styles.chipText, selectedPg === pg.id && styles.chipTextActive]}>{pg.name.split(' ')[0]}</Text>
-                                        </TouchableOpacity>
-                                    ))}
-                                </ScrollView>
-                                <TouchableOpacity style={styles.advancedFilterBtn} onPress={() => setShowFilters(true)}>
-                                    <Feather name="sliders" size={16} color={COLORS.textMuted} />
-                                </TouchableOpacity>
-                            </View>
-                        )}
-
-                        {/* Status Chips */}
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.statusChipsScroll}>
-                            {statuses.map((stat) => (
-                                <TouchableOpacity
-                                    key={stat}
-                                    style={[styles.statusChip, selectedStatus === stat && { borderColor: getStatusColor(stat), backgroundColor: getStatusColor(stat) + "10" }]}
-                                    onPress={() => setSelectedStatus(stat === selectedStatus ? "" : stat)}
-                                >
-                                    <View style={[styles.statusDot, { backgroundColor: getStatusColor(stat) }]} />
-                                    <Text style={[styles.statusChipText, selectedStatus === stat && { color: getStatusColor(stat) }]}>{stat}</Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
                     </View>
                 }
                 ListEmptyComponent={
@@ -292,40 +333,170 @@ const TenantsScreen = ({ navigation }: any) => {
                 }
             />
 
-            {/* Filter Modal (Bottom Sheet Simulation) */}
-            <Modal
-                visible={showFilters}
-                transparent
-                animationType="slide"
-                onRequestClose={() => setShowFilters(false)}
+            <FilterBottomSheet
+                visible={isFilterSheetVisible}
+                title="Resident Filters"
+                description="Property, status, profession, floor, room, and sort (matches web)"
+                onClose={() => setFilterSheetVisible(false)}
+                onApply={() => {
+                    const applied = { ...pendingFilters };
+                    setFilters(applied);
+                    setPendingFilters(applied);
+                    setFilterSheetVisible(false);
+                }}
+                onReset={() => {
+                    const defaults = createDefaultTenantFilters();
+                    setFilters(defaults);
+                    setPendingFilters(defaults);
+                    setFilterSheetVisible(false);
+                }}
             >
-                <Pressable style={styles.modalOverlay} onPress={() => setShowFilters(false)}>
-                    <View style={styles.bottomSheet}>
-                        <View style={styles.sheetHeader}>
-                            <View style={styles.sheetHandle} />
-                            <Text style={styles.sheetTitle}>Filter Residents</Text>
-                        </View>
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Property</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetChip, pendingFilters.propertyId === "ALL" && styles.sheetChipActive]}
+                            onPress={() =>
+                                setPendingFilters(prev => ({ ...prev, propertyId: "ALL", floor: "ALL", room: "ALL" }))
+                            }
+                        >
+                            <Text style={[styles.sheetChipText, pendingFilters.propertyId === "ALL" && styles.sheetChipTextActive]}>All Properties</Text>
+                        </TouchableOpacity>
+                        {pgs.map(pg => (
+                            <TouchableOpacity
+                                key={pg.id}
+                                style={[styles.sheetChip, pendingFilters.propertyId === pg.id && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: pg.id, floor: "ALL", room: "ALL" }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.propertyId === pg.id && styles.sheetChipTextActive]} numberOfLines={1}>
+                                    {pg.name}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
 
-                        <View style={styles.sheetContent}>
-                            <Text style={styles.sheetLabel}>Status</Text>
-                            <View style={styles.sheetChipGrid}>
-                                {["ALL", ...statuses].map((stat) => (
-                                    <TouchableOpacity
-                                        key={stat}
-                                        style={[styles.sheetChip, (selectedStatus === stat || (stat === "ALL" && !selectedStatus)) && styles.sheetChipActive]}
-                                        onPress={() => {
-                                            setSelectedStatus(stat === "ALL" ? "" : stat);
-                                            setShowFilters(false);
-                                        }}
-                                    >
-                                        <Text style={[styles.sheetChipText, (selectedStatus === stat || (stat === "ALL" && !selectedStatus)) && styles.sheetChipTextActive]}>{stat}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </View>
-                        </View>
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Status</Text>
+                    <View style={styles.sheetChipsRow}>
+                        {RESIDENT_STATUS_OPTIONS.map(stat => (
+                            <TouchableOpacity
+                                key={stat}
+                                style={[styles.sheetChip, pendingFilters.status === stat && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, status: stat }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.status === stat && styles.sheetChipTextActive]}>
+                                    {stat}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
                     </View>
-                </Pressable>
-            </Modal>
+                </View>
+
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Profession</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        <TouchableOpacity
+                            style={[styles.sheetChip, pendingFilters.profession === "ALL" && styles.sheetChipActive]}
+                            onPress={() => setPendingFilters(prev => ({ ...prev, profession: "ALL" }))}
+                        >
+                            <Text style={[styles.sheetChipText, pendingFilters.profession === "ALL" && styles.sheetChipTextActive]}>All Professions</Text>
+                        </TouchableOpacity>
+                        {PROFESSION_OPTIONS.map(prof => (
+                            <TouchableOpacity
+                                key={prof}
+                                style={[styles.sheetChip, pendingFilters.profession === prof && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, profession: prof }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.profession === prof && styles.sheetChipTextActive]}>
+                                    {prof}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+
+                {sheetFloorOptions.length > 0 && (
+                    <View style={styles.sheetSection}>
+                        <Text style={styles.sheetLabel}>Floor</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                            <TouchableOpacity
+                                style={[styles.sheetChip, pendingFilters.floor === "ALL" && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, floor: "ALL", room: "ALL" }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.floor === "ALL" && styles.sheetChipTextActive]}>All Floors</Text>
+                            </TouchableOpacity>
+                            {sheetFloorOptions.map(floor => (
+                                <TouchableOpacity
+                                    key={floor}
+                                    style={[styles.sheetChip, pendingFilters.floor === floor && styles.sheetChipActive]}
+                                    onPress={() => setPendingFilters(prev => ({ ...prev, floor, room: "ALL" }))}
+                                >
+                                    <Text style={[styles.sheetChipText, pendingFilters.floor === floor && styles.sheetChipTextActive]}>
+                                        Floor {floor}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+
+                {sheetRoomOptions.length > 0 && (
+                    <View style={styles.sheetSection}>
+                        <Text style={styles.sheetLabel}>Room</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                            <TouchableOpacity
+                                style={[styles.sheetChip, pendingFilters.room === "ALL" && styles.sheetChipActive]}
+                                onPress={() => setPendingFilters(prev => ({ ...prev, room: "ALL" }))}
+                            >
+                                <Text style={[styles.sheetChipText, pendingFilters.room === "ALL" && styles.sheetChipTextActive]}>All Rooms</Text>
+                            </TouchableOpacity>
+                            {sheetRoomOptions.map(room => (
+                                <TouchableOpacity
+                                    key={room.id}
+                                    style={[styles.sheetChip, pendingFilters.room === room.id && styles.sheetChipActive]}
+                                    onPress={() => setPendingFilters(prev => ({ ...prev, room: room.id }))}
+                                >
+                                    <Text style={[styles.sheetChipText, pendingFilters.room === room.id && styles.sheetChipTextActive]}>
+                                        Room {room.room_number}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Sort By</Text>
+                    <View style={styles.sheetSortRow}>
+                        {SORT_OPTIONS.map(option => (
+                            <TouchableOpacity
+                                key={option.label}
+                                style={[
+                                    styles.sheetSortButton,
+                                    pendingFilters.sortBy === option.sortBy && pendingFilters.sortOrder === option.sortOrder && styles.sheetSortButtonActive
+                                ]}
+                                onPress={() =>
+                                    setPendingFilters(prev => ({
+                                        ...prev,
+                                        sortBy: option.sortBy,
+                                        sortOrder: option.sortOrder
+                                    }))
+                                }
+                            >
+                                <Text
+                                    style={[
+                                        styles.sheetSortText,
+                                        pendingFilters.sortBy === option.sortBy && pendingFilters.sortOrder === option.sortOrder && styles.sheetSortTextActive
+                                    ]}
+                                >
+                                    {option.label}
+                                </Text>
+                            </TouchableOpacity>
+                        ))}
+                    </View>
+                </View>
+            </FilterBottomSheet>
 
             {/* FAB */}
             <TouchableOpacity
@@ -339,7 +510,10 @@ const TenantsScreen = ({ navigation }: any) => {
     );
 };
 
-const styles = StyleSheet.create({
+type ThemePalette = ReturnType<typeof useThemePalette>;
+
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
     header: { padding: 20, paddingBottom: 10 },
     headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text },
@@ -358,56 +532,16 @@ const styles = StyleSheet.create({
         borderColor: COLORS.border,
     },
     searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    filterToggle: {
-        width: 50,
-        height: 50,
-        borderRadius: 14,
-        backgroundColor: COLORS.card,
-        justifyContent: "center",
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    filterToggleActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    filterTabsWrapper: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
-    chipsScroll: { flex: 1 },
-    chip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 12,
-        backgroundColor: COLORS.card,
-        marginRight: 8,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    chipText: { fontSize: 12, fontWeight: "700", color: COLORS.textMuted },
-    chipTextActive: { color: "#fff" },
-    advancedFilterBtn: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        backgroundColor: COLORS.card,
-        justifyContent: "center",
-        alignItems: "center",
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-
-    statusChipsScroll: { marginBottom: 8 },
-    statusChip: {
+    filterButton: {
         flexDirection: "row",
         alignItems: "center",
-        paddingHorizontal: 12,
-        paddingVertical: 6,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        marginRight: 8,
-        backgroundColor: COLORS.card
+        backgroundColor: COLORS.primary,
+        borderRadius: 14,
+        paddingHorizontal: 14,
+        paddingVertical: 12,
+        gap: 6
     },
-    statusDot: { width: 6, height: 6, borderRadius: 3, marginRight: 8 },
-    statusChipText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
+    filterButtonText: { fontSize: 14, fontWeight: "700", color: "#fff" },
 
     listContent: { paddingBottom: 100, paddingHorizontal: 20 },
     card: {
@@ -484,30 +618,32 @@ const styles = StyleSheet.create({
     emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
     emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
 
-    modalOverlay: { flex: 1, backgroundColor: "rgba(0,0,0,0.5)", justifyContent: "flex-end" },
-    bottomSheet: {
-        backgroundColor: COLORS.card,
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
-        paddingBottom: 40
-    },
-    sheetHeader: { alignItems: "center", padding: 15 },
-    sheetHandle: { width: 40, height: 5, borderRadius: 3, backgroundColor: "rgba(255,255,255,0.1)", marginBottom: 15 },
-    sheetTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    sheetContent: { padding: 20 },
-    sheetLabel: { fontSize: 14, fontWeight: "700", color: COLORS.textMuted, marginBottom: 15 },
-    sheetChipGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    sheetSection: { marginBottom: 18 },
+    sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+    sheetChipsRow: { flexDirection: "row", gap: 10 },
     sheetChip: {
         paddingHorizontal: 16,
         paddingVertical: 10,
         borderRadius: 14,
-        backgroundColor: COLORS.bg,
+        backgroundColor: COLORS.card,
         borderWidth: 1,
         borderColor: COLORS.border
     },
     sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
     sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
     sheetChipTextActive: { color: "#fff" },
+    sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    sheetSortButton: {
+        paddingHorizontal: 16,
+        paddingVertical: 10,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        backgroundColor: COLORS.card
+    },
+    sheetSortButtonActive: { backgroundColor: COLORS.primary + "10", borderColor: COLORS.primary },
+    sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+    sheetSortTextActive: { color: COLORS.primary },
 
     fab: {
         position: "absolute",

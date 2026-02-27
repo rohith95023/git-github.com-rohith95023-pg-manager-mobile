@@ -1,0 +1,230 @@
+const [expenses, setExpenses] = useState([]);
+  const [pgs, setPgs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [showModal, setShowModal] = useState(false);
+  const [editingExpense, setEditingExpense] = useState(null);
+  const [filterCategory, setFilterCategory] = useState("");
+  const [searchTerm, setSearchTerm] = useState("");
+  const [formErrors, setFormErrors] = useState({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deleteConfirm, setDeleteConfirm] = useState({ isOpen: false, id: null, isLoading: false });
+  const [toast, setToast] = useState(null);
+  const [expandedRow, setExpandedRow] = useState(null);
+
+  const showToast = (message, type = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3000);
+  };
+
+  const [formData, setFormData] = useState({
+    title: "",
+    category: "",
+    amount: "",
+    date: new Date().toISOString().split('T')[0],
+    pg_id: "all",
+    vendor_name: "",
+    notes: "",
+  });
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      const [expensesRes, pgsRes] = await Promise.all([
+        expenseAPI.getAll(),
+        pgAPI.getAll(),
+      ]);
+      setExpenses(expensesRes || []);
+      setPgs(pgsRes || []);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+
+    // specific subscription for expenses
+    const channel = supabase
+      .channel('expenses-list-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'expenses' }, (payload) => {
+          console.log('[Expenses] Realtime update:', payload);
+          fetchData();
+      })
+      .subscribe();
+
+    // Load draft from localStorage on mount
+    const savedDraft = localStorage.getItem('pg_expense_form_draft');
+    if (savedDraft) {
+      try {
+        const draft = JSON.parse(savedDraft);
+        setFormData(prev => ({ ...prev, ...draft }));
+      } catch (e) {
+        console.error("Failed to parse expense draft", e);
+      }
+    }
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Sync formData to localStorage
+  useEffect(() => {
+    if (Object.values(formData).some(val => val !== "" && val !== "all")) {
+        localStorage.setItem('pg_expense_form_draft', JSON.stringify(formData));
+    }
+  }, [formData]);
+
+  const handleInputChange = (e) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+    if (formErrors[name]) {
+      setFormErrors(prev => ({ ...prev, [name]: null }));
+    }
+  };
+
+  const validateForm = () => {
+    try {
+      setFormErrors({});
+      const payload = {
+        title: formData.title?.trim() || "",
+        category: formData.category?.trim()?.toUpperCase() || "",
+        amount: parseFloat(formData.amount) || 0,
+        date: formData.date || new Date().toISOString().split('T')[0],
+        pg_id: formData.pg_id === "all" ? null : formData.pg_id,
+        vendor_name: formData.vendor_name || "",
+        notes: formData.notes || "",
+      };
+      
+      const validatedData = expenseSchema.parse(payload);
+      return { success: true, data: validatedData };
+    } catch (error) {
+      // Robustly extract validation issues from Zod or other sources
+      const issues = error?.issues || error?.errors || (error instanceof z.ZodError ? error.issues : null);
+      
+      if (issues && Array.isArray(issues)) {
+        const errors = {};
+        issues.forEach((err) => {
+          const path = err.path?.[0];
+          if (path) errors[path] = err.message;
+        });
+        setFormErrors(errors);
+      } else {
+        console.error("Unexpected validation error:", error);
+        showToast("Invalid form data. Please check all fields.", "error");
+      }
+      return { success: false };
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const validation = validateForm();
+    
+    if (!validation.success) {
+        return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      if (editingExpense) {
+        await expenseAPI.update(editingExpense.id, validation.data);
+      } else {
+        await expenseAPI.create(validation.data);
+      }
+      await fetchData();
+      showToast(editingExpense ? "Expense updated" : "Expense logged");
+      setShowModal(false);
+      setEditingExpense(null);
+      resetForm();
+      localStorage.removeItem('pg_expense_form_draft');
+    } catch (error) {
+      console.error("Expense saving error:", error);
+      showToast(error.message || "Failed to save expense", "error");
+    } finally {
+        setIsSubmitting(false);
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({
+      title: "",
+      category: "",
+      amount: "",
+      date: new Date().toISOString().split('T')[0],
+      pg_id: "all",
+      vendor_name: "",
+      notes: "",
+    });
+    setFormErrors({});
+  };
+
+  const handleEdit = (expense) => {
+    setEditingExpense(expense);
+    setFormData({
+      title: expense.title || expense.description,
+      category: expense.category,
+      amount: expense.amount.toString(),
+      date: expense.date,
+      pg_id: expense.pg_id || "all",
+      vendor_name: expense.vendor_name || "",
+      notes: expense.notes || "",
+    });
+    setShowModal(true);
+  };
+
+  const handleDelete = async (id) => {
+    setDeleteConfirm({ isOpen: true, id, isLoading: false });
+  };
+
+  const confirmDelete = async () => {
+    const { id } = deleteConfirm;
+    setDeleteConfirm(prev => ({ ...prev, isLoading: true }));
+    try {
+      await expenseAPI.delete(id);
+      showToast("Expense deleted");
+      fetchData();
+    } catch (error) {
+       console.error("Error deleting expense:", error);
+       showToast("Error deleting expense: " + error.message, "error");
+    } finally {
+      setDeleteConfirm({ isOpen: false, id: null, isLoading: false });
+    }
+  };
+
+  // Helper Stats Calculation
+  const currentMonthStats = useMemo(() => {
+      const now = new Date();
+      const currentMonth = now.getMonth();
+      const currentYear = now.getFullYear();
+
+      // Filter expenses for current month AND selected context
+      const relevantExpenses = expenses.filter(e => {
+          const eDate = new Date(e.date);
+          const isSameMonth = eDate.getMonth() === currentMonth && eDate.getFullYear() === currentYear;
+          
+          if (!isSameMonth) return false;
+
+          // Context filter
+          if (formData.pg_id === "all") return true; 
+          return e.pg_id === formData.pg_id;
+      });
+
+      const total = relevantExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+      return { total, count: relevantExpenses.length };
+  }, [expenses, formData.pg_id]);
+
+
+  const filteredExpenses = expenses.filter((expense) => {
+    const matchesCategory = filterCategory ? expense.category === filterCategory : true;
+    const matchesSearch = (expense.title || expense.description || "")?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                          expense.vendor_name?.toLowerCase().includes(searchTerm.toLowerCase());
+    return matchesCategory && matchesSearch;
+  });
+
+  const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
+
+  

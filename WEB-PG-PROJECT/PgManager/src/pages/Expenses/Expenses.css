@@ -1,0 +1,70 @@
+.expense-management {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.expense-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 20px;
+  margin-bottom: 24px;
+}
+
+.expense-description strong {
+  color: var(--heading-color);
+}
+
+.expense-category {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-transform: capitalize;
+}
+
+.category-icon {
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.category-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+.expense-category.maintenance .category-icon {
+  color: #667eea;
+}
+
+.expense-category.repairs .category-icon {
+  color: #ed8936;
+}
+
+.expense-category.utilities .category-icon {
+  color: #48bb78;
+}
+
+.expense-category.salary .category-icon {
+  color: #9f7aea;
+}
+
+.expense-category.other .category-icon {
+  color: var(--text-secondary);
+}
+
+.category-name {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.expense-amount {
+  font-weight: 600;
+  color: #fca5a5 !important;
+}
+
+.status-badge.approved {
+  background: rgba(72, 187, 120, 0.15);
+  color: #68d391;
+}

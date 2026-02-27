@@ -1,5 +1,6 @@
 import React, { useMemo, useCallback, useState, type ComponentProps } from 'react';
-import { View, FlatList, StyleSheet, Text } from 'react-native';
+import { View, FlatList, StyleSheet, Text, Pressable } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
 
 import AppHeader from '../../components/common/AppHeader';
@@ -34,13 +35,14 @@ type ActivityItem = {
 
 const quickActions: QuickAction[] = [
   { id: 'add-pg', label: 'Add PG', icon: 'business-outline' },
-  { id: 'add-room', label: 'Add Room', icon: 'door-open-outline' },
+  { id: 'add-room', label: 'Add Room', icon: 'home-outline' },
   { id: 'add-tenant', label: 'Add Tenant', icon: 'person-add-outline' },
   { id: 'record-payment', label: 'Record Payment', icon: 'receipt-outline' },
 ];
 
 const DashboardScreen = () => {
-  const { pgs, loading, fetchData } = usePGs();
+  const navigation = useNavigation() as any;
+  const { pgs, loading, fetchData, setShowModal } = usePGs();
   const [refreshing, setRefreshing] = useState(false);
 
   const stats = useMemo(() => {
@@ -74,7 +76,7 @@ const DashboardScreen = () => {
         id: 'rooms',
         label: 'Total Rooms',
         value: stats.totalRooms.toString(),
-        icon: <Ionicons name="door-open" size={20} color={Colors.Success} />,
+        icon: <Ionicons name="home" size={20} color={Colors.Success} />,
         color: Colors.Success,
       },
       {
@@ -193,12 +195,27 @@ const DashboardScreen = () => {
             <SectionHeader title="Quick Actions" />
             <View style={styles.quickActionGrid}>
               {quickActions.map((action) => (
-                <View key={action.id} style={styles.quickActionCard}>
+                <Pressable
+                  key={action.id}
+                  style={styles.quickActionCard}
+                  android_ripple={{ color: '#E0EDFF' }}
+                  onPress={() => {
+                    if (action.id === 'add-pg') {
+                      setShowModal(true);
+                    } else if (action.id === 'add-room') {
+                      navigation.navigate('Rooms' as any);
+                    } else if (action.id === 'add-tenant') {
+                      navigation.navigate('Residents' as any);
+                    } else if (action.id === 'record-payment') {
+                      navigation.navigate('FinancialRecords' as any);
+                    }
+                  }}
+                >
                   <View style={styles.quickIcon}>
                     <Ionicons name={action.icon as any} size={20} color={Colors.Primary} />
                   </View>
                   <Text style={styles.quickLabel}>{action.label}</Text>
-                </View>
+                </Pressable>
               ))}
             </View>
             <SectionHeader title="Recent Activity" actionLabel="View All" onActionPress={() => fetchData()} />

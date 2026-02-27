@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -7,53 +7,110 @@ import {
   KeyboardAvoidingView,
   Platform,
   Pressable,
+  ActivityIndicator,
 } from 'react-native';
+import { useNavigation } from '@react-navigation/native';
+import { NativeStackNavigationProp } from '@react-navigation/native-stack';
 
 import ScreenContainer from '../../components/common/ScreenContainer';
 import { Colors } from '../../constants/colors';
 import { Spacing } from '../../constants/spacing';
 import { Typography } from '../../constants/typography';
+import { useAuth } from '../../context/AuthContext';
 
-const LoginScreen = () => (
-  <ScreenContainer style={styles.container}>
-    <KeyboardAvoidingView
-      style={styles.inner}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <View style={styles.header}>
-        <Text style={styles.title}>Welcome Back</Text>
-        <Text style={styles.subtitle}>Sign in to manage your PGs securely.</Text>
-      </View>
-      <View style={styles.form}>
-        <Text style={styles.label}>Email address</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="manager@pgmanager.com"
-          placeholderTextColor={Colors.TextSecondary}
-          keyboardType="email-address"
-          autoCapitalize="none"
-        />
-        <Text style={styles.label}>Password</Text>
-        <TextInput
-          style={styles.input}
-          placeholder="••••••••"
-          placeholderTextColor={Colors.TextSecondary}
-          secureTextEntry
-        />
-        <Text style={styles.errorText}>Invalid credentials will show here.</Text>
-        <Pressable style={styles.button} android_ripple={{ color: '#2563EB30' }} onPress={() => {}}>
-          <Text style={styles.buttonText}>Sign In</Text>
-        </Pressable>
-        <View style={styles.row}>
-          <Text style={styles.footerText}>Don’t have an account?</Text>
-          <Pressable onPress={() => {}}>
-            <Text style={styles.link}>Sign up</Text>
-          </Pressable>
+type RootStackParamList = {
+  Login: undefined;
+  Signup: undefined;
+};
+
+type NavigationProp = NativeStackNavigationProp<RootStackParamList, 'Login'>;
+
+const LoginScreen = () => {
+  const navigation = useNavigation<NavigationProp>();
+  const { login } = useAuth() as any;
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleLogin = async () => {
+    if (!email || !password) {
+      setError('Please enter both email and password.');
+      return;
+    }
+
+    setError(null);
+    setLoading(true);
+
+    try {
+      const result = await login(email, password);
+      if (!result.success) {
+        setError(result.error || 'Login failed. Please try again.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'An unexpected error occurred.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <ScreenContainer style={styles.container}>
+      <KeyboardAvoidingView
+        style={styles.inner}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      >
+        <View style={styles.header}>
+          <Text style={styles.title}>Welcome Back</Text>
+          <Text style={styles.subtitle}>Sign in to manage your PGs securely.</Text>
         </View>
-      </View>
-    </KeyboardAvoidingView>
-  </ScreenContainer>
-);
+        <View style={styles.form}>
+          <Text style={styles.label}>Email address</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="manager@pgmanager.com"
+            placeholderTextColor={Colors.TextSecondary}
+            keyboardType="email-address"
+            autoCapitalize="none"
+            value={email}
+            onChangeText={setEmail}
+          />
+          <Text style={styles.label}>Password</Text>
+          <TextInput
+            style={styles.input}
+            placeholder="••••••••"
+            placeholderTextColor={Colors.TextSecondary}
+            secureTextEntry
+            value={password}
+            onChangeText={setPassword}
+          />
+
+          {error && <Text style={styles.errorText}>{error}</Text>}
+
+          <Pressable
+            style={[styles.button, loading && styles.buttonDisabled]}
+            android_ripple={{ color: '#2563EB30' }}
+            onPress={handleLogin}
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Text style={styles.buttonText}>Sign In</Text>
+            )}
+          </Pressable>
+          <View style={styles.row}>
+            <Text style={styles.footerText}>Don’t have an account?</Text>
+            <Pressable onPress={() => navigation.navigate('Signup')}>
+              <Text style={styles.link}>Sign up</Text>
+            </Pressable>
+          </View>
+        </View>
+      </KeyboardAvoidingView>
+    </ScreenContainer>
+  );
+};
 
 const styles = StyleSheet.create({
   container: {
@@ -103,6 +160,11 @@ const styles = StyleSheet.create({
     borderRadius: 16,
     paddingVertical: Spacing.md,
     alignItems: 'center',
+    minHeight: 52,
+    justifyContent: 'center',
+  },
+  buttonDisabled: {
+    opacity: 0.7,
   },
   buttonText: {
     ...Typography.Body,
@@ -123,10 +185,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   errorText: {
-    marginTop: Spacing.sm,
+    marginTop: Spacing.md,
     color: Colors.Danger,
     ...Typography.Caption,
+    textAlign: 'center',
   },
 });
 
 export default LoginScreen;
+

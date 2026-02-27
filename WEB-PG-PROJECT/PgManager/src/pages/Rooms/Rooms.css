@@ -1,0 +1,75 @@
+.room-management {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.filters-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  padding: 16px 20px;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.05) 0%, rgba(255, 255, 255, 0.02) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.filter-group label {
+  color: var(--text-secondary);
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.filter-stats {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.filter-stats span {
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.filter-stats strong {
+  color: var(--text-primary);
+}
+
+.text-warning {
+  color: #fbb040 !important;
+}
+
+.room-type {
+  text-transform: capitalize;
+  color: var(--text-primary);
+}
+
+.status-badge.occupied {
+  background: rgba(102, 126, 234, 0.15);
+  color: #90cdf4;
+}
+
+.status-badge.maintenance {
+  background: rgba(237, 137, 54, 0.15);
+  color: #fbb040;
+}
+
+@media (max-width: 768px) {
+  .filters-bar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .filter-stats {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+}

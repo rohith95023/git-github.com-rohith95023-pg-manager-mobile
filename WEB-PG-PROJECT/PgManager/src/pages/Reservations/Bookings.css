@@ -1,0 +1,28 @@
+.booking-management {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.booking-room {
+  display: flex;
+  flex-direction: column;
+}
+
+.booking-room span {
+  color: var(--text-secondary);
+}
+
+.booking-room small {
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.action-btn.cancel {
+  border-color: rgba(237, 137, 54, 0.3);
+}
+
+.action-btn.cancel:hover {
+  border-color: rgba(237, 137, 54, 0.6);
+  color: #fbb040;
+  background: rgba(237, 137, 54, 0.1);
+}

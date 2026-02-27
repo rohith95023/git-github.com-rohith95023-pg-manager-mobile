@@ -26,8 +26,10 @@ import TenantsScreen from "../screens/TenantsScreen";
 import PaymentsScreen from "../screens/PaymentsScreen";
 import ExpensesScreen from "../screens/ExpensesScreen";
 import ProfitLossScreen from "../screens/ProfitLossScreen";
-import SettingsScreen from "../screens/SettingsScreen";
+import ProfileScreen from "../screens/ProfileScreen";
+import ChangePasswordScreen from "../screens/ChangePasswordScreen";
 import SmartTenantFinder from "../screens/SmartTenantFinder";
+import ResidentDetailScreen from "../screens/ResidentDetailScreen";
 
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
@@ -136,10 +138,18 @@ const MainNavigator = () => {
             <Drawer.Screen
                 name="Dashboard"
                 component={Dashboard}
-                options={{
+                options={({ navigation }) => ({
                     drawerIcon: ({ color }) => <Feather name="grid" size={20} color={color} />,
-                    headerTitle: "Dashboard"
-                }}
+                    headerTitle: "Dashboard",
+                    headerRight: () => (
+                        <TouchableOpacity
+                            onPress={() => navigation.setParams({ refresh: Date.now() })}
+                            style={{ marginRight: 20 }}
+                        >
+                            <Ionicons name="refresh-outline" size={24} color="#fff" />
+                        </TouchableOpacity>
+                    )
+                })}
             />
             <Drawer.Screen
                 name="PGProperties"
@@ -183,6 +193,14 @@ const MainNavigator = () => {
                 }}
             />
             <Drawer.Screen
+                name="ResidentDetail"
+                component={ResidentDetailScreen}
+                options={{
+                    drawerItemStyle: { display: 'none' },
+                    headerShown: false, // Using custom header inside screen
+                }}
+            />
+            <Drawer.Screen
                 name="Finance"
                 component={PaymentsScreen}
                 options={{
@@ -216,10 +234,18 @@ const MainNavigator = () => {
             />
             <Drawer.Screen
                 name="Profile"
-                component={SettingsScreen}
+                component={ProfileScreen}
                 options={{
-                    drawerItemStyle: { display: 'none' }, // Hidden from main list, accessed via profile card
+                    drawerItemStyle: { display: 'none' }, // Hidden from main list
                     headerTitle: "My Profile"
+                }}
+            />
+            <Drawer.Screen
+                name="ChangePassword"
+                component={ChangePasswordScreen}
+                options={{
+                    drawerItemStyle: { display: 'none' },
+                    headerShown: false, // Internal header
                 }}
             />
         </Drawer.Navigator>

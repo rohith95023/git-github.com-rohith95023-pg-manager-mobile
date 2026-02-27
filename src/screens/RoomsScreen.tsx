@@ -1,219 +1,474 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import {
     View,
     Text,
-    FlatList,
     StyleSheet,
     TouchableOpacity,
-    RefreshControl,
+    FlatList,
     TextInput,
-    ActivityIndicator
+    ScrollView,
+    RefreshControl,
+    ActivityIndicator,
+    Dimensions,
+    Pressable
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../context/ThemeContext";
-import { roomAPI } from "../services/api";
-import { Feather } from "@expo/vector-icons";
+import { roomAPI, bedAPI, pgAPI } from "../services/api";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 
-const RoomsScreen = ({ route, navigation }: any) => {
-    const { pgId, pgName } = route.params || {};
-    const { colors, isDark } = useTheme();
+const { width } = Dimensions.get("window");
+
+const COLORS = {
+    bg: "#0f172a",
+    card: "#1e293b",
+    primary: "#3b82f6",
+    success: "#10b981",
+    warning: "#f59e0b",
+    danger: "#ef4444",
+    text: "#ffffff",
+    textMuted: "#94a3b8",
+    border: "rgba(255,255,255,0.05)"
+};
+
+const RoomsScreen = ({ navigation }: any) => {
+    const { colors } = useTheme();
+    const [viewMode, setViewMode] = useState<"ROOMS" | "BEDS">("ROOMS");
+    const [statusMode, setStatusMode] = useState<"ACTIVE" | "ARCHIVED">("ACTIVE");
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
-    const [rooms, setRooms] = useState<any[]>([]);
-    const [searchTerm, setSearchTerm] = useState("");
 
-    const fetchRooms = useCallback(async () => {
+    const [rooms, setRooms] = useState<any[]>([]);
+    const [beds, setBeds] = useState<any[]>([]);
+    const [pgs, setPgs] = useState<any[]>([]);
+
+    const [searchTerm, setSearchTerm] = useState("");
+    const [selectedPg, setSelectedPg] = useState<string | null>(null);
+
+    const fetchData = useCallback(async () => {
         try {
-            const data = await roomAPI.getAll();
-            // If pgId is provided, filter by property
-            const filtered = pgId ? data.filter((r: any) => (r.pg_id || r.pgId) === pgId) : data;
-            setRooms(filtered || []);
+            setLoading(true);
+            const [roomsData, bedsData, pgsData] = await Promise.all([
+                roomAPI.getAll(),
+                bedAPI.getAll(),
+                pgAPI.getAll()
+            ]);
+            setRooms(roomsData || []);
+            setBeds(bedsData || []);
+            setPgs(pgsData || []);
         } catch (error) {
-            console.error("Failed to fetch rooms:", error);
+            console.error("Failed to fetch Rooms/Beds data:", error);
         } finally {
             setLoading(false);
             setRefreshing(false);
         }
-    }, [pgId]);
+    }, []);
 
     useEffect(() => {
-        fetchRooms();
-    }, [fetchRooms]);
+        fetchData();
+    }, [fetchData]);
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchRooms();
+        fetchData();
     };
 
-    const filteredRooms = rooms.filter(room =>
-        (room.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (room.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase())
-    );
-
-    const getStatusColor = (status: string) => {
-        switch (status) {
-            case 'AVAILABLE': return '#10b981';
-            case 'PARTIAL': return '#3b82f6';
-            case 'FULL': return '#ef4444';
-            case 'MAINTENANCE': return '#f59e0b';
-            default: return colors.textSecondary;
+    // Filter Logic
+    const filteredContent = useMemo(() => {
+        if (viewMode === "ROOMS") {
+            return rooms.filter(r => {
+                const matchesSearch = (r.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (r.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesPg = !selectedPg || r.pg_id === selectedPg;
+                const matchesStatus = statusMode === "ACTIVE" ? r.status !== "DELETED" : r.status === "DELETED";
+                return matchesSearch && matchesPg && matchesStatus;
+            });
+        } else {
+            return beds.filter(b => {
+                const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
+                const matchesPg = !selectedPg || b.rooms?.pg_id === selectedPg;
+                const matchesStatus = statusMode === "ACTIVE" ? b.status !== "DELETED" : b.status === "DELETED";
+                return matchesSearch && matchesPg && matchesStatus;
+            });
         }
-    };
+    }, [viewMode, statusMode, rooms, beds, searchTerm, selectedPg]);
 
-    const renderRoomItem = ({ item }: { item: any }) => (
-        <TouchableOpacity
-            style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}
-        >
+    // Stats Logic
+    const stats = useMemo(() => {
+        if (viewMode === "ROOMS") {
+            const active = rooms.filter(r => r.status !== "DELETED");
+            return [
+                { label: "Total Rooms", value: active.length, icon: "door-open", type: "Material", color: COLORS.primary },
+                { label: "Available", value: active.filter(r => r.status === "AVAILABLE").length, icon: "check-circle", type: "Feather", color: COLORS.success },
+                { label: "Occupied", value: active.filter(r => r.status === "FULL").length, icon: "user-check", type: "Feather", color: COLORS.warning },
+            ];
+        } else {
+            const active = beds.filter(b => b.status !== "DELETED");
+            return [
+                { label: "Total Beds", value: active.length, icon: "bed", type: "Material", color: COLORS.primary },
+                { label: "Available", value: active.filter(b => b.status === "AVAILABLE").length, icon: "check-circle", type: "Feather", color: COLORS.success },
+                { label: "Occupied", value: active.filter(b => b.status === "OCCUPIED").length, icon: "user-check", type: "Feather", color: COLORS.warning },
+            ];
+        }
+    }, [viewMode, rooms, beds]);
+
+    const RoomCard = ({ item }: { item: any }) => (
+        <TouchableOpacity style={styles.card} activeOpacity={0.7}>
             <View style={styles.cardHeader}>
-                <View style={styles.roomBadge}>
-                    <Text style={[styles.roomNumber, { color: colors.text }]}>Room {item.room_number}</Text>
-                    <Text style={[styles.floorText, { color: colors.textSecondary }]}>Floor {item.floor}</Text>
+                <View style={styles.cardInfo}>
+                    <Text style={styles.cardTitle}>Room {item.room_number}</Text>
+                    <Text style={styles.cardSub}>{item.pgs?.name || "N/A"} • Floor {item.floor}</Text>
                 </View>
-                <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + '15' }]}>
-                    <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
-                </View>
-            </View>
-
-            {!pgId && (
-                <View style={styles.pgInfo}>
-                    <Feather name="home" size={14} color={colors.textSecondary} />
-                    <Text style={[styles.pgName, { color: colors.textSecondary }]}>{item.pgs?.name || "Unknown PG"}</Text>
-                </View>
-            )}
-
-            <View style={styles.detailsRow}>
-                <View style={styles.detailItem}>
-                    <Feather name="users" size={16} color={colors.primary} />
-                    <Text style={[styles.detailValue, { color: colors.text }]}>
-                        {item.current_occupancy || 0}/{item.capacity}
-                    </Text>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Occupancy</Text>
-                </View>
-                <View style={[styles.detailDivider, { backgroundColor: colors.border }]} />
-                <View style={styles.detailItem}>
-                    <Feather name="credit-card" size={16} color={colors.primary} />
-                    <Text style={[styles.detailValue, { color: colors.text }]}>₹{(item.rent || 0).toLocaleString()}</Text>
-                    <Text style={[styles.detailLabel, { color: colors.textSecondary }]}>Rent</Text>
+                <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
+                    <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
                 </View>
             </View>
 
-            <View style={[styles.typeBadge, { backgroundColor: colors.background }]}>
-                <Text style={[styles.typeText, { color: colors.textSecondary }]}>{item.room_type}</Text>
+            <View style={styles.divider} />
+
+            <View style={styles.cardFooter}>
+                <View style={styles.footerItem}>
+                    <Text style={styles.footerLabel}>MONTHLY RENT</Text>
+                    <Text style={styles.footerValue}>₹{item.rent?.toLocaleString()}</Text>
+                </View>
+                <View style={styles.footerItem}>
+                    <Text style={styles.footerLabel}>DEPOSIT</Text>
+                    <Text style={styles.footerValue}>₹{item.security_deposit?.toLocaleString()}</Text>
+                </View>
+                <View style={styles.actions}>
+                    <TouchableOpacity style={styles.actionBtn}>
+                        <Feather name="edit-2" size={16} color={COLORS.textMuted} />
+                    </TouchableOpacity>
+                    <TouchableOpacity style={styles.actionBtn}>
+                        <Feather name="trash-2" size={16} color={COLORS.danger} />
+                    </TouchableOpacity>
+                </View>
             </View>
         </TouchableOpacity>
     );
 
-    return (
-        <SafeAreaView style={[styles.container, { backgroundColor: colors.background }]}>
-            <View style={styles.header}>
-                <View style={{ flex: 1 }}>
-                    <Text style={[styles.title, { color: colors.text }]}>
-                        {pgName ? `${pgName} Rooms` : "All Rooms"}
-                    </Text>
-                    {pgName && (
-                        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backLink}>
-                            <Feather name="arrow-left" size={14} color={colors.primary} />
-                            <Text style={[styles.backText, { color: colors.primary }]}>Back to PGs</Text>
-                        </TouchableOpacity>
-                    )}
+    const BedCard = ({ item }: { item: any }) => (
+        <TouchableOpacity style={styles.card} activeOpacity={0.7}>
+            <View style={styles.cardHeader}>
+                <View style={styles.cardInfo}>
+                    <Text style={styles.cardTitle}>{item.bed_number}</Text>
+                    <Text style={styles.cardSub}>Room {item.rooms?.room_number} • {item.rooms?.pgs?.name}</Text>
                 </View>
-                <TouchableOpacity style={[styles.addButton, { backgroundColor: colors.primary }]}>
-                    <Feather name="plus" size={24} color="#fff" />
+                <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
+                    <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+                </View>
+            </View>
+
+            <View style={styles.residentRow}>
+                <View style={[styles.avatar, { backgroundColor: item.tenants?.full_name ? COLORS.primary + "20" : COLORS.card }]}>
+                    <Feather name="user" size={16} color={item.tenants?.full_name ? COLORS.primary : COLORS.textMuted} />
+                </View>
+                <View style={{ flex: 1, marginLeft: 12 }}>
+                    <Text style={[styles.residentName, { color: item.tenants?.full_name ? COLORS.text : COLORS.textMuted }]}>
+                        {item.tenants?.full_name || "Vacant"}
+                    </Text>
+                    <Text style={styles.residentLabel}>Current Resident</Text>
+                </View>
+                <TouchableOpacity style={styles.maintenanceBtn}>
+                    <MaterialCommunityIcons name="wrench-outline" size={16} color={COLORS.warning} />
+                    <Text style={styles.maintenanceText}>Fix</Text>
                 </TouchableOpacity>
             </View>
+        </TouchableOpacity>
+    );
 
-            <View style={[styles.searchContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
-                <Feather name="search" size={20} color={colors.textSecondary} />
-                <TextInput
-                    placeholder="Search by room number..."
-                    placeholderTextColor={colors.textSecondary}
-                    value={searchTerm}
-                    onChangeText={setSearchTerm}
-                    style={[styles.searchInput, { color: colors.text }]}
-                />
+    const getStatusColor = (status: string) => {
+        switch (status) {
+            case "AVAILABLE": return COLORS.success;
+            case "FULL": case "OCCUPIED": return COLORS.danger;
+            case "PARTIAL": return COLORS.primary;
+            case "MAINTENANCE": return COLORS.warning;
+            default: return COLORS.textMuted;
+        }
+    };
+
+    return (
+        <SafeAreaView style={styles.container}>
+            {/* Header */}
+            <View style={styles.header}>
+                <Text style={styles.headerTitle}>Rooms & Beds</Text>
+                <View style={styles.toggleContainer}>
+                    <View style={styles.segmentedControl}>
+                        <TouchableOpacity
+                            style={[styles.segment, viewMode === "ROOMS" && styles.segmentActive]}
+                            onPress={() => setViewMode("ROOMS")}
+                        >
+                            <Text style={[styles.segmentText, viewMode === "ROOMS" && styles.segmentTextActive]}>Rooms</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.segment, viewMode === "BEDS" && styles.segmentActive]}
+                            onPress={() => setViewMode("BEDS")}
+                        >
+                            <Text style={[styles.segmentText, viewMode === "BEDS" && styles.segmentTextActive]}>Beds</Text>
+                        </TouchableOpacity>
+                    </View>
+
+                    <View style={styles.subSegmentedControl}>
+                        <TouchableOpacity
+                            style={[styles.subSegment, statusMode === "ACTIVE" && styles.subSegmentActive]}
+                            onPress={() => setStatusMode("ACTIVE")}
+                        >
+                            <Text style={[styles.subSegmentText, statusMode === "ACTIVE" && styles.subSegmentTextActive]}>Available</Text>
+                        </TouchableOpacity>
+                        <TouchableOpacity
+                            style={[styles.subSegment, statusMode === "ARCHIVED" && styles.subSegmentActive]}
+                            onPress={() => setStatusMode("ARCHIVED")}
+                        >
+                            <Text style={[styles.subSegmentText, statusMode === "ARCHIVED" && styles.subSegmentTextActive]}>Archived</Text>
+                        </TouchableOpacity>
+                    </View>
+                </View>
             </View>
 
-            {loading ? (
-                <ActivityIndicator style={{ flex: 1 }} color={colors.primary} />
-            ) : (
-                <FlatList
-                    data={filteredRooms}
-                    renderItem={renderRoomItem}
-                    keyExtractor={item => item.id}
-                    contentContainerStyle={styles.listContent}
-                    refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
-                    ListEmptyComponent={
-                        <View style={styles.emptyState}>
-                            <Feather name="box" size={48} color={colors.textSecondary} />
-                            <Text style={[styles.emptyText, { color: colors.textSecondary }]}>No rooms found</Text>
+            {/* Content with FlatList */}
+            <FlatList
+                data={filteredContent}
+                keyExtractor={(item) => item.id}
+                renderItem={({ item }) => viewMode === "ROOMS" ? <RoomCard item={item} /> : <BedCard item={item} />}
+                contentContainerStyle={styles.listContent}
+                refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+                ListHeaderComponent={
+                    <>
+                        {/* Horizontal Stats */}
+                        <ScrollView
+                            horizontal
+                            showsHorizontalScrollIndicator={false}
+                            style={styles.statsScroll}
+                            contentContainerStyle={styles.statsContent}
+                        >
+                            {stats.map((stat, idx) => (
+                                <View key={idx} style={styles.statCard}>
+                                    <View style={[styles.statIcon, { backgroundColor: stat.color + "15" }]}>
+                                        {stat.type === "Material" ? (
+                                            <MaterialCommunityIcons name={stat.icon as any} size={20} color={stat.color} />
+                                        ) : (
+                                            <Feather name={stat.icon as any} size={20} color={stat.color} />
+                                        )}
+                                    </View>
+                                    <View>
+                                        <Text style={styles.statValue}>{stat.value}</Text>
+                                        <Text style={styles.statLabel}>{stat.label}</Text>
+                                    </View>
+                                </View>
+                            ))}
+                        </ScrollView>
+
+                        {/* Search and Filters */}
+                        <View style={styles.filterSection}>
+                            <View style={styles.searchBar}>
+                                <Feather name="search" size={18} color={COLORS.textMuted} />
+                                <TextInput
+                                    placeholder={viewMode === "ROOMS" ? "Search room or property..." : "Search bed, room or tenant..."}
+                                    placeholderTextColor={COLORS.textMuted}
+                                    style={styles.searchInput}
+                                    value={searchTerm}
+                                    onChangeText={setSearchTerm}
+                                />
+                                {searchTerm !== "" && (
+                                    <TouchableOpacity onPress={() => setSearchTerm("")}>
+                                        <Feather name="x-circle" size={18} color={COLORS.textMuted} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+
+                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
+                                <TouchableOpacity
+                                    style={[styles.chip, !selectedPg && styles.chipActive]}
+                                    onPress={() => setSelectedPg(null)}
+                                >
+                                    <Text style={[styles.chipText, !selectedPg && styles.chipTextActive]}>All Properties</Text>
+                                </TouchableOpacity>
+                                {pgs.map((pg) => (
+                                    <TouchableOpacity
+                                        key={pg.id}
+                                        style={[styles.chip, selectedPg === pg.id && styles.chipActive]}
+                                        onPress={() => setSelectedPg(pg.id)}
+                                    >
+                                        <Text style={[styles.chipText, selectedPg === pg.id && styles.chipTextActive]}>{pg.name}</Text>
+                                    </TouchableOpacity>
+                                ))}
+                            </ScrollView>
                         </View>
-                    }
-                />
-            )}
+                    </>
+                }
+                ListEmptyComponent={
+                    <View style={styles.emptyContainer}>
+                        {loading ? (
+                            <ActivityIndicator color={COLORS.primary} size="large" />
+                        ) : (
+                            <>
+                                <Feather name="box" size={48} color={COLORS.textMuted} />
+                                <Text style={styles.emptyText}>No {viewMode.toLowerCase()} found</Text>
+                            </>
+                        )}
+                    </View>
+                }
+            />
+
+            {/* FAB */}
+            <TouchableOpacity
+                style={styles.fab}
+                activeOpacity={0.8}
+                onPress={() => console.log(`Add ${viewMode === "ROOMS" ? "Room" : "Bed"}`)}
+            >
+                <Feather name="plus" size={24} color="#fff" />
+            </TouchableOpacity>
         </SafeAreaView>
     );
 };
 
 const styles = StyleSheet.create({
-    container: { flex: 1 },
-    header: {
+    container: { flex: 1, backgroundColor: COLORS.bg },
+    header: { padding: 20, paddingBottom: 10 },
+    headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 20 },
+    toggleContainer: { gap: 12 },
+    segmentedControl: {
         flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingHorizontal: 20,
-        paddingVertical: 16
-    },
-    title: { fontSize: 22, fontWeight: "900", letterSpacing: -0.5 },
-    backLink: { flexDirection: "row", alignItems: "center", marginTop: 4, gap: 4 },
-    backText: { fontSize: 13, fontWeight: "700" },
-    addButton: {
-        width: 44,
-        height: 44,
+        backgroundColor: "rgba(255,255,255,0.05)",
         borderRadius: 14,
+        padding: 4
+    },
+    segment: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 10 },
+    segmentActive: { backgroundColor: COLORS.primary },
+    segmentText: { fontSize: 14, fontWeight: "700", color: COLORS.textMuted },
+    segmentTextActive: { color: "#fff" },
+
+    subSegmentedControl: { flexDirection: "row", gap: 8 },
+    subSegment: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderColor: COLORS.border
+    },
+    subSegmentActive: { backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: COLORS.primary },
+    subSegmentText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
+    subSegmentTextActive: { color: COLORS.primary },
+
+    statsScroll: { marginVertical: 20, paddingLeft: 20 },
+    statsContent: { paddingRight: 40 },
+    statCard: {
+        flexDirection: "row",
+        alignItems: "center",
+        backgroundColor: COLORS.card,
+        padding: 16,
+        borderRadius: 20,
+        marginRight: 16,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        minWidth: 140
+    },
+    statIcon: {
+        width: 36,
+        height: 36,
+        borderRadius: 10,
         justifyContent: "center",
         alignItems: "center",
-        elevation: 4
+        marginRight: 12
     },
-    searchContainer: {
+    statValue: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+    statLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase" },
+
+    filterSection: { paddingHorizontal: 20, marginBottom: 12 },
+    searchBar: {
         flexDirection: "row",
         alignItems: "center",
-        marginHorizontal: 20,
+        backgroundColor: COLORS.card,
+        borderRadius: 14,
         paddingHorizontal: 16,
-        height: 50,
-        borderRadius: 12,
+        height: 48,
         borderWidth: 1,
-        marginBottom: 16
+        borderColor: COLORS.border
     },
-    searchInput: { flex: 1, marginLeft: 12, fontSize: 15, fontWeight: "500" },
-    listContent: { padding: 20, paddingTop: 0 },
+    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+    chipsScroll: { marginTop: 16, marginHorizontal: -20, paddingLeft: 20 },
+    chip: {
+        paddingHorizontal: 16,
+        paddingVertical: 8,
+        borderRadius: 14,
+        backgroundColor: COLORS.card,
+        marginRight: 10,
+        borderWidth: 1,
+        borderColor: COLORS.border
+    },
+    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+    chipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
+    chipTextActive: { color: "#fff" },
+
+    listContent: { paddingBottom: 100 },
     card: {
-        padding: 16,
-        borderRadius: 24,
-        borderWidth: 1,
+        backgroundColor: COLORS.card,
+        marginHorizontal: 20,
+        padding: 18,
+        borderRadius: 22,
         marginBottom: 16,
-        elevation: 2,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.05,
-        shadowRadius: 4
+        borderWidth: 1,
+        borderColor: COLORS.border
     },
-    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 },
-    roomBadge: {},
-    roomNumber: { fontSize: 18, fontWeight: "800" },
-    floorText: { fontSize: 12, fontWeight: "600", marginTop: 2 },
-    statusBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    statusText: { fontSize: 10, fontWeight: "800" },
-    pgInfo: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
-    pgName: { fontSize: 13, fontWeight: "600" },
-    detailsRow: { flexDirection: "row", alignItems: "center", marginVertical: 8 },
-    detailItem: { flex: 1, alignItems: "center" },
-    detailValue: { fontSize: 16, fontWeight: "800", marginTop: 4 },
-    detailLabel: { fontSize: 10, fontWeight: "600", marginTop: 2, textTransform: "uppercase" },
-    detailDivider: { width: 1, height: 30 },
-    typeBadge: { alignSelf: "flex-start", paddingHorizontal: 12, paddingVertical: 6, borderRadius: 10, marginTop: 12 },
-    typeText: { fontSize: 11, fontWeight: "800", textTransform: "uppercase" },
-    emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
-    emptyText: { fontSize: 16, fontWeight: "600" }
+    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
+    cardInfo: { flex: 1 },
+    cardTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+    cardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: "600" },
+    badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+    badgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
+
+    divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 8 },
+
+    cardFooter: { flexDirection: "row", alignItems: "center", marginTop: 8 },
+    footerItem: { flex: 1 },
+    footerLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4 },
+    footerValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
+    actions: { flexDirection: "row", gap: 8 },
+    actionBtn: {
+        width: 32,
+        height: 32,
+        borderRadius: 10,
+        backgroundColor: "rgba(255,255,255,0.03)",
+        justifyContent: "center",
+        alignItems: "center"
+    },
+
+    residentRow: { flexDirection: "row", alignItems: "center", marginTop: 8 },
+    avatar: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+    residentName: { fontSize: 14, fontWeight: "700" },
+    residentLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600" },
+    maintenanceBtn: {
+        flexDirection: "row",
+        alignItems: "center",
+        gap: 4,
+        backgroundColor: "rgba(245, 158, 11, 0.1)",
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10
+    },
+    maintenanceText: { color: COLORS.warning, fontSize: 11, fontWeight: "800" },
+
+    emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
+    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+
+    fab: {
+        position: "absolute",
+        bottom: 24,
+        right: 24,
+        width: 56,
+        height: 56,
+        borderRadius: 20,
+        backgroundColor: COLORS.primary,
+        justifyContent: "center",
+        alignItems: "center",
+        elevation: 8,
+        shadowColor: COLORS.primary,
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.3,
+        shadowRadius: 10
+    }
 });
 
 export default RoomsScreen;

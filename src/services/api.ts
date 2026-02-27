@@ -255,31 +255,57 @@ export const expenseAPI = {
 export const statsAPI = {
     getDashboardStats: async () => {
         return apiClient.request(async () => {
+            const now = new Date();
+            const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+
             const results = await Promise.all([
                 supabase.from("pgs").select("*", { count: "exact", head: true }).eq("status", "ACTIVE"),
-                supabase.from("rooms").select("*", { count: "exact", head: true }).eq("status", "AVAILABLE"),
-                supabase.from("tenants").select("*", { count: "exact", head: true }).in("status", ["ACTIVE", "INACTIVE"]),
-                supabase.from("bookings").select("*", { count: "exact", head: true }).eq("status", "PENDING"),
-                supabase.from("payments").select("*"),
-                supabase.from("expenses").select("*"),
+                supabase.from("rooms").select("*", { count: "exact", head: true }).in("status", ["AVAILABLE", "PARTIAL", "FULL"]),
+                supabase.from("tenants").select("*", { count: "exact", head: true }).eq("status", "ACTIVE"),
                 supabase.from("beds").select("*", { count: "exact", head: true }).neq("status", "INACTIVE"),
-                supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "OCCUPIED").neq("status", "INACTIVE"),
+                supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "OCCUPIED"),
+                supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "AVAILABLE"),
+                supabase.from("payments").select("amount, payment_date, created_at, status"),
+                supabase.from("expenses").select("amount, date, created_at"),
+                supabase.from("tenants").select("balance").eq("status", "ACTIVE"),
+                supabase.from("daily_stay_details").select("balance_amount"),
                 supabase.from("tenants").select(`*, pgs!pg_id(name), rooms!room_id(room_number)`).order("created_at", { ascending: false }).limit(5),
             ]);
-            const [pgs, rooms, tenants, bookings, payments, expenses, totalBeds, occupiedBeds, recentResidents] = results;
+
+            const [
+                pgs, rooms, tenants, totalBeds, occupiedBeds, availableBeds,
+                payments, expenses, tenantBalances, dailyBalances, recentResidents
+            ] = results;
+
             const allPayments = payments?.data || [];
+            const allExpenses = expenses?.data || [];
+
             const totalRevenue = allPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
-            const totalExpenses = (expenses?.data || []).reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+            const monthlyRevenue = allPayments
+                .filter(p => (p.payment_date || p.created_at) >= firstDayOfMonth)
+                .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+            const monthlyExpenses = allExpenses
+                .filter(e => (e.date || e.created_at) >= firstDayOfMonth)
+                .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
+
+            const pendingDues = (tenantBalances?.data || []).reduce((sum, t) => sum + (Number(t.balance) || 0), 0) +
+                (dailyBalances?.data || []).reduce((sum, d) => sum + (Number(d.balance_amount) || 0), 0);
+
             return {
                 data: {
                     totalPGs: pgs?.count || 0,
-                    totalRooms: rooms?.count || 0,
+                    activeRooms: rooms?.count || 0,
                     totalTenants: tenants?.count || 0,
-                    pendingBookings: bookings?.count || 0,
-                    totalRevenue,
-                    totalExpenses,
                     totalBeds: totalBeds?.count || 0,
                     occupiedBeds: occupiedBeds?.count || 0,
+                    availableBeds: availableBeds?.count || 0,
+                    occupancyRate: (totalBeds?.count && occupiedBeds?.count) ? Math.round((occupiedBeds.count / totalBeds.count) * 100) : 0,
+                    totalRevenue,
+                    monthlyRevenue,
+                    netProfit: monthlyRevenue - monthlyExpenses,
+                    pendingDues,
                     recentResidents: recentResidents?.data || [],
                 }
             };

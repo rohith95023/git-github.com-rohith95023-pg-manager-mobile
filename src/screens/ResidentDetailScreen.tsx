@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useMemo } from "react";
 import {
     View,
     Text,
@@ -10,26 +10,15 @@ import {
     Linking
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const ResidentDetailScreen = ({ route, navigation }: any) => {
     const { tenant } = route.params;
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -96,12 +85,25 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                         <View style={[styles.statusIndicator, { backgroundColor: getStatusColor(tenant.status) }]} />
                     </View>
                     <Text style={styles.profileName}>{tenant.full_name}</Text>
-                    <View style={[styles.profileStatusBadge, { backgroundColor: getStatusColor(tenant.status) + "20" }]}>
-                        <Text style={[styles.profileStatusText, { color: getStatusColor(tenant.status) }]}>{tenant.status}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                        <View style={[styles.profileStatusBadge, { backgroundColor: getStatusColor(tenant.status) + "20", marginBottom: 0 }]}>
+                            <Text style={[styles.profileStatusText, { color: getStatusColor(tenant.status) }]}>{tenant.status}</Text>
+                        </View>
+                        {tenant.stay_type === 'DAILY' && (
+                            <View style={[styles.profileStatusBadge, { backgroundColor: COLORS.warning + "20", marginBottom: 0 }]}>
+                                <Text style={[styles.profileStatusText, { color: COLORS.warning }]}>DAILY</Text>
+                            </View>
+                        )}
                     </View>
+
                     <Text style={styles.enrollmentDate}>
                         Enrolled: {new Date(tenant.move_in_date || tenant.created_at).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
                     </Text>
+                    {tenant.stay_type === 'DAILY' && tenant.vacate_date && (
+                        <Text style={[styles.enrollmentDate, { color: COLORS.warning, marginTop: 4 }]}>
+                            Checkout: {new Date(tenant.vacate_date).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
+                        </Text>
+                    )}
                 </View>
 
                 {/* Contact Directory */}
@@ -157,7 +159,9 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                             </View>
                             <View>
                                 <Text style={styles.allocationLabel}>FLOOR</Text>
-                                <Text style={styles.allocationValue}>{tenant.rooms?.floor || tenant.floor || "N/A"}</Text>
+                                <Text style={styles.allocationValue}>
+                                    {(tenant.rooms?.floor === 0 || tenant.rooms?.floor === "0") || (tenant.floor === 0 || tenant.floor === "0") ? "Ground" : (tenant.rooms?.floor || tenant.floor || "N/A")}
+                                </Text>
                             </View>
                         </View>
                     </View>
@@ -187,11 +191,39 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                 <DetailCard title="Financial Status" icon="credit-card" color={COLORS.danger}>
                     <View style={styles.financeItem}>
                         <View>
-                            <Text style={styles.financeLabel}>Monthly Rent</Text>
-                            <Text style={styles.financeSubLabel}>Standard monthly lease</Text>
+                            <Text style={styles.financeLabel}>{tenant.stay_type === 'DAILY' ? 'Rent (Per Day)' : 'Monthly Rent'}</Text>
+                            <Text style={styles.financeSubLabel}>{tenant.stay_type === 'DAILY' ? 'Daily accommodation fee' : 'Standard monthly lease'}</Text>
                         </View>
-                        <Text style={[styles.financeValue, { color: COLORS.text }]}>₹{Number(tenant.rent_per_month || tenant.rent || tenant.rooms?.rent || 0).toLocaleString()}</Text>
+                        <Text style={[styles.financeValue, { color: COLORS.text }]}>₹{Number(tenant.rent_per_day || tenant.rent_per_month || tenant.rent || tenant.rooms?.rent || 0).toLocaleString()}</Text>
                     </View>
+                    {tenant.stay_type === 'DAILY' && (
+                        <View style={styles.financeItem}>
+                            <View>
+                                <Text style={styles.financeLabel}>Total Estimated Rent</Text>
+                                <Text style={styles.financeSubLabel}>Based on stay duration</Text>
+                            </View>
+                            <Text style={[styles.financeValue, { color: COLORS.success }]}>
+                                ₹{(() => {
+                                    const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
+                                    const moveIn = tenant.move_in_date || daily?.move_in_date;
+                                    const vacate = tenant.vacate_date || daily?.vacate_date;
+                                    const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
+                                    const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
+
+                                    if (moveIn && vacate) {
+                                        const start = new Date(moveIn);
+                                        const end = new Date(vacate);
+                                        let diffDays = 1;
+                                        if (end > start) {
+                                            diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                        }
+                                        return (diffDays * Number(rentPerDay)) + Number(maintenance);
+                                    }
+                                    return Number(tenant.total_rent || daily?.total_rent || 0);
+                                })().toLocaleString()}
+                            </Text>
+                        </View>
+                    )}
                     <View style={styles.financeItem}>
                         <View>
                             <Text style={styles.financeLabel}>Balance Due</Text>
@@ -221,121 +253,124 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    navHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        paddingHorizontal: 20,
-        paddingVertical: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border
-    },
-    backBtn: { padding: 4 },
-    navTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    editBtn: { padding: 8 },
-    scrollPadding: { paddingHorizontal: 20, paddingTop: 20 },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    profileSection: { alignItems: "center", marginBottom: 30 },
-    avatarContainer: { position: "relative", marginBottom: 15 },
-    avatar: {
-        width: 100,
-        height: 100,
-        borderRadius: 35,
-        justifyContent: "center",
-        alignItems: "center"
-    },
-    avatarText: { fontSize: 36, fontWeight: "900", color: COLORS.primary },
-    statusIndicator: {
-        position: "absolute",
-        bottom: 5,
-        right: 5,
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 3,
-        borderColor: COLORS.bg
-    },
-    profileName: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 8 },
-    profileStatusBadge: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 12, marginBottom: 10 },
-    profileStatusText: { fontSize: 12, fontWeight: "800", textTransform: "uppercase" },
-    enrollmentDate: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        navHeader: {
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: 20,
+            paddingVertical: 15,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border
+        },
+        backBtn: { padding: 4 },
+        navTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        editBtn: { padding: 8 },
+        scrollPadding: { paddingHorizontal: 20, paddingTop: 20 },
 
-    detailCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
-    iconBox: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 12
-    },
-    cardTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-    cardContent: { gap: 16 },
+        profileSection: { alignItems: "center", marginBottom: 30 },
+        avatarContainer: { position: "relative", marginBottom: 15 },
+        avatar: {
+            width: 100,
+            height: 100,
+            borderRadius: 35,
+            justifyContent: "center",
+            alignItems: "center"
+        },
+        avatarText: { fontSize: 36, fontWeight: "900", color: COLORS.primary },
+        statusIndicator: {
+            position: "absolute",
+            bottom: 5,
+            right: 5,
+            width: 20,
+            height: 20,
+            borderRadius: 10,
+            borderWidth: 3,
+            borderColor: COLORS.bg
+        },
+        profileName: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 8 },
+        profileStatusBadge: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 12, marginBottom: 10 },
+        profileStatusText: { fontSize: 12, fontWeight: "800", textTransform: "uppercase" },
+        enrollmentDate: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
 
-    infoRow: { flexDirection: "row", alignItems: "center" },
-    infoIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: "center", alignItems: "center", marginRight: 12 },
-    infoText: { flex: 1 },
-    infoLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", textTransform: "uppercase", marginBottom: 2 },
-    infoValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        detailCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 20,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
+        iconBox: {
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 12
+        },
+        cardTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+        cardContent: { gap: 16 },
 
-    allocationGrid: { flexDirection: "row", flexWrap: "wrap", gap: 15, marginBottom: 10 },
-    allocationItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "rgba(255,255,255,0.02)",
-        padding: 12,
-        borderRadius: 16,
-        width: "47%",
-        gap: 12
-    },
-    allocationIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-    allocationLabel: { fontSize: 8, color: COLORS.textMuted, fontWeight: "800" },
-    allocationValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+        infoRow: { flexDirection: "row", alignItems: "center" },
+        infoIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: "center", alignItems: "center", marginRight: 12 },
+        infoText: { flex: 1 },
+        infoLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", textTransform: "uppercase", marginBottom: 2 },
+        infoValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
 
-    idContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "rgba(255,255,255,0.02)",
-        padding: 16,
-        borderRadius: 16,
-        gap: 16
-    },
-    idIcon: { padding: 10, backgroundColor: COLORS.warning + "10", borderRadius: 12 },
-    idInfo: { flex: 1 },
-    idLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", marginBottom: 4 },
-    idValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
-    verifiedBadge: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-        backgroundColor: COLORS.success,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6
-    },
-    verifiedText: { fontSize: 8, fontWeight: "900", color: "#fff" },
+        allocationGrid: { flexDirection: "row", flexWrap: "wrap", gap: 15, marginBottom: 10 },
+        allocationItem: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: "rgba(255,255,255,0.02)",
+            padding: 12,
+            borderRadius: 16,
+            width: "47%",
+            gap: 12
+        },
+        allocationIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+        allocationLabel: { fontSize: 8, color: COLORS.textMuted, fontWeight: "800" },
+        allocationValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
 
-    financeItem: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: "rgba(255,255,255,0.05)"
-    },
-    financeLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
-    financeSubLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-    financeValue: { fontSize: 18, fontWeight: "900" }
-});
+        idContainer: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: "rgba(255,255,255,0.02)",
+            padding: 16,
+            borderRadius: 16,
+            gap: 16
+        },
+        idIcon: { padding: 10, backgroundColor: COLORS.warning + "10", borderRadius: 12 },
+        idInfo: { flex: 1 },
+        idLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", marginBottom: 4 },
+        idValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+        verifiedBadge: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            backgroundColor: COLORS.success,
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 6
+        },
+        verifiedText: { fontSize: 8, fontWeight: "900", color: "#fff" },
+
+        financeItem: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingVertical: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: "rgba(255,255,255,0.05)"
+        },
+        financeLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        financeSubLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+        financeValue: { fontSize: 18, fontWeight: "900" }
+    });
 
 export default ResidentDetailScreen;

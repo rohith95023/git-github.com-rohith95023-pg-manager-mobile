@@ -10,40 +10,76 @@ import {
     RefreshControl,
     ActivityIndicator,
     Dimensions,
-    Pressable
+    Pressable,
+    Alert
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { roomAPI, bedAPI, pgAPI } from "../services/api";
+import { supabase } from "../lib/supabaseClient";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
+import { generateDeleteCode } from "../utils/security";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import DropdownSelector from "../components/common/DropdownSelector";
+import RoomFormModal from "../components/modals/RoomFormModal";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
+const createDefaultRoomFilters = () => ({
+    property: null as string | null,
+    showArchived: false,
+    bedStatus: "ALL",
+});
+const BED_STATUS_OPTIONS = ["ALL", "AVAILABLE", "OCCUPIED", "MAINTENANCE"];
 
 const RoomsScreen = ({ navigation }: any) => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [viewMode, setViewMode] = useState<"ROOMS" | "BEDS">("ROOMS");
-    const [statusMode, setStatusMode] = useState<"ACTIVE" | "ARCHIVED">("ACTIVE");
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [filters, setFilters] = useState(createDefaultRoomFilters());
+    const [pendingFilters, setPendingFilters] = useState(createDefaultRoomFilters());
+    const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
 
     const [rooms, setRooms] = useState<any[]>([]);
     const [beds, setBeds] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
 
     const [searchTerm, setSearchTerm] = useState("");
-    const [selectedPg, setSelectedPg] = useState<string | null>(null);
+
+    // Modal State
+    const [roomModalVisible, setRoomModalVisible] = useState(false);
+    const [editingRoom, setEditingRoom] = useState<any>(null);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        needsInput?: boolean;
+        inputPlaceholder?: string;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
+
+    const [confirmInput, setConfirmInput] = useState("");
+    const [confirmTargetCode, setConfirmTargetCode] = useState("");
+
+    const statusMode = filters.showArchived ? "ARCHIVED" : "ACTIVE";
+    const updateShowArchived = (value: boolean) => {
+        setFilters(prev => ({ ...prev, showArchived: value }));
+        setPendingFilters(prev => ({ ...prev, showArchived: value }));
+    };
 
     const fetchData = useCallback(async () => {
         try {
@@ -53,9 +89,9 @@ const RoomsScreen = ({ navigation }: any) => {
                 bedAPI.getAll(),
                 pgAPI.getAll()
             ]);
-            setRooms(roomsData || []);
-            setBeds(bedsData || []);
-            setPgs(pgsData || []);
+            setRooms(Array.isArray(roomsData) ? roomsData : []);
+            setBeds(Array.isArray(bedsData) ? bedsData : []);
+            setPgs(Array.isArray(pgsData) ? pgsData : []);
         } catch (error) {
             console.error("Failed to fetch Rooms/Beds data:", error);
         } finally {
@@ -73,14 +109,97 @@ const RoomsScreen = ({ navigation }: any) => {
         fetchData();
     };
 
+    const handleAddRoom = () => {
+        setEditingRoom(null);
+        setRoomModalVisible(true);
+    };
+
+    const handleEditRoom = (room: any) => {
+        setEditingRoom(room);
+        setRoomModalVisible(true);
+    };
+
+    const handleDeleteRoom = async (id: string, roomNumber: string) => {
+        try {
+            setLoading(true);
+            const { count, error } = await supabase
+                .from("beds")
+                .select("id", { count: "exact", head: true })
+                .eq("room_id", id)
+                .not("tenant_id", "is", null);
+
+            setLoading(false);
+
+            if (error) throw error;
+
+            if (count && count > 0) {
+                setConfirmState({
+                    visible: true,
+                    title: "Delete Blocked",
+                    message: `Cannot delete Room ${roomNumber}. It currently has ${count} occupied or reserved bed(s). Please unassign tenants before deleting.`,
+                    type: "danger",
+                    singleButton: true,
+                    cancelText: "Close"
+                });
+                return;
+            }
+
+            const deleteCode = generateDeleteCode();
+            setConfirmTargetCode(deleteCode);
+            setConfirmInput("");
+
+            setConfirmState({
+                visible: true,
+                title: "Delete Room & Beds?",
+                message: `Are you sure you want to delete Room ${roomNumber} and ALL its beds? This will also remove historical assignments. This action is irreversible.`,
+                type: "danger",
+                confirmText: "Delete Room Now",
+                cancelText: "Cancel",
+                needsInput: true,
+                inputPlaceholder: `Type "${deleteCode}" to confirm`,
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        await roomAPI.delete(id);
+                        await fetchData();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        setConfirmInput("");
+                        setConfirmTargetCode("");
+                        Alert.alert("Success", `Room ${roomNumber} deleted successfully`);
+                    } catch (error) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", "Failed to delete room");
+                    }
+                }
+            });
+        } catch (error: any) {
+            setLoading(false);
+            console.error("Delete room check error:", error);
+            Alert.alert("Error", "Error checking room occupancy: " + error.message);
+        }
+    };
+
     // Filter Logic
     const filteredContent = useMemo(() => {
+        const propertyId = filters.property;
+        const showArchived = filters.showArchived;
+
+        const isArchivedRoom = (r: any) =>
+            r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
+            r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
+
+        const isArchivedBed = (b: any) =>
+            b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
+            b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" ||
+            b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" ||
+            b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+
         if (viewMode === "ROOMS") {
             return rooms.filter(r => {
                 const matchesSearch = (r.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (r.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
-                const matchesPg = !selectedPg || r.pg_id === selectedPg;
-                const matchesStatus = statusMode === "ACTIVE" ? r.status !== "DELETED" : r.status === "DELETED";
+                const matchesPg = !propertyId || r.pg_id === propertyId;
+                const matchesStatus = showArchived ? isArchivedRoom(r) : !isArchivedRoom(r);
                 return matchesSearch && matchesPg && matchesStatus;
             });
         } else {
@@ -88,24 +207,28 @@ const RoomsScreen = ({ navigation }: any) => {
                 const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
-                const matchesPg = !selectedPg || b.rooms?.pg_id === selectedPg;
-                const matchesStatus = statusMode === "ACTIVE" ? b.status !== "DELETED" : b.status === "DELETED";
-                return matchesSearch && matchesPg && matchesStatus;
+                const matchesPg = !propertyId || b.rooms?.pg_id === propertyId;
+                const matchesStatus = showArchived ? isArchivedBed(b) : !isArchivedBed(b);
+                const matchesBedStatus = filters.bedStatus === "ALL" || b.status === filters.bedStatus;
+                return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
         }
-    }, [viewMode, statusMode, rooms, beds, searchTerm, selectedPg]);
+    }, [viewMode, rooms, beds, searchTerm, filters]);
 
     // Stats Logic
     const stats = useMemo(() => {
+        const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
+        const isArchiveB = (b: any) => b.status === "MAINTENANCE" || b.status === "INACTIVE" || b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" || b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" || b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+
         if (viewMode === "ROOMS") {
-            const active = rooms.filter(r => r.status !== "DELETED");
+            const active = rooms.filter(r => !isArchiveR(r));
             return [
                 { label: "Total Rooms", value: active.length, icon: "door-open", type: "Material", color: COLORS.primary },
                 { label: "Available", value: active.filter(r => r.status === "AVAILABLE").length, icon: "check-circle", type: "Feather", color: COLORS.success },
                 { label: "Occupied", value: active.filter(r => r.status === "FULL").length, icon: "user-check", type: "Feather", color: COLORS.warning },
             ];
         } else {
-            const active = beds.filter(b => b.status !== "DELETED");
+            const active = beds.filter(b => !isArchiveB(b));
             return [
                 { label: "Total Beds", value: active.length, icon: "bed", type: "Material", color: COLORS.primary },
                 { label: "Available", value: active.filter(b => b.status === "AVAILABLE").length, icon: "check-circle", type: "Feather", color: COLORS.success },
@@ -119,7 +242,9 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardHeader}>
                 <View style={styles.cardInfo}>
                     <Text style={styles.cardTitle}>Room {item.room_number}</Text>
-                    <Text style={styles.cardSub}>{item.pgs?.name || "N/A"} • Floor {item.floor}</Text>
+                    <Text style={styles.cardSub}>
+                        {item.pgs?.name || "N/A"} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`}
+                    </Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
                     <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
@@ -131,17 +256,17 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardFooter}>
                 <View style={styles.footerItem}>
                     <Text style={styles.footerLabel}>MONTHLY RENT</Text>
-                    <Text style={styles.footerValue}>₹{item.rent?.toLocaleString()}</Text>
+                    <Text style={styles.footerValue}>₹{Number(item.rent || 0).toLocaleString()}</Text>
                 </View>
                 <View style={styles.footerItem}>
-                    <Text style={styles.footerLabel}>DEPOSIT</Text>
-                    <Text style={styles.footerValue}>₹{item.security_deposit?.toLocaleString()}</Text>
+                    <Text style={styles.footerLabel}>SHARING</Text>
+                    <Text style={styles.footerValue}>{item.capacity} Beds</Text>
                 </View>
                 <View style={styles.actions}>
-                    <TouchableOpacity style={styles.actionBtn}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditRoom(item)}>
                         <Feather name="edit-2" size={16} color={COLORS.textMuted} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionBtn}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleDeleteRoom(item.id, item.room_number)}>
                         <Feather name="trash-2" size={16} color={COLORS.danger} />
                     </TouchableOpacity>
                 </View>
@@ -213,13 +338,13 @@ const RoomsScreen = ({ navigation }: any) => {
                     <View style={styles.subSegmentedControl}>
                         <TouchableOpacity
                             style={[styles.subSegment, statusMode === "ACTIVE" && styles.subSegmentActive]}
-                            onPress={() => setStatusMode("ACTIVE")}
+                            onPress={() => updateShowArchived(false)}
                         >
                             <Text style={[styles.subSegmentText, statusMode === "ACTIVE" && styles.subSegmentTextActive]}>Available</Text>
                         </TouchableOpacity>
                         <TouchableOpacity
                             style={[styles.subSegment, statusMode === "ARCHIVED" && styles.subSegmentActive]}
-                            onPress={() => setStatusMode("ARCHIVED")}
+                            onPress={() => updateShowArchived(true)}
                         >
                             <Text style={[styles.subSegmentText, statusMode === "ARCHIVED" && styles.subSegmentTextActive]}>Archived</Text>
                         </TouchableOpacity>
@@ -260,7 +385,7 @@ const RoomsScreen = ({ navigation }: any) => {
                             ))}
                         </ScrollView>
 
-                        {/* Search and Filters */}
+                        {/* Search Row with Filter button */}
                         <View style={styles.filterSection}>
                             <View style={styles.searchBar}>
                                 <Feather name="search" size={18} color={COLORS.textMuted} />
@@ -277,24 +402,16 @@ const RoomsScreen = ({ navigation }: any) => {
                                     </TouchableOpacity>
                                 )}
                             </View>
-
-                            <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.chipsScroll}>
-                                <TouchableOpacity
-                                    style={[styles.chip, !selectedPg && styles.chipActive]}
-                                    onPress={() => setSelectedPg(null)}
-                                >
-                                    <Text style={[styles.chipText, !selectedPg && styles.chipTextActive]}>All Properties</Text>
-                                </TouchableOpacity>
-                                {pgs.map((pg) => (
-                                    <TouchableOpacity
-                                        key={pg.id}
-                                        style={[styles.chip, selectedPg === pg.id && styles.chipActive]}
-                                        onPress={() => setSelectedPg(pg.id)}
-                                    >
-                                        <Text style={[styles.chipText, selectedPg === pg.id && styles.chipTextActive]}>{pg.name}</Text>
-                                    </TouchableOpacity>
-                                ))}
-                            </ScrollView>
+                            <TouchableOpacity
+                                style={styles.filterButton}
+                                onPress={() => {
+                                    setPendingFilters({ ...filters });
+                                    setFilterSheetVisible(true);
+                                }}
+                            >
+                                <Feather name="sliders" size={18} color="#fff" />
+                                <Text style={styles.filterButtonText}>Filter</Text>
+                            </TouchableOpacity>
                         </View>
                     </>
                 }
@@ -312,163 +429,287 @@ const RoomsScreen = ({ navigation }: any) => {
                 }
             />
 
+            <FilterBottomSheet
+                visible={isFilterSheetVisible}
+                title={`${viewMode} Filters`}
+                description={viewMode === "ROOMS" ? "Filter by property" : "Filter by property and status"}
+                onClose={() => setFilterSheetVisible(false)}
+                onApply={() => {
+                    const applied = { ...pendingFilters };
+                    setFilters(applied);
+                    setPendingFilters(applied);
+                    setFilterSheetVisible(false);
+                }}
+                onReset={() => {
+                    const defaults = createDefaultRoomFilters();
+                    setFilters(defaults);
+                    setPendingFilters(defaults);
+                    setFilterSheetVisible(false);
+                }}
+                applyLabel="Apply"
+                resetLabel="Reset"
+            >
+                <DropdownSelector
+                    label="Property"
+                    options={[
+                        { label: "All Properties", value: "" },
+                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                    ]}
+                    value={pendingFilters.property || ""}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, property: value || null }))}
+                    placeholder="Select property..."
+                />
+                {viewMode === "BEDS" && (
+                    <DropdownSelector
+                        label="Status"
+                        options={[
+                            { label: "All Status", value: "ALL" },
+                            { label: "Available", value: "AVAILABLE" },
+                            { label: "Occupied", value: "OCCUPIED" },
+                            { label: "Maintenance", value: "MAINTENANCE" }
+                        ]}
+                        value={pendingFilters.bedStatus}
+                        onChange={(value) => setPendingFilters(prev => ({ ...prev, bedStatus: value }))}
+                        placeholder="Select status..."
+                    />
+                )}
+            </FilterBottomSheet>
+
             {/* FAB */}
             <TouchableOpacity
                 style={styles.fab}
                 activeOpacity={0.8}
-                onPress={() => console.log(`Add ${viewMode === "ROOMS" ? "Room" : "Bed"}`)}
+                onPress={handleAddRoom}
             >
                 <Feather name="plus" size={24} color="#fff" />
+                <Text style={styles.fabText}>Add Room</Text>
             </TouchableOpacity>
+
+            <RoomFormModal
+                visible={roomModalVisible}
+                onClose={() => setRoomModalVisible(false)}
+                onSuccess={fetchData}
+                editingRoom={editingRoom}
+                initialPgId={filters.property || undefined}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    setConfirmInput("");
+                    setConfirmTargetCode("");
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
+                needsInput={confirmState.needsInput}
+                inputPlaceholder={confirmState.inputPlaceholder}
+                inputValue={confirmInput}
+                onInputChange={(val) => setConfirmInput(val)}
+                confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
+                disableOutsideTap={confirmState.type === "danger"}
+            />
         </SafeAreaView>
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingBottom: 10 },
-    headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 20 },
-    toggleContainer: { gap: 12 },
-    segmentedControl: {
-        flexDirection: "row",
-        backgroundColor: "rgba(255,255,255,0.05)",
-        borderRadius: 14,
-        padding: 4
-    },
-    segment: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 10 },
-    segmentActive: { backgroundColor: COLORS.primary },
-    segmentText: { fontSize: 14, fontWeight: "700", color: COLORS.textMuted },
-    segmentTextActive: { color: "#fff" },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    subSegmentedControl: { flexDirection: "row", gap: 8 },
-    subSegment: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    subSegmentActive: { backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: COLORS.primary },
-    subSegmentText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
-    subSegmentTextActive: { color: COLORS.primary },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingBottom: 10 },
+        headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 20 },
+        toggleContainer: { gap: 12 },
+        segmentedControl: {
+            flexDirection: "row",
+            backgroundColor: "rgba(255,255,255,0.05)",
+            borderRadius: 14,
+            padding: 4
+        },
+        segment: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 10 },
+        segmentActive: { backgroundColor: COLORS.primary },
+        segmentText: { fontSize: 14, fontWeight: "700", color: COLORS.textMuted },
+        segmentTextActive: { color: "#fff" },
 
-    statsScroll: { marginVertical: 20, paddingLeft: 20 },
-    statsContent: { paddingRight: 40 },
-    statCard: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        padding: 16,
-        borderRadius: 20,
-        marginRight: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        minWidth: 140
-    },
-    statIcon: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 12
-    },
-    statValue: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    statLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase" },
+        subSegmentedControl: { flexDirection: "row", gap: 8 },
+        subSegment: {
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        subSegmentActive: { backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: COLORS.primary },
+        subSegmentText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
+        subSegmentTextActive: { color: COLORS.primary },
 
-    filterSection: { paddingHorizontal: 20, marginBottom: 12 },
-    searchBar: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 14,
-        paddingHorizontal: 16,
-        height: 48,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    chipsScroll: { marginTop: 16, marginHorizontal: -20, paddingLeft: 20 },
-    chip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 14,
-        backgroundColor: COLORS.card,
-        marginRight: 10,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    chipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    chipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
-    chipTextActive: { color: "#fff" },
+        statsScroll: { marginVertical: 20, paddingLeft: 20 },
+        statsContent: { paddingRight: 40 },
+        statCard: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            padding: 16,
+            borderRadius: 20,
+            marginRight: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            minWidth: 140
+        },
+        statIcon: {
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 12
+        },
+        statValue: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        statLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase" },
 
-    listContent: { paddingBottom: 100 },
-    card: {
-        backgroundColor: COLORS.card,
-        marginHorizontal: 20,
-        padding: 18,
-        borderRadius: 22,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
-    cardInfo: { flex: 1 },
-    cardTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    cardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: "600" },
-    badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    badgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
+        filterSection: {
+            paddingHorizontal: 20,
+            marginBottom: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10
+        },
+        searchBar: {
+            flex: 1,
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            paddingHorizontal: 16,
+            height: 48,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        filterButton: {
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 14,
+            backgroundColor: COLORS.primary,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+        },
+        filterButtonText: {
+            color: "#fff",
+            fontWeight: "700",
+            fontSize: 14,
+        },
+        sheetSection: { marginBottom: 18 },
+        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+        sheetChipsRow: { gap: 8 },
+        sheetChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 14,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            marginRight: 10,
+            minWidth: 100,
+        },
+        sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        sheetChipText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
+        sheetChipTextActive: { color: "#fff" },
+        sheetStatusRow: { flexDirection: "row", gap: 10 },
+        sheetStatusOption: {
+            flex: 1,
+            paddingVertical: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+        },
+        sheetStatusOptionActive: {
+            borderColor: COLORS.primary,
+            backgroundColor: COLORS.primary + "15",
+        },
+        sheetStatusText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
+        sheetStatusTextActive: { color: COLORS.primary },
 
-    divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 8 },
+        listContent: { paddingBottom: 100 },
+        card: {
+            backgroundColor: COLORS.card,
+            marginHorizontal: 20,
+            padding: 18,
+            borderRadius: 22,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
+        cardInfo: { flex: 1 },
+        cardTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        cardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: "600" },
+        badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+        badgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
 
-    cardFooter: { flexDirection: "row", alignItems: "center", marginTop: 8 },
-    footerItem: { flex: 1 },
-    footerLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4 },
-    footerValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
-    actions: { flexDirection: "row", gap: 8 },
-    actionBtn: {
-        width: 32,
-        height: 32,
-        borderRadius: 10,
-        backgroundColor: "rgba(255,255,255,0.03)",
-        justifyContent: "center",
-        alignItems: "center"
-    },
+        divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 8 },
 
-    residentRow: { flexDirection: "row", alignItems: "center", marginTop: 8 },
-    avatar: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-    residentName: { fontSize: 14, fontWeight: "700" },
-    residentLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600" },
-    maintenanceBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-        backgroundColor: "rgba(245, 158, 11, 0.1)",
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 10
-    },
-    maintenanceText: { color: COLORS.warning, fontSize: 11, fontWeight: "800" },
+        cardFooter: { flexDirection: "row", alignItems: "center", marginTop: 8 },
+        footerItem: { flex: 1 },
+        footerLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4 },
+        footerValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
+        actions: { flexDirection: "row", gap: 8 },
+        actionBtn: {
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+            backgroundColor: "rgba(255,255,255,0.03)",
+            justifyContent: "center",
+            alignItems: "center"
+        },
 
-    emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+        residentRow: { flexDirection: "row", alignItems: "center", marginTop: 8 },
+        avatar: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+        residentName: { fontSize: 14, fontWeight: "700" },
+        residentLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600" },
+        maintenanceBtn: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            backgroundColor: "rgba(245, 158, 11, 0.1)",
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 10
+        },
+        maintenanceText: { color: COLORS.warning, fontSize: 11, fontWeight: "800" },
 
-    fab: {
-        position: "absolute",
-        bottom: 24,
-        right: 24,
-        width: 56,
-        height: 56,
-        borderRadius: 20,
-        backgroundColor: COLORS.primary,
-        justifyContent: "center",
-        alignItems: "center",
-        elevation: 8,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 10
-    }
-});
+        emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+
+        fab: {
+            position: "absolute",
+            bottom: 30,
+            right: 20,
+            flexDirection: "row",
+            paddingHorizontal: 20,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: COLORS.primary,
+            justifyContent: "center",
+            alignItems: "center",
+            elevation: 8,
+            shadowColor: COLORS.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 6,
+            gap: 10
+        },
+        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
+    });
 
 export default RoomsScreen;

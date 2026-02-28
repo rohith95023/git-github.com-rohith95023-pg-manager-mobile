@@ -12,46 +12,57 @@ import {
     Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { pgAPI } from "../services/api";
+import { supabase } from "../lib/supabaseClient";
 import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import useThemePalette from "../hooks/useThemePalette";
+import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
+
+import PGFormModal from "../components/modals/PGFormModal";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const PGsScreen = ({ navigation }: any) => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [pgs, setPgs] = useState<any[]>([]);
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
 
+    // Modal State
+    const [modalVisible, setModalVisible] = useState(false);
+    const [editingPg, setEditingPg] = useState<any>(null);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        needsInput?: boolean;
+        inputPlaceholder?: string;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
+
+    const [confirmInput, setConfirmInput] = useState("");
+    const [confirmTargetCode, setConfirmTargetCode] = useState("");
+
     const fetchPGs = useCallback(async () => {
         try {
             setLoading(true);
-            // Fetch both or just the current tab based on API structure
-            // Using a single fetch and local filtering for better UX if data is small
-            // but the instructions say to use business logic.
-            // Let's fetch based on tab.
-            let data: any;
-            if (activeTab === "Active") {
-                data = await pgAPI.getActive();
-            } else {
-                data = await pgAPI.getArchived();
-            }
-            setPgs(data || []);
+            const data: any = await pgAPI.getAllWithStats(activeTab === "Active" ? "ACTIVE" : "INACTIVE");
+            setPgs(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Failed to fetch properties:", error);
             Alert.alert("Error", "Failed to fetch properties");
@@ -70,6 +81,16 @@ const PGsScreen = ({ navigation }: any) => {
         fetchPGs();
     };
 
+    const handleAdd = () => {
+        setEditingPg(null);
+        setModalVisible(true);
+    };
+
+    const handleEdit = (pg: any) => {
+        setEditingPg(pg);
+        setModalVisible(true);
+    };
+
     const filteredPgs = useMemo(() => {
         return pgs.filter(pg =>
         (pg.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -78,35 +99,157 @@ const PGsScreen = ({ navigation }: any) => {
         );
     }, [pgs, searchTerm]);
 
-    const handleDelete = (id: string) => {
-        Alert.alert(
-            "Delete Property",
-            "Are you sure you want to delete this property? This action cannot be undone.",
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Delete",
-                    style: "destructive",
-                    onPress: async () => {
-                        try {
-                            await pgAPI.update(id, { status: "DELETED" });
-                            fetchPGs();
-                        } catch (error) {
-                            Alert.alert("Error", "Failed to delete property");
-                        }
+    const handleArchive = async (id: string, name: string) => {
+        try {
+            setLoading(true);
+            const { count, error } = await supabase
+                .from("tenants")
+                .select("id", { count: "exact", head: true })
+                .eq("pg_id", id)
+                .eq("status", "ACTIVE");
+
+            setLoading(false);
+
+            if (error) throw error;
+
+            if (count && count > 0) {
+                setConfirmState({
+                    visible: true,
+                    title: "Archive Blocked",
+                    message: `Cannot archive PG while ${count} active tenant(s) are assigned. Please move them out first.`,
+                    type: "danger",
+                    singleButton: true,
+                    cancelText: "Close"
+                });
+                return;
+            }
+
+            const deleteCode = generateDeleteCode();
+            setConfirmTargetCode(deleteCode);
+            setConfirmInput("");
+
+            setConfirmState({
+                visible: true,
+                title: "Archive Property?",
+                message: `Are you sure you want to archive "${name}"? This will also archive all its rooms and beds. You can restore it later.`,
+                type: "warning",
+                confirmText: "Archive Now",
+                cancelText: "Cancel",
+                needsInput: true,
+                inputPlaceholder: `Type "${deleteCode}" to confirm`,
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        const date = new Date().toISOString().split('T')[0];
+                        await pgAPI.archive(id, date);
+                        await fetchPGs();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        setConfirmInput("");
+                        setConfirmTargetCode("");
+                        Alert.alert("Success", "Property archived successfully");
+                    } catch (error: any) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", error.message || "Failed to archive property");
                     }
                 }
-            ]
-        );
+            });
+        } catch (error: any) {
+            setLoading(false);
+            console.error("Archive check error:", error);
+            Alert.alert("Error", "Error checking tenants: " + error.message);
+        }
+    };
+
+    const handleRestore = async (id: string, name: string) => {
+        try {
+            const restoredNameCandidate = name.split(" (Archived - ")[0];
+            const conflict = pgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
+
+            if (conflict) {
+                setConfirmState({
+                    visible: true,
+                    title: "Restore Blocked",
+                    message: `Cannot restore: An active property named "${restoredNameCandidate}" already exists.`,
+                    type: "danger",
+                    singleButton: true,
+                    cancelText: "Close"
+                });
+                return;
+            }
+
+            setConfirmState({
+                visible: true,
+                title: "Restore Property?",
+                message: `Are you sure you want to restore "${restoredNameCandidate}" to active status?`,
+                type: "success",
+                confirmText: "Restore Now",
+                cancelText: "Cancel",
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        await pgAPI.restore(id);
+                        await fetchPGs();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        Alert.alert("Success", "Property restored successfully");
+                    } catch (error: any) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", error.message || "Failed to restore property");
+                    }
+                }
+            });
+        } catch (error: any) {
+            Alert.alert("Error", "Failed to initiate restore: " + error.message);
+        }
+    };
+
+    const handleDelete = async (id: string, name: string) => {
+        if (activeTab === "Active") {
+            handleArchive(id, name);
+            return;
+        }
+
+        try {
+
+            const deleteCode = generatePgDeleteCode(name);
+            setConfirmTargetCode(deleteCode);
+            setConfirmInput("");
+
+            setConfirmState({
+                visible: true,
+                title: "Hard Delete Property?",
+                message: `This will PERMANENTLY delete "${name}" and all related data. This action is irreversible!`,
+                type: "danger",
+                confirmText: "Hard Delete Now",
+                cancelText: "Cancel",
+                needsInput: true,
+                inputPlaceholder: `Type "${deleteCode}" to confirm`,
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        await pgAPI.hardDelete(id);
+                        await fetchPGs();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        setConfirmInput("");
+                        setConfirmTargetCode("");
+                        Alert.alert("Success", "Property deleted permanently");
+                    } catch (error: any) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", error.message || "Failed to delete property");
+                    }
+                }
+            });
+        } catch (error: any) {
+            setLoading(false);
+            Alert.alert("Error", error.message || "Something went wrong during deletion check");
+        }
     };
 
     const PropertyCard = ({ item }: { item: any }) => {
-        // Mocking occupancy and available for visual demo if not in schema
-        // In real app, these would come from room relations.
-        const totalRooms = item.total_rooms || 0;
-        const occupiedRooms = Math.floor(totalRooms * 0.8); // Demo logic
-        const availableRooms = totalRooms - occupiedRooms;
-        const occupancyRate = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
+        const totalRooms = item.rooms?.[0]?.count || 0;
+        const occupiedRooms = item.occupied_beds?.[0]?.count || 0; // Approximate or use a better metric if available
+        const totalBeds = item.beds?.[0]?.count || 0;
+        const availableBeds = totalBeds - occupiedRooms;
+        const occupancyRate = totalBeds > 0 ? Math.round((occupiedRooms / totalBeds) * 100) : 0;
 
         return (
             <TouchableOpacity
@@ -119,7 +262,7 @@ const PGsScreen = ({ navigation }: any) => {
                         <Text style={styles.propertyName}>{item.name}</Text>
                         <View style={styles.badgeRow}>
                             <View style={[styles.badge, { backgroundColor: COLORS.primary + "15" }]}>
-                                <Text style={[styles.badgeText, { color: COLORS.primary }]}>CO-LIVING</Text>
+                                <Text style={[styles.badgeText, { color: COLORS.primary }]}>{item.gender_type || "CO-LIVING"}</Text>
                             </View>
                             <View style={[styles.badge, { backgroundColor: COLORS.success + "15" }]}>
                                 <Text style={[styles.badgeText, { color: COLORS.success }]}>{item.total_floors || 0} FLOORS</Text>
@@ -127,10 +270,15 @@ const PGsScreen = ({ navigation }: any) => {
                         </View>
                     </View>
                     <View style={styles.headerIcons}>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => { }}>
+                        {item.status === "INACTIVE" && (
+                            <TouchableOpacity style={styles.iconBtn} onPress={() => handleRestore(item.id, item.name)}>
+                                <MaterialCommunityIcons name="backup-restore" size={18} color={COLORS.success} />
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleEdit(item)}>
                             <Feather name="edit-2" size={18} color={COLORS.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleDelete(item.id)}>
+                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleDelete(item.id, item.name)}>
                             <Feather name="trash-2" size={18} color={COLORS.danger} />
                         </TouchableOpacity>
                     </View>
@@ -148,14 +296,14 @@ const PGsScreen = ({ navigation }: any) => {
                         <View style={styles.statBox}>
                             <View style={styles.statSubBox}>
                                 <Text style={styles.statSubValue}>{totalRooms}</Text>
-                                <Text style={styles.statSubLabel}>TOTAL</Text>
+                                <Text style={styles.statSubLabel} numberOfLines={1}>ROOMS</Text>
                             </View>
                             <View style={[styles.statSubBox, { borderLeftWidth: 1, borderLeftColor: COLORS.border }]}>
-                                <Text style={styles.statSubValue}>{availableRooms}</Text>
-                                <Text style={[styles.statSubLabel, { color: COLORS.success }]}>AVAIL</Text>
+                                <Text style={styles.statSubValue}>{availableBeds}</Text>
+                                <Text style={[styles.statSubLabel, { color: COLORS.success }]} numberOfLines={1}>AVAIL BEDS</Text>
                             </View>
                         </View>
-                        <Text style={styles.statMainLabel}>ROOMS (T/A)</Text>
+                        <Text style={styles.statMainLabel}>INVENTORY (R/A.B)</Text>
                     </View>
 
                     <View style={styles.occupancyContainer}>
@@ -195,7 +343,7 @@ const PGsScreen = ({ navigation }: any) => {
                     <Text style={styles.title}>PG Properties</Text>
                     <Text style={styles.subtitle}>Real-time property analytics active</Text>
                 </View>
-                <TouchableOpacity style={styles.syncBtn}>
+                <TouchableOpacity style={styles.syncBtn} onPress={onRefresh}>
                     <MaterialCommunityIcons name="database-sync" size={20} color={COLORS.textMuted} />
                 </TouchableOpacity>
             </View>
@@ -217,8 +365,8 @@ const PGsScreen = ({ navigation }: any) => {
             </View>
 
             <View style={styles.searchSection}>
-                <View style={styles.searchBar}>
-                    <Feather name="search" size={20} color={COLORS.textMuted} />
+                <View style={[styles.searchBar, searchTerm ? { borderColor: COLORS.primary } : {}]}>
+                    <Feather name="search" size={20} color={searchTerm ? COLORS.primary : COLORS.textMuted} />
                     <TextInput
                         placeholder="Search by name or city..."
                         placeholderTextColor={COLORS.textMuted}
@@ -226,10 +374,19 @@ const PGsScreen = ({ navigation }: any) => {
                         value={searchTerm}
                         onChangeText={setSearchTerm}
                     />
+                    {searchTerm ? (
+                        <TouchableOpacity onPress={() => setSearchTerm("")}>
+                            <Feather name="x-circle" size={18} color={COLORS.textMuted} />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={styles.filterDot} />
+                    )}
                 </View>
                 <View style={styles.totalRow}>
-                    <View style={styles.totalDot} />
-                    <Text style={styles.totalText}>TOTAL: {filteredPgs.length}</Text>
+                    <View style={[styles.totalDot, searchTerm ? { backgroundColor: COLORS.primary } : { backgroundColor: COLORS.success }]} />
+                    <Text style={[styles.totalText, searchTerm ? { color: COLORS.primary } : { color: COLORS.textMuted }]}>
+                        {searchTerm ? `FOUND ${filteredPgs.length} PROPERTIES` : `TOTAL ${filteredPgs.length} PROPERTIES`}
+                    </Text>
                 </View>
             </View>
 
@@ -257,129 +414,172 @@ const PGsScreen = ({ navigation }: any) => {
             <TouchableOpacity
                 style={styles.fab}
                 activeOpacity={0.8}
-                onPress={() => Alert.alert("Coming Soon", "The feature to create a new property will be available in the next update.")}
+                onPress={handleAdd}
             >
                 <Feather name="plus" size={24} color="#fff" />
                 <Text style={styles.fabText}>Create Property</Text>
             </TouchableOpacity>
+
+            <PGFormModal
+                visible={modalVisible}
+                onClose={() => setModalVisible(false)}
+                onSuccess={fetchPGs}
+                editingPg={editingPg}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    setConfirmInput("");
+                    setConfirmTargetCode("");
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
+                needsInput={confirmState.needsInput}
+                inputPlaceholder={confirmState.inputPlaceholder}
+                inputValue={confirmInput}
+                onInputChange={(val) => setConfirmInput(val)}
+                confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
+                disableOutsideTap={confirmState.type === "danger"}
+            />
         </SafeAreaView>
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-    title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-    subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-    syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    tabBar: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
-    tab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
-    tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    tabText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "700" },
-    tabTextActive: { color: "#fff" },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
+        subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+        syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border, marginRight: -4 },
 
-    searchSection: { marginHorizontal: 20, marginBottom: 20 },
-    searchBar: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 16,
-        paddingHorizontal: 16,
-        height: 52,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        marginBottom: 10
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
-    totalDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
-    totalText: { fontSize: 11, fontWeight: "800", color: COLORS.text, letterSpacing: 1 },
+        tabBar: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
+        tab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
+        tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        tabText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "700" },
+        tabTextActive: { color: "#fff" },
 
-    listContent: { paddingHorizontal: 20, paddingBottom: 100 },
-    card: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
-    headerTitleContainer: { flex: 1 },
-    propertyName: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 6 },
-    badgeRow: { flexDirection: "row", gap: 8 },
-    badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-    badgeText: { fontSize: 9, fontWeight: "900" },
-    headerIcons: { flexDirection: "row", gap: 10 },
-    iconBtn: { padding: 4 },
+        searchSection: { marginHorizontal: 20, marginBottom: 20 },
+        searchBar: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 16,
+            paddingHorizontal: 16,
+            height: 52,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        filterDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+        totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 10 },
+        totalDot: { width: 6, height: 6, borderRadius: 3 },
+        totalText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
 
-    locationContainer: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
-    locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
+        listContent: { paddingHorizontal: 20, paddingBottom: 100 },
+        card: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
+        headerTitleContainer: { flex: 1 },
+        propertyName: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 6 },
+        badgeRow: { flexDirection: "row", gap: 8 },
+        badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
+        badgeText: { fontSize: 9, fontWeight: "900" },
+        headerIcons: { flexDirection: "row", gap: 10 },
+        iconBtn: { padding: 4 },
 
-    divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
+        locationContainer: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
+        locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
 
-    statsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
-    statContainer: { flex: 1.2 },
-    statBox: {
-        flexDirection: "row",
-        backgroundColor: COLORS.bg,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        padding: 8,
-        marginBottom: 8
-    },
-    statSubBox: { flex: 1, alignItems: "center" },
-    statSubValue: { fontSize: 15, fontWeight: "800", color: COLORS.text },
-    statSubLabel: { fontSize: 8, fontWeight: "800", color: COLORS.textMuted, marginTop: 2 },
-    statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5 },
+        divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
 
-    occupancyContainer: { flex: 1.2, marginHorizontal: 15 },
-    occupancyHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, height: 44, justifyContent: "center" },
-    progressBarBg: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
-    progressBarFill: { height: "100%", borderRadius: 3 },
-    occupancyValue: { fontSize: 13, fontWeight: "800" },
+        statsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
+        statContainer: { flex: 1.8 },
+        statBox: {
+            flexDirection: "row",
+            backgroundColor: COLORS.bg,
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            paddingVertical: 10,
+            paddingHorizontal: 8,
+            marginBottom: 6,
+            minHeight: 56,
+            alignItems: "center"
+        },
+        statSubBox: { flex: 1, alignItems: "center", justifyContent: "center" },
+        statSubValue: { fontSize: 16, fontWeight: "800", color: COLORS.text, marginBottom: 2 },
+        statSubLabel: {
+            fontSize: 7.5,
+            fontWeight: "900",
+            color: COLORS.textMuted,
+            textTransform: "uppercase",
+            textAlign: "center",
+            width: "100%"
+        },
+        statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5, textAlign: "center" },
 
-    statusContainer: { flex: 1, alignItems: "flex-end" },
-    statusBadge: {
-        flexDirection: "row",
-        alignItems: "center",
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 12,
-        gap: 6,
-        marginBottom: 8,
-        height: 44,
-        justifyContent: "center"
-    },
-    statusDot: { width: 6, height: 6, borderRadius: 3 },
-    statusText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+        occupancyContainer: { flex: 1, marginHorizontal: 8 },
+        occupancyHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, height: 44, justifyContent: "center" },
+        progressBarBg: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
+        progressBarFill: { height: "100%", borderRadius: 3 },
+        occupancyValue: { fontSize: 13, fontWeight: "800" },
 
-    loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-    loadingText: { color: COLORS.textMuted, marginTop: 12, fontWeight: "600" },
-    emptyContainer: { alignItems: "center", marginTop: 60, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+        statusContainer: { flex: 1, alignItems: "flex-end" },
+        statusBadge: {
+            flexDirection: "row",
+            alignItems: "center",
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 12,
+            gap: 6,
+            marginBottom: 8,
+            height: 44,
+            justifyContent: "center"
+        },
+        statusDot: { width: 6, height: 6, borderRadius: 3 },
+        statusText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
 
-    fab: {
-        position: "absolute",
-        bottom: 30,
-        right: 20,
-        flexDirection: "row",
-        paddingHorizontal: 20,
-        height: 56,
-        borderRadius: 28,
-        backgroundColor: COLORS.primary,
-        justifyContent: "center",
-        alignItems: "center",
-        elevation: 8,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 6,
-        gap: 10
-    },
-    fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
-});
+        loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+        loadingText: { color: COLORS.textMuted, marginTop: 12, fontWeight: "600" },
+        emptyContainer: { alignItems: "center", marginTop: 60, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+
+        fab: {
+            position: "absolute",
+            bottom: 30,
+            right: 20,
+            flexDirection: "row",
+            paddingHorizontal: 20,
+            height: 56,
+            borderRadius: 28,
+            backgroundColor: COLORS.primary,
+            justifyContent: "center",
+            alignItems: "center",
+            elevation: 8,
+            shadowColor: COLORS.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 6,
+            gap: 10
+        },
+        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
+    });
 
 export default PGsScreen;

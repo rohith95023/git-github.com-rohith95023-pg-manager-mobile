@@ -8,9 +8,9 @@ import {
     ActivityIndicator,
     Dimensions,
     TouchableOpacity,
+    TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useTheme } from "../context/ThemeContext";
 import { pnlAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import {
@@ -23,28 +23,26 @@ import {
     VictoryTooltip,
     VictoryLabel
 } from "victory-native";
+import useThemePalette from "../hooks/useThemePalette";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
 
 const { width } = Dimensions.get("window");
 
-const COLORS = {
-    bg: "#0f172a",
-    card: "#1e293b",
-    primary: "#3b82f6",
-    success: "#10b981",
-    warning: "#f59e0b",
-    danger: "#ef4444",
-    text: "#ffffff",
-    textMuted: "#94a3b8",
-    border: "rgba(255,255,255,0.05)"
-};
-
 const ProfitLossScreen = () => {
-    const { colors } = useTheme();
+    const COLORS = useThemePalette();
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [summary, setSummary] = useState<any[]>([]);
     const [categoryStats, setCategoryStats] = useState<any[]>([]);
     const [selectedTimeFilter, setSelectedTimeFilter] = useState("Monthly");
+
+    // Filter bottom sheet state
+    const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
+    const [pendingTimeFilter, setPendingTimeFilter] = useState("Monthly");
+    const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+    const [selectedMonth, setSelectedMonth] = useState("all");
+    const [pendingMonth, setPendingMonth] = useState("all");
 
     const fetchData = useCallback(async () => {
         try {
@@ -54,8 +52,15 @@ const ProfitLossScreen = () => {
                 pnlAPI.getCategoryStats()
             ]);
 
-            setSummary(summaryRes.data || []);
-            setCategoryStats(categoryRes.data || []);
+            setSummary(summaryRes || []);
+            setCategoryStats(categoryRes || []);
+
+            // Extract available months from summary data
+            const months = (summaryRes || []).map((item: any) => item.month).filter(Boolean) as string[];
+            const uniqueMonths = [...new Set(months)].sort((a, b) =>
+                new Date(b).getTime() - new Date(a).getTime()
+            );
+            setAvailableMonths(uniqueMonths);
         } catch (error) {
             console.error("Failed to fetch P&L data:", error);
         } finally {
@@ -112,8 +117,8 @@ const ProfitLossScreen = () => {
         })).sort((a, b) => b.y - a.y).slice(0, 5); // Top 5 categories
     }, [categoryStats]);
 
-    const StatCard = ({ title, value, icon, color, isPercent = false }: any) => (
-        <View style={[styles.statCard, { borderColor: COLORS.border }]}>
+    const StatCard = ({ title, value, icon, color, isPercent = false, style }: any) => (
+        <View style={[styles.statCard, style, { borderColor: COLORS.border }]}>
             <View style={[styles.statIcon, { backgroundColor: color + "10" }]}>
                 <MaterialCommunityIcons name={icon} size={20} color={color} />
             </View>
@@ -177,24 +182,43 @@ const ProfitLossScreen = () => {
                 </View>
 
                 {/* KPI Cards */}
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.kpiPadding}>
-                    <StatCard title="TOTAL REVENUE" value={stats.totalRevenue} icon="cash-plus" color={COLORS.success} />
-                    <StatCard title="TOTAL EXPENSES" value={stats.totalExpenses} icon="cash-minus" color={COLORS.danger} />
-                    <StatCard title="NET PROFIT" value={stats.netProfit} icon="bank" color={COLORS.primary} />
-                    <StatCard title="PROFIT MARGIN" value={stats.profitMargin} icon="percent" color={COLORS.warning} isPercent />
-                </ScrollView>
+                <View style={styles.kpiGrid}>
+                    <View style={styles.kpiRow}>
+                        <StatCard
+                            title="TOTAL REVENUE"
+                            value={stats.totalRevenue}
+                            icon="cash-plus"
+                            color={COLORS.success}
+                        />
+                        <StatCard title="TOTAL EXPENSES" value={stats.totalExpenses} icon="cash-minus" color={COLORS.danger} />
+                    </View>
+                    <View style={styles.kpiRow}>
+                        <StatCard
+                            title="NET PROFIT"
+                            value={stats.netProfit}
+                            icon="bank"
+                            color={COLORS.primary}
+                        />
+                        <StatCard title="PROFIT MARGIN" value={stats.profitMargin} icon="percent" color={COLORS.warning} isPercent />
+                    </View>
+                </View>
 
-                {/* Filters */}
+                {/* Filters - now opens bottom sheet */}
                 <View style={styles.filtersRow}>
-                    {["All Time", "Monthly", "Yearly"].map(filter => (
-                        <TouchableOpacity
-                            key={filter}
-                            style={[styles.filterChip, selectedTimeFilter === filter && styles.filterChipActive]}
-                            onPress={() => setSelectedTimeFilter(filter)}
-                        >
-                            <Text style={[styles.filterChipText, selectedTimeFilter === filter && styles.filterChipTextActive]}>{filter}</Text>
-                        </TouchableOpacity>
-                    ))}
+                    <TouchableOpacity
+                        style={styles.filterTrigger}
+                        onPress={() => {
+                            setPendingTimeFilter(selectedTimeFilter);
+                            setPendingMonth(selectedMonth);
+                            setFilterSheetVisible(true);
+                        }}
+                    >
+                        <Feather name="sliders" size={16} color={COLORS.primary} />
+                        <Text style={styles.filterTriggerText}>
+                            {selectedMonth === "all" ? selectedTimeFilter : new Date(selectedMonth).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                        </Text>
+                        <Feather name="chevron-down" size={16} color={COLORS.textMuted} />
+                    </TouchableOpacity>
                 </View>
 
                 {/* Monthly Performance Chart */}
@@ -307,90 +331,195 @@ const ProfitLossScreen = () => {
 
                 <View style={{ height: 40 }} />
             </ScrollView>
+
+            <FilterBottomSheet
+                visible={isFilterSheetVisible}
+                title="P&L Filters"
+                description="Filter by time period and month (matching web behavior)"
+                onClose={() => setFilterSheetVisible(false)}
+                onApply={() => {
+                    setSelectedTimeFilter(pendingTimeFilter);
+                    setSelectedMonth(pendingMonth);
+                    setFilterSheetVisible(false);
+                }}
+                onReset={() => {
+                    setSelectedTimeFilter("Monthly");
+                    setSelectedMonth("all");
+                    setPendingTimeFilter("Monthly");
+                    setPendingMonth("all");
+                    setFilterSheetVisible(false);
+                }}
+            >
+                <View style={styles.sheetSection}>
+                    <Text style={styles.sheetLabel}>Time Period</Text>
+                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                        {["All Time", "Monthly", "Yearly"].map(filter => (
+                            <TouchableOpacity
+                                key={filter}
+                                style={[styles.sheetChip, pendingTimeFilter === filter && styles.sheetChipActive]}
+                                onPress={() => setPendingTimeFilter(filter)}
+                            >
+                                <Text style={[styles.sheetChipText, pendingTimeFilter === filter && styles.sheetChipTextActive]}>{filter}</Text>
+                            </TouchableOpacity>
+                        ))}
+                    </ScrollView>
+                </View>
+
+                {availableMonths.length > 0 && (
+                    <View style={styles.sheetSection}>
+                        <Text style={styles.sheetLabel}>Month</Text>
+                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                            <TouchableOpacity
+                                style={[styles.sheetChip, pendingMonth === "all" && styles.sheetChipActive]}
+                                onPress={() => setPendingMonth("all")}
+                            >
+                                <Text style={[styles.sheetChipText, pendingMonth === "all" && styles.sheetChipTextActive]}>All Months</Text>
+                            </TouchableOpacity>
+                            {availableMonths.map(month => (
+                                <TouchableOpacity
+                                    key={month}
+                                    style={[styles.sheetChip, pendingMonth === month && styles.sheetChipActive]}
+                                    onPress={() => setPendingMonth(month)}
+                                >
+                                    <Text style={[styles.sheetChipText, pendingMonth === month && styles.sheetChipTextActive]}>
+                                        {new Date(month).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </ScrollView>
+                    </View>
+                )}
+            </FilterBottomSheet>
         </SafeAreaView>
     );
 };
 
-const styles = StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingBottom: 10 },
-    title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-    subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+type ThemePalette = ReturnType<typeof useThemePalette>;
 
-    kpiPadding: { paddingHorizontal: 20, paddingVertical: 15, gap: 12 },
-    statCard: {
-        width: width * 0.45,
-        backgroundColor: COLORS.card,
-        borderRadius: 20,
-        padding: 16,
-        borderWidth: 1,
-    },
-    statIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center", marginBottom: 12 },
-    statLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8 },
-    statValue: { fontSize: 18, fontWeight: "900" },
+const createStyles = (COLORS: ThemePalette) =>
+    StyleSheet.create({
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingBottom: 10 },
+        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
+        subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
 
-    filtersRow: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
-    filterChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 12,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    filterChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
-    filterChipTextActive: { color: "#fff" },
+        kpiGrid: {
+            paddingHorizontal: 20,
+            paddingVertical: 8,
+            gap: 8,
+        },
+        kpiRow: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            marginBottom: 8,
+            gap: 10,
+        },
+        statCard: {
+            flexBasis: "48%",
+            maxWidth: "48%",
+            backgroundColor: COLORS.card,
+            borderRadius: 18,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderWidth: 1,
+            minHeight: 90,
+            justifyContent: "space-between",
+            marginBottom: 10,
+        },
+        statIcon: { width: 32, height: 32, borderRadius: 10, justifyContent: "center", alignItems: "center", marginBottom: 8 },
+        statLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, marginBottom: 4 },
+        statValue: { fontSize: 15, fontWeight: "800" },
 
-    chartSection: { marginHorizontal: 20, marginBottom: 24 },
-    sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 16 },
-    chartContainer: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        paddingVertical: 10,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        alignItems: "center"
-    },
-    legendRow: { flexDirection: "row", gap: 20, marginTop: -10, marginBottom: 10 },
-    legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
-    legendDot: { width: 8, height: 8, borderRadius: 4 },
-    legendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
+        filtersRow: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
+        filterTrigger: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            gap: 8
+        },
+        filterTriggerText: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        filterChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 12,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        filterChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
+        filterChipTextActive: { color: "#fff" },
 
-    donutContainer: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 10,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    pieLegend: { flex: 1, gap: 10, paddingRight: 10 },
-    pieLegendItem: { flexDirection: "row", alignItems: "center", gap: 8 },
-    pieLegendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, flex: 1 },
+        chartSection: { marginHorizontal: 20, marginBottom: 24 },
+        sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 16 },
+        chartContainer: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            paddingVertical: 10,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            alignItems: "center"
+        },
+        legendRow: { flexDirection: "row", gap: 20, marginTop: -10, marginBottom: 10 },
+        legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+        legendDot: { width: 8, height: 8, borderRadius: 4 },
+        legendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
 
-    breakdownSection: { paddingHorizontal: 20 },
-    breakdownCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    breakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-    breakdownMonth: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-    breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-    profitBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
-    profitBadgeText: { fontSize: 9, fontWeight: "900" },
+        donutContainer: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 10,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        pieLegend: { flex: 1, gap: 10, paddingRight: 10 },
+        pieLegendItem: { flexDirection: "row", alignItems: "center", gap: 8 },
+        pieLegendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, flex: 1 },
 
-    breakdownGrid: { flexDirection: "row", justifyContent: "space-between" },
-    gridItem: { flex: 1 },
-    gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 6 },
-    gridValue: { fontSize: 14, fontWeight: "800" },
+        breakdownSection: { paddingHorizontal: 20 },
+        breakdownCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        breakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
+        breakdownMonth: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+        breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
+        profitBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+        profitBadgeText: { fontSize: 9, fontWeight: "900" },
 
-    emptyChart: { height: 150, justifyContent: "center", alignItems: "center" },
-    emptyState: { alignItems: "center", marginTop: 40, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
-});
+        breakdownGrid: { flexDirection: "row", justifyContent: "space-between" },
+        gridItem: { flex: 1 },
+        gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 6 },
+        gridValue: { fontSize: 14, fontWeight: "800" },
+
+        emptyChart: { height: 150, justifyContent: "center", alignItems: "center" },
+        emptyState: { alignItems: "center", marginTop: 40, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+
+        // Bottom sheet styles
+        sheetSection: { marginBottom: 20 },
+        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 10 },
+        sheetChipsRow: { flexDirection: "row", gap: 10 },
+        sheetChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetChipTextActive: { color: COLORS.primary }
+    });
 
 export default ProfitLossScreen;

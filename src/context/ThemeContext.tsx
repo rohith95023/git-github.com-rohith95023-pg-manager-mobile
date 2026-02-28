@@ -1,5 +1,5 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { useColorScheme } from "react-native";
+import React, { createContext, useContext, useState, useEffect, ReactNode, useRef } from "react";
+import { useColorScheme, Animated } from "react-native";
 import AsyncStorage from "@react-native-async-storage/async-storage";
 
 type ThemeMode = "light" | "dark";
@@ -9,6 +9,7 @@ interface ThemeContextType {
     isDark: boolean;
     toggleTheme: () => void;
     colors: any;
+    transition: Animated.Value;
 }
 
 const ThemeContext = createContext<ThemeContextType | null>(null);
@@ -35,6 +36,7 @@ const Colors = {
 export const ThemeProvider = ({ children }: { children: ReactNode }) => {
     const systemColorScheme = useColorScheme();
     const [theme, setTheme] = useState<ThemeMode>("light");
+    const transition = useRef(new Animated.Value(theme === "dark" ? 1 : 0)).current;
 
     useEffect(() => {
         const loadTheme = async () => {
@@ -54,11 +56,25 @@ export const ThemeProvider = ({ children }: { children: ReactNode }) => {
         await AsyncStorage.setItem("theme", newTheme);
     };
 
+    useEffect(() => {
+        Animated.timing(transition, {
+            toValue: theme === "dark" ? 1 : 0,
+            duration: 360,
+            useNativeDriver: false,
+        }).start();
+    }, [theme, transition]);
+
     const isDark = theme === "dark";
+    const backgroundColor = transition.interpolate({
+        inputRange: [0, 1],
+        outputRange: [Colors.light.background, Colors.dark.background],
+    });
 
     return (
-        <ThemeContext.Provider value={{ theme, isDark, toggleTheme, colors: Colors[theme] }}>
-            {children}
+        <ThemeContext.Provider value={{ theme, isDark, toggleTheme, colors: Colors[theme], transition }}>
+            <Animated.View style={{ flex: 1, backgroundColor }}>
+                {children}
+            </Animated.View>
         </ThemeContext.Provider>
     );
 };

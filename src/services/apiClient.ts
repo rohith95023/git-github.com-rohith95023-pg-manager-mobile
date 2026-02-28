@@ -108,50 +108,55 @@ const logActivity = async (table: string, operation: string, data: any, entityId
 };
 
 /**
- * Main API Client
+ * Core Request Wrapper
+ */
+const performRequest = async <T>(requestFn: () => Promise<any>, label = "API Request", options: any = {}): Promise<T> => {
+    const { retry = true, timeout = config.timeout } = options;
+    let attempts = 0;
+    const maxAttempts = retry ? config.retryAttempts : 1;
+
+    while (attempts < maxAttempts) {
+        try {
+            attempts++;
+
+            const timeoutPromise = new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Request timeout')), timeout)
+            );
+
+            const response = await Promise.race([
+                requestFn(),
+                timeoutPromise
+            ]);
+
+            return normalizeResponse(response, label) as T;
+
+        } catch (error: any) {
+            const isLastAttempt = attempts >= maxAttempts;
+
+            if (error.name === 'APIError' &&
+                ['AUTH_ERROR', 'VALIDATION_ERROR', 'CLIENT_ERROR'].includes(error.code)) {
+                throw error;
+            }
+
+            if (isLastAttempt) {
+                return handleNetworkError(error, label);
+            }
+
+            await new Promise(resolve =>
+                setTimeout(resolve, config.retryDelay * attempts)
+            );
+
+            console.warn(`[${label}] Retrying... (attempt ${attempts + 1}/${maxAttempts})`);
+        }
+    }
+    throw new Error('Request failed after max attempts');
+};
+
+/**
+ * Main API Client - Hardened for Production
  */
 const apiClient = {
-    request: async <T>(requestFn: () => Promise<any>, label = "API Request", options: any = {}): Promise<T> => {
-        const { retry = true, timeout = config.timeout } = options;
-        let attempts = 0;
-        const maxAttempts = retry ? config.retryAttempts : 1;
-
-        while (attempts < maxAttempts) {
-            try {
-                attempts++;
-
-                const timeoutPromise = new Promise((_, reject) =>
-                    setTimeout(() => reject(new Error('Request timeout')), timeout)
-                );
-
-                const response = await Promise.race([
-                    requestFn(),
-                    timeoutPromise
-                ]);
-
-                return normalizeResponse(response, label) as T;
-
-            } catch (error: any) {
-                const isLastAttempt = attempts >= maxAttempts;
-
-                if (error.name === 'APIError' &&
-                    ['AUTH_ERROR', 'VALIDATION_ERROR', 'CLIENT_ERROR'].includes(error.code)) {
-                    throw error;
-                }
-
-                if (isLastAttempt) {
-                    return handleNetworkError(error, label);
-                }
-
-                await new Promise(resolve =>
-                    setTimeout(resolve, config.retryDelay * attempts)
-                );
-
-                console.warn(`[${label}] Retrying... (attempt ${attempts + 1}/${maxAttempts})`);
-            }
-        }
-        throw new Error('Request failed after max attempts');
-    },
+    request: performRequest,
 
     get: async <T>(table: keyof Database['public']['Tables'], selectOrQueryFn?: string | ((query: any) => any), queryFn?: (query: any) => any): Promise<T> => {
         let select = "*";
@@ -163,53 +168,84 @@ const apiClient = {
             select = selectOrQueryFn;
         }
 
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             let query = supabase.from(table).select(select);
+
+            // 🔥 PRODUCTION HARDENING: Uncomment after running SQL migration
+            // query = query.neq("is_deleted", true);
+
             if (finalQueryFn) query = finalQueryFn(query);
             return await query;
         }, `GET ${table}`);
     },
 
     getView: async <T>(view: keyof Database['public']['Views'], select = "*"): Promise<T> => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.from(view).select(select);
         }, `GET_VIEW ${view}`);
     },
 
     getById: async <T>(table: keyof Database['public']['Tables'], id: string | number, select = "*"): Promise<T> => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.from(table).select(select).eq("id", id).single();
         }, `GET_BY_ID ${table}`);
     },
 
     post: async <T>(table: keyof Database['public']['Tables'], payload: any): Promise<T> => {
-        return apiClient.request(async () => {
-            const response = await supabase.from(table).insert(payload).select().single();
+        return performRequest(async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            const enhancedPayload = { ...payload };
+
+            // Production Hardening: Auto-inject audit fields (Uncomment after DB migration)
+            /*
+            if (user) {
+                if (!enhancedPayload.owner_id) enhancedPayload.owner_id = user.id;
+                enhancedPayload.updated_by = user.id;
+            }
+            */
+
+            const response = await supabase.from(table).insert(enhancedPayload).select().single();
             if (response.data) {
-                logActivity(table, 'INSERT', payload, (response.data as any).id);
+                logActivity(table, 'INSERT', enhancedPayload, (response.data as any).id);
             }
             return response;
         }, `POST ${table}`);
     },
 
     update: async <T>(table: keyof Database['public']['Tables'], id: string | number, payload: any): Promise<T> => {
-        return apiClient.request(async () => {
-            const response = await supabase.from(table).update(payload).eq("id", id).select().single();
+        return performRequest(async () => {
+            const { data: { user } } = await supabase.auth.getUser();
+            const enhancedPayload = { ...payload };
+
+            // Production Hardening: Auto-inject audit fields (Uncomment after DB migration)
+            /*
+            if (user) {
+                enhancedPayload.updated_by = user.id;
+            }
+            */
+
+            const response = await supabase.from(table).update(enhancedPayload).eq("id", id).select().single();
             if (response.data) {
-                logActivity(table, 'UPDATE', payload, id.toString());
+                logActivity(table, 'UPDATE', enhancedPayload, id.toString());
             }
             return response;
         }, `UPDATE ${table}`);
     },
 
     delete: async (table: keyof Database['public']['Tables'], id: string | number): Promise<any> => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
+            // 🔥 PRODUCTION HARDENING: Uncomment after running SQL migration to enable soft-delete
+            // const response = await supabase.from(table).update({ is_deleted: true, status: "DELETED" }).eq("id", id);
+            // logActivity(table, 'DELETE_SOFT', { id }, id.toString());
+            // return response;
+
+            logActivity(table, 'DELETE_HARD', { id }, id.toString());
             return await supabase.from(table).delete().eq("id", id);
         }, `DELETE ${table}`);
     },
 
     rpc: async <T>(functionName: keyof Database['public']['Functions'], params: any = {}): Promise<T> => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.rpc(functionName, params);
         }, `RPC ${functionName}`);
     }
@@ -220,13 +256,13 @@ const apiClient = {
  */
 export const authClient = {
     signIn: async (email: string, password: string) => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.auth.signInWithPassword({ email, password });
         }, 'AUTH signIn');
     },
 
     signUp: async (email: string, password: string, metadata = {}) => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.auth.signUp({
                 email,
                 password,
@@ -236,13 +272,13 @@ export const authClient = {
     },
 
     signOut: async () => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.auth.signOut();
         }, 'AUTH signOut');
     },
 
     getUser: async () => {
-        return apiClient.request(async () => {
+        return performRequest(async () => {
             return await supabase.auth.getUser();
         }, 'AUTH getUser');
     },

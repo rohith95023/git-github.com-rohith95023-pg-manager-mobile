@@ -18,6 +18,7 @@ import { roomAPI, bedAPI, pgAPI } from "../services/api";
 import { supabase } from "../lib/supabaseClient";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { generateDeleteCode } from "../utils/security";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import RoomFormModal from "../components/modals/RoomFormModal";
@@ -62,12 +63,17 @@ const RoomsScreen = ({ navigation }: any) => {
         cancelText?: string;
         singleButton?: boolean;
         loading?: boolean;
+        needsInput?: boolean;
+        inputPlaceholder?: string;
     }>({
         visible: false,
         title: "",
         message: "",
         type: "info"
     });
+
+    const [confirmInput, setConfirmInput] = useState("");
+    const [confirmTargetCode, setConfirmTargetCode] = useState("");
 
     const statusMode = filters.showArchived ? "ARCHIVED" : "ACTIVE";
     const updateShowArchived = (value: boolean) => {
@@ -138,20 +144,27 @@ const RoomsScreen = ({ navigation }: any) => {
                 return;
             }
 
+            const deleteCode = generateDeleteCode();
+            setConfirmTargetCode(deleteCode);
+            setConfirmInput("");
+
             setConfirmState({
                 visible: true,
-                title: "Delete Room?",
-                message: `Are you sure you want to delete Room ${roomNumber} and its beds? This action is irreversible.`,
+                title: "Delete Room & Beds?",
+                message: `Are you sure you want to delete Room ${roomNumber} and ALL its beds? This will also remove historical assignments. This action is irreversible.`,
                 type: "danger",
-                confirmText: "Delete Room",
+                confirmText: "Delete Room Now",
                 cancelText: "Cancel",
+                needsInput: true,
+                inputPlaceholder: `Type "${deleteCode}" to confirm`,
                 onConfirm: async () => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
-                        await roomAPI.update(id, { status: "DELETED" });
-                        await supabase.from("beds").update({ status: "DELETED" }).eq("room_id", id);
+                        await roomAPI.delete(id);
                         await fetchData();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        setConfirmInput("");
+                        setConfirmTargetCode("");
                         Alert.alert("Success", `Room ${roomNumber} deleted successfully`);
                     } catch (error) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
@@ -170,15 +183,23 @@ const RoomsScreen = ({ navigation }: any) => {
     const filteredContent = useMemo(() => {
         const propertyId = filters.property;
         const showArchived = filters.showArchived;
-        const matchesArchive = (status: string) =>
-            showArchived ? status === "DELETED" : status !== "DELETED";
+
+        const isArchivedRoom = (r: any) =>
+            r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
+            r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
+
+        const isArchivedBed = (b: any) =>
+            b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
+            b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" ||
+            b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" ||
+            b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
 
         if (viewMode === "ROOMS") {
             return rooms.filter(r => {
                 const matchesSearch = (r.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (r.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
                 const matchesPg = !propertyId || r.pg_id === propertyId;
-                const matchesStatus = matchesArchive(r.status);
+                const matchesStatus = showArchived ? isArchivedRoom(r) : !isArchivedRoom(r);
                 return matchesSearch && matchesPg && matchesStatus;
             });
         } else {
@@ -187,7 +208,7 @@ const RoomsScreen = ({ navigation }: any) => {
                     (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
                 const matchesPg = !propertyId || b.rooms?.pg_id === propertyId;
-                const matchesStatus = matchesArchive(b.status);
+                const matchesStatus = showArchived ? isArchivedBed(b) : !isArchivedBed(b);
                 const matchesBedStatus = filters.bedStatus === "ALL" || b.status === filters.bedStatus;
                 return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
@@ -196,15 +217,18 @@ const RoomsScreen = ({ navigation }: any) => {
 
     // Stats Logic
     const stats = useMemo(() => {
+        const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
+        const isArchiveB = (b: any) => b.status === "MAINTENANCE" || b.status === "INACTIVE" || b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" || b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" || b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+
         if (viewMode === "ROOMS") {
-            const active = rooms.filter(r => r.status !== "DELETED");
+            const active = rooms.filter(r => !isArchiveR(r));
             return [
                 { label: "Total Rooms", value: active.length, icon: "door-open", type: "Material", color: COLORS.primary },
                 { label: "Available", value: active.filter(r => r.status === "AVAILABLE").length, icon: "check-circle", type: "Feather", color: COLORS.success },
                 { label: "Occupied", value: active.filter(r => r.status === "FULL").length, icon: "user-check", type: "Feather", color: COLORS.warning },
             ];
         } else {
-            const active = beds.filter(b => b.status !== "DELETED");
+            const active = beds.filter(b => !isArchiveB(b));
             return [
                 { label: "Total Beds", value: active.length, icon: "bed", type: "Material", color: COLORS.primary },
                 { label: "Available", value: active.filter(b => b.status === "AVAILABLE").length, icon: "check-circle", type: "Feather", color: COLORS.success },
@@ -219,7 +243,7 @@ const RoomsScreen = ({ navigation }: any) => {
                 <View style={styles.cardInfo}>
                     <Text style={styles.cardTitle}>Room {item.room_number}</Text>
                     <Text style={styles.cardSub}>
-                        {item.pgs?.name || "N/A"} • {item.floor_number === 0 || item.floor_number === "0" ? "Ground Floor" : `Floor ${item.floor_number}`}
+                        {item.pgs?.name || "N/A"} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`}
                     </Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
@@ -232,7 +256,7 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardFooter}>
                 <View style={styles.footerItem}>
                     <Text style={styles.footerLabel}>MONTHLY RENT</Text>
-                    <Text style={styles.footerValue}>₹{Number(item.monthly_rent || 0).toLocaleString()}</Text>
+                    <Text style={styles.footerValue}>₹{Number(item.rent || 0).toLocaleString()}</Text>
                 </View>
                 <View style={styles.footerItem}>
                     <Text style={styles.footerLabel}>SHARING</Text>
@@ -471,7 +495,11 @@ const RoomsScreen = ({ navigation }: any) => {
 
             <ConfirmationModal
                 visible={confirmState.visible}
-                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
+                onClose={() => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    setConfirmInput("");
+                    setConfirmTargetCode("");
+                }}
                 onConfirm={confirmState.onConfirm}
                 title={confirmState.title}
                 message={confirmState.message}
@@ -480,6 +508,12 @@ const RoomsScreen = ({ navigation }: any) => {
                 cancelText={confirmState.cancelText}
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
+                needsInput={confirmState.needsInput}
+                inputPlaceholder={confirmState.inputPlaceholder}
+                inputValue={confirmInput}
+                onInputChange={(val) => setConfirmInput(val)}
+                confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
+                disableOutsideTap={confirmState.type === "danger"}
             />
         </SafeAreaView>
     );

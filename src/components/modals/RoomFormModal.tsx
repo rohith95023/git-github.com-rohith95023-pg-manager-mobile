@@ -22,12 +22,11 @@ const ROOM_TYPES = [
 
 const roomSchema = z.object({
     pgId: z.string().min(1, "Property is required"),
-    floor: z.coerce.number().int().min(0, "Invalid floor"),
+    floor: z.preprocess((val) => (val === "" || val === undefined || val === null ? -1 : Number(val)), z.number().int().min(0, "Floor is required")),
     roomNumber: z.string().trim().min(1, "Room number is required"),
     roomType: z.enum(["SINGLE", "DOUBLE", "TRIPLE", "FOUR_SHARE", "FIVE_SHARE", "OTHERS"]),
     capacity: z.coerce.number().int().min(1, "Min 1").max(99, "Max 99"),
-    rent: z.coerce.number().min(0, "Cannot be negative"),
-    deposit: z.coerce.number().min(0, "Cannot be negative"),
+    rent: z.preprocess((val) => (val === "" || val === undefined || val === null ? -1 : Number(val)), z.number().min(0, "Rent is required")),
     status: z.enum(["AVAILABLE", "MAINTENANCE", "INACTIVE"]),
 });
 
@@ -69,12 +68,11 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
         mode: "all",
         defaultValues: {
             pgId: initialPgId || "",
-            floor: 0,
+            floor: "" as any,
             roomNumber: "",
             roomType: "SINGLE",
             capacity: 1,
-            rent: 0,
-            deposit: 0,
+            rent: "" as any,
             status: "AVAILABLE",
         }
     });
@@ -87,7 +85,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
     const floorOptions = useMemo(() => {
         if (!selectedPg) return [];
         const floors = [];
-        for (let i = 0; i <= (selectedPg.total_floors || 0); i++) {
+        for (let i = 0; i < (selectedPg.total_floors || 0); i++) {
             floors.push({
                 label: i === 0 ? "Ground Floor" : `Floor ${i}`,
                 value: String(i)
@@ -115,7 +113,6 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                     roomType: editingRoom.room_type,
                     capacity: editingRoom.capacity,
                     rent: Number(editingRoom.rent),
-                    deposit: Number(editingRoom.deposit || 0),
                     status: editingRoom.status === "OCCUPIED" ? "AVAILABLE" : editingRoom.status,
                 });
             } else {
@@ -126,7 +123,6 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                     roomType: "SINGLE",
                     capacity: 1,
                     rent: "" as any,
-                    deposit: selectedPg?.security_deposit || "" as any,
                     status: "AVAILABLE",
                 });
             }
@@ -140,11 +136,6 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
         }
     }, [selectedRoomType, setValue]);
 
-    useEffect(() => {
-        if (selectedPg && !editingRoom) {
-            setValue("deposit", selectedPg.security_deposit || 0);
-        }
-    }, [selectedPg, editingRoom, setValue]);
 
     const onSubmit = async (data: RoomFormData) => {
         try {
@@ -156,7 +147,6 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                 room_type: data.roomType,
                 capacity: data.capacity,
                 rent: data.rent,
-                deposit: data.deposit,
                 status: data.status,
             };
 
@@ -229,6 +219,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                         value={value}
                         onChange={onChange}
                         placeholder="Select PG"
+                        error={errors.pgId?.message}
                     />
                 )}
             />
@@ -244,6 +235,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                         onChange={(val) => onChange(val === "" ? "" : Number(val))}
                         placeholder={selectedPgId ? "Select Floor" : "Select Property First"}
                         disabled={!selectedPgId}
+                        error={errors.floor?.message}
                     />
                 )}
             />
@@ -273,6 +265,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                                 options={ROOM_TYPES.map(t => ({ label: t.label, value: t.value }))}
                                 value={value}
                                 onChange={onChange}
+                                error={errors.roomType?.message}
                             />
                         )}
                     />
@@ -290,7 +283,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
             )}
 
             <View style={styles.row}>
-                <View style={{ flex: 1, marginRight: 8 }}>
+                <View style={{ flex: 1 }}>
                     <Controller
                         control={control}
                         name="rent"
@@ -301,22 +294,6 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                                 value={value !== undefined && value !== null ? String(value) : ""}
                                 onChangeText={(text) => onChange(text === "" ? "" : Number(text))}
                                 error={errors.rent?.message}
-                                keyboardType="numeric"
-                            />
-                        )}
-                    />
-                </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Controller
-                        control={control}
-                        name="deposit"
-                        render={({ field: { onChange, value } }) => (
-                            <FormField
-                                label="Security Deposit (₹) *"
-                                placeholder="5000"
-                                value={value !== undefined && value !== null ? String(value) : ""}
-                                onChangeText={(text) => onChange(text === "" ? "" : Number(text))}
-                                error={errors.deposit?.message}
                                 keyboardType="numeric"
                             />
                         )}
@@ -337,6 +314,7 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                         ]}
                         value={value}
                         onChange={onChange}
+                        error={errors.status?.message}
                     />
                 )}
             />

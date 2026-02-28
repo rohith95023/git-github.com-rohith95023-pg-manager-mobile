@@ -196,11 +196,13 @@ const apiClient = {
             const { data: { user } } = await supabase.auth.getUser();
             const enhancedPayload = { ...payload };
 
-            // Production Hardening: Auto-inject audit fields
+            // Production Hardening: Auto-inject audit fields (Uncomment after DB migration)
+            /*
             if (user) {
                 if (!enhancedPayload.owner_id) enhancedPayload.owner_id = user.id;
                 enhancedPayload.updated_by = user.id;
             }
+            */
 
             const response = await supabase.from(table).insert(enhancedPayload).select().single();
             if (response.data) {
@@ -215,10 +217,12 @@ const apiClient = {
             const { data: { user } } = await supabase.auth.getUser();
             const enhancedPayload = { ...payload };
 
-            // Production Hardening: Auto-inject audit fields
+            // Production Hardening: Auto-inject audit fields (Uncomment after DB migration)
+            /*
             if (user) {
                 enhancedPayload.updated_by = user.id;
             }
+            */
 
             const response = await supabase.from(table).update(enhancedPayload).eq("id", id).select().single();
             if (response.data) {
@@ -235,6 +239,7 @@ const apiClient = {
             // logActivity(table, 'DELETE_SOFT', { id }, id.toString());
             // return response;
 
+            logActivity(table, 'DELETE_HARD', { id }, id.toString());
             return await supabase.from(table).delete().eq("id", id);
         }, `DELETE ${table}`);
     },

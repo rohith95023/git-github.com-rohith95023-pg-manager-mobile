@@ -28,7 +28,7 @@ const DEFAULT_PAYMENT_FILTERS = {
 };
 const PAYMENT_STATUS_OPTIONS = ["", "PAID", "PENDING", "PARTIAL"];
 
-const PaymentsScreen = () => {
+const PaymentsScreen = ({ route }: any) => {
     const COLORS = useThemePalette();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
@@ -52,27 +52,55 @@ const PaymentsScreen = () => {
     // Modal State
     const [isModalVisible, setModalVisible] = useState(false);
     const [editingPayment, setEditingPayment] = useState<any>(null);
+    const [initialTenantId, setInitialTenantId] = useState<string | undefined>(undefined);
 
     const handleAddPayment = () => {
         setEditingPayment(null);
+        setInitialTenantId(undefined);
         setModalVisible(true);
     };
 
     const handleEditPayment = (payment: any) => {
         setEditingPayment(payment);
+        setInitialTenantId(undefined);
         setModalVisible(true);
     };
 
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const [paymentsRes, pgsRes, dashboardStatsRes]: any = await Promise.all([
+            const [paymentsRes, pgsRes, dashboardStatsRes, tenantsRes]: any = await Promise.all([
                 paymentAPI.getAll(),
                 pgAPI.getAll(),
-                statsAPI.getDashboardStats()
+                statsAPI.getDashboardStats(),
+                tenantAPI.getActive()
             ]);
 
-            setPayments(paymentsRes || []);
+            const getTenantBalance = (tenant: any) => {
+                if (tenant.stay_type === 'DAILY') {
+                    const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
+                    return Number(daily?.balance_amount || tenant.balance_amount || tenant.balance || 0);
+                }
+                return Number(tenant.balance || 0);
+            };
+
+            const outstandingDues = (tenantsRes || [])
+                .filter((t: any) => getTenantBalance(t) > 0)
+                .map((t: any) => ({
+                    id: `virtual_${t.id}`,
+                    tenant_id: t.id,
+                    pg_id: t.pg_id,
+                    amount: getTenantBalance(t),
+                    status: 'PENDING_DUE',
+                    tenants: t,
+                    type: 'RENT',
+                    payment_date: null,
+                    pgs: t.pgs,
+                    isVirtual: true,
+                    billing_month: t.move_in_date || null
+                }));
+
+            setPayments([...(paymentsRes || []), ...outstandingDues]);
             setPgs(pgsRes || []);
 
             const ds = dashboardStatsRes;
@@ -100,6 +128,14 @@ const PaymentsScreen = () => {
             setRefreshing(false);
         }
     }, []);
+
+    useEffect(() => {
+        if (route?.params?.tenantId) {
+            setInitialTenantId(route.params.tenantId);
+            setEditingPayment(null);
+            setModalVisible(true);
+        }
+    }, [route?.params?.tenantId]);
 
     useEffect(() => {
         fetchData();
@@ -141,6 +177,7 @@ const PaymentsScreen = () => {
             case 'PAID':
             case 'COMPLETED': return COLORS.success;
             case 'PENDING': return COLORS.warning;
+            case 'PENDING_DUE': return COLORS.danger;
             case 'FAILED': return COLORS.danger;
             default: return COLORS.textMuted;
         }
@@ -165,7 +202,9 @@ const PaymentsScreen = () => {
                     <Text style={styles.residentName} numberOfLines={1}>{item.tenants?.full_name || "Unknown Resident"}</Text>
                     <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + "15" }]}>
                         <View style={[styles.statusDot, { backgroundColor: getStatusColor(item.status) }]} />
-                        <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+                        <Text style={[styles.statusText, { color: getStatusColor(item.status) }]}>
+                            {item.status === 'PENDING_DUE' ? 'OUTSTANDING DUE' : item.status}
+                        </Text>
                     </View>
                 </View>
                 <View style={styles.amountContainer}>
@@ -203,11 +242,23 @@ const PaymentsScreen = () => {
             </View>
 
             <View style={styles.paymentFooter}>
-                <TouchableOpacity style={styles.editButton} onPress={() => handleEditPayment(item)}>
-                    <Feather name="edit-2" size={14} color={COLORS.primary} />
-                    <Text style={styles.editButtonText}>Edit</Text>
+                <TouchableOpacity style={styles.editButton} onPress={() => {
+                    if (item.isVirtual) {
+                        setEditingPayment(null);
+                        setInitialTenantId(item.tenant_id);
+                        setModalVisible(true);
+                    } else {
+                        handleEditPayment(item);
+                    }
+                }}>
+                    {item.isVirtual ? (
+                        <MaterialCommunityIcons name="currency-inr" size={14} color={COLORS.success} />
+                    ) : (
+                        <Feather name="edit-2" size={14} color={COLORS.primary} />
+                    )}
+                    <Text style={[styles.editButtonText, item.isVirtual && { color: COLORS.success }]}>{item.isVirtual ? "Pay Due" : "Edit"}</Text>
                 </TouchableOpacity>
-                {item.reservation_id && (
+                {item.reservation_id && !item.isVirtual && (
                     <TouchableOpacity style={styles.splitButton}>
                         <Text style={styles.splitButtonText}>View Split</Text>
                         <Feather name="chevron-right" size={14} color={COLORS.textMuted} />
@@ -361,6 +412,7 @@ const PaymentsScreen = () => {
                     setModalVisible(false);
                 }}
                 editingPayment={editingPayment}
+                initialTenantId={initialTenantId}
             />
         </SafeAreaView>
     );

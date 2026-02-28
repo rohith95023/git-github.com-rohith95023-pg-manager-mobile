@@ -23,7 +23,19 @@ export const pgAPI = {
             p_pg_id: id,
             p_archived_name: archivedName
         });
-        if (error) throw error;
+        if (error) {
+            console.error("RPC archive_pg_cascade failed:", error);
+        }
+        await supabase.from("pgs").update({ status: "INACTIVE", name: archivedName }).eq("id", id);
+
+        // Explicitly archive rooms and beds for the property
+        const { data: roomsData } = await supabase.from("rooms").select("id").eq("pg_id", id);
+        if (roomsData && roomsData.length > 0) {
+            const roomIds = roomsData.map(r => r.id);
+            await supabase.from("rooms").update({ status: "MAINTENANCE" }).in("id", roomIds);
+            await supabase.from("beds").update({ status: "MAINTENANCE" }).in("room_id", roomIds);
+        }
+
         return { success: true };
     },
     restore: async (id: string) => {
@@ -34,7 +46,19 @@ export const pgAPI = {
             p_pg_id: id,
             p_restored_name: restoredName
         });
-        if (error) throw error;
+        if (error) {
+            console.error("RPC restore_pg_cascade failed:", error);
+        }
+        await supabase.from("pgs").update({ status: "ACTIVE", name: restoredName }).eq("id", id);
+
+        // Explicitly restore rooms and beds
+        const { data: roomsData } = await supabase.from("rooms").select("id").eq("pg_id", id);
+        if (roomsData && roomsData.length > 0) {
+            const roomIds = roomsData.map(r => r.id);
+            await supabase.from("rooms").update({ status: "AVAILABLE" }).in("id", roomIds);
+            await supabase.from("beds").update({ status: "AVAILABLE" }).in("room_id", roomIds);
+        }
+
         return { success: true, name: restoredName };
     },
     hardDelete: async (id: string) => {
@@ -145,13 +169,49 @@ export const roomAPI: any = {
 
 // Bed APIs
 export const bedAPI = {
-    getAll: () => apiClient.get('beds', "*, rooms(status, room_number, pg_id, floor, capacity, current_occupancy, pgs(status, name)), tenants:tenant_id(full_name)"),
+    getAll: () => apiClient.get('beds', "*, rooms(id, room_number, pg_id, floor, pgs(id, name)), tenants:tenant_id(full_name)"),
     getById: (id: string) => apiClient.getById('beds', id),
     getByRoomId: (roomId: string) => apiClient.get('beds', "*", (query: any) => query.eq("room_id", roomId).order("bed_number")),
+    search: async (params: { page?: number; limit?: number; search?: string; status?: string; pgId?: string }) => {
+        const { page = 1, limit = 10, search = "", status = "ALL", pgId = "" } = params;
+        const from = (page - 1) * limit;
+        const to = from + limit - 1;
+
+        let query = supabase
+            .from("beds")
+            .select("*, rooms!inner(id, room_number, pg_id, floor, status, pgs!inner(id, name, status)), tenants:tenant_id(id, full_name)", { count: "exact" })
+            .neq("rooms.status", "INACTIVE")
+            .neq("rooms.status", "MAINTENANCE")
+            .neq("rooms.pgs.status", "INACTIVE")
+            .neq("rooms.pgs.status", "DELETED");
+
+        if (status !== "ALL") {
+            query = query.eq("status", status);
+        }
+
+        if (pgId) {
+            // Since we need to filter by nested pg_id in rooms, we use dot notation
+            query = query.eq("rooms.pg_id", pgId);
+        }
+
+        if (search) {
+            // Search in bed_number, room_number (via rooms), pg name (via rooms.pgs), and tenant name
+            // Note: complex cross-table ILIKE can be tricky in Supabase JS client depending on schema.
+            // Using a simple text search or multiple filters.
+            query = query.or(`bed_number.ilike.%${search}%, rooms.room_number.ilike.%${search}%, tenants.full_name.ilike.%${search}%`);
+        }
+
+        const { data, error, count } = await query
+            .order("bed_number", { ascending: true })
+            .range(from, to);
+
+        if (error) throw error;
+        return { data, count };
+    },
     update: async (id: string, data: any) => {
         const updatedBed: any = await apiClient.update('beds', id, data);
         if (updatedBed && (data.tenant_id !== undefined || data.status !== undefined)) {
-            const rId = updatedBed.room_id || data.room_id;
+            const rId = updatedBed?.room_id || data.room_id || (updatedBed as any)?.data?.room_id;
             if (rId) await roomAPI.recalculateOccupancy(rId);
         }
         return updatedBed;
@@ -283,57 +343,171 @@ export const statsAPI = {
             const firstDayOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
 
             const results = await Promise.all([
-                supabase.from("pgs").select("*", { count: "exact", head: true }).eq("status", "ACTIVE"),
-                supabase.from("rooms").select("*", { count: "exact", head: true }).in("status", ["AVAILABLE", "PARTIAL", "FULL"]),
-                supabase.from("tenants").select("*", { count: "exact", head: true }).eq("status", "ACTIVE"),
-                supabase.from("beds").select("*", { count: "exact", head: true }).neq("status", "INACTIVE"),
-                supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "OCCUPIED"),
-                supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "AVAILABLE"),
+                supabase.from("pgs").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
+                supabase.from("rooms").select("id", { count: "exact", head: true }).in("status", ["AVAILABLE", "PARTIAL", "FULL"]),
+                supabase.from("tenants").select("id", { count: "exact", head: true }).eq("status", "ACTIVE"),
+
+                // Fetch all beds not tied to inactive/deleted entities
+                supabase.from("beds")
+                    .select("status, rooms!inner(status, pgs!inner(status))")
+                    .neq("rooms.status", "INACTIVE")
+                    .neq("rooms.pgs.status", "INACTIVE")
+                    .neq("rooms.pgs.status", "DELETED"),
+
                 supabase.from("payments").select("amount, payment_date, created_at, status"),
                 supabase.from("expenses").select("amount, date, created_at"),
-                supabase.from("tenants").select("balance").eq("status", "ACTIVE"),
-                supabase.from("daily_stay_details").select("balance_amount"),
+                supabase.from("tenants").select("balance").eq("status", "ACTIVE").eq("stay_type", "MONTHLY"),
+                supabase.from("daily_stay_details").select("move_in_date, vacate_date, rent_per_day, paid_amount, maintenance_amount, tenants!inner(status)").eq("tenants.status", "ACTIVE"),
+                supabase.from("tenants").select("*", { count: "exact", head: true }).eq("stay_type", "DAILY").eq("status", "ACTIVE"),
+                supabase.from("tenants").select("*", { count: "exact", head: true }).eq("stay_type", "MONTHLY").eq("status", "ACTIVE"),
                 supabase.from("tenants").select(`*, pgs!pg_id(name), rooms!room_id(room_number)`).order("created_at", { ascending: false }).limit(5),
             ]);
 
             const [
-                pgs, rooms, tenants, totalBeds, occupiedBeds, availableBeds,
-                payments, expenses, tenantBalances, dailyBalances, recentResidents
+                pgs, rooms, tenants, bedsResponse,
+                payments, expenses, tenantBalances, dailyBalances,
+                dailyActive, monthlyActive, recentResidents
             ] = results;
+
+            // Process beds stats (Logic Parity with Web)
+            const bedsData = bedsResponse?.data || [];
+            const totalBedsCount = bedsData.filter((b: any) => b.status !== "INACTIVE" && b.status !== "DELETED").length;
+            const occupiedBedsCount = bedsData.filter((b: any) => b.status === "OCCUPIED").length;
+            const maintenanceBedsCount = bedsData.filter((b: any) => b.status === "MAINTENANCE").length;
+            // Available is Total - Occupied - Maintenance (matches web)
+            const availableBedsCount = Math.max(0, totalBedsCount - occupiedBedsCount - maintenanceBedsCount);
 
             const allPayments = payments?.data || [];
             const allExpenses = expenses?.data || [];
 
-            const totalRevenue = allPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+            const totalRevenue = allPayments
+                .filter(p => {
+                    const s = (p.status || "").toUpperCase();
+                    return s === 'PAID' || s === 'COMPLETED';
+                })
+                .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
             const monthlyRevenue = allPayments
-                .filter(p => (p.payment_date || p.created_at) >= firstDayOfMonth)
+                .filter(p => {
+                    const s = (p.status || "").toUpperCase();
+                    const isPaid = s === 'PAID' || s === 'COMPLETED';
+                    const date = p.payment_date || p.created_at;
+                    return isPaid && date >= firstDayOfMonth;
+                })
                 .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
 
             const monthlyExpenses = allExpenses
                 .filter(e => (e.date || e.created_at) >= firstDayOfMonth)
                 .reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
 
-            const pendingDues = (tenantBalances?.data || []).reduce((sum, t) => sum + (Number(t.balance) || 0), 0) +
-                (dailyBalances?.data || []).reduce((sum, d) => sum + (Number(d.balance_amount) || 0), 0);
+            const monthlyDues = (tenantBalances?.data || []).reduce((sum, t) => sum + (Number(t.balance) || 0), 0);
+            const dailyDues = (dailyBalances?.data || []).reduce((sum, d) => {
+                if (!d.move_in_date || !d.vacate_date) return sum;
+                const start = new Date(d.move_in_date);
+                const end = new Date(d.vacate_date);
+                let diffDays = 1;
+                if (end > start) {
+                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                }
+                const totalRent = (diffDays * Number(d.rent_per_day || 0)) + Number(d.maintenance_amount || 0);
+                const balance = Math.max(0, totalRent - Number(d.paid_amount || 0));
+                return sum + balance;
+            }, 0);
+
+            const pendingDues = Math.round(monthlyDues + dailyDues);
 
             return {
                 data: {
                     totalPGs: pgs?.count || 0,
                     activeRooms: rooms?.count || 0,
                     totalTenants: tenants?.count || 0,
-                    totalBeds: totalBeds?.count || 0,
-                    occupiedBeds: occupiedBeds?.count || 0,
-                    availableBeds: availableBeds?.count || 0,
-                    occupancyRate: (totalBeds?.count && occupiedBeds?.count) ? Math.round((occupiedBeds.count / totalBeds.count) * 100) : 0,
+                    totalBeds: totalBedsCount,
+                    occupiedBeds: occupiedBedsCount,
+                    availableBeds: availableBedsCount,
+                    maintenanceBeds: maintenanceBedsCount,
+                    occupancyRate: (totalBedsCount - maintenanceBedsCount) > 0 ? Math.round((occupiedBedsCount / (totalBedsCount - maintenanceBedsCount)) * 100) : 0,
                     totalRevenue,
                     monthlyRevenue,
                     netProfit: monthlyRevenue - monthlyExpenses,
                     pendingDues,
+                    dailyActiveTenants: dailyActive?.count || 0,
+                    monthlyActiveTenants: monthlyActive?.count || 0,
                     recentResidents: recentResidents?.data || [],
                 }
             };
         }, "GET Dashboard Stats");
+    },
+
+    reconcileAllBalances: async () => {
+        return apiClient.request(async () => {
+            // 1. Fetch all active monthly tenants with their rent info
+            const { data: tenants, error: fetchError } = await supabase
+                .from("tenants")
+                .select("id, full_name, move_in_date, created_at, rent_per_month, balance, maintenance_amount, maintenance_type, rooms:room_id(rent)")
+                .eq("stay_type", "MONTHLY")
+                .eq("status", "ACTIVE");
+
+            if (fetchError) throw fetchError;
+            if (!tenants || tenants.length === 0) return { success: true, count: 0 };
+
+            // 2. Fetch all payments to calculate actual paid amounts
+            const { data: allPayments, error: payError } = await supabase
+                .from("payments")
+                .select("tenant_id, amount");
+
+            if (payError) throw payError;
+
+            const paymentMap = (allPayments || []).reduce((acc: any, p: any) => {
+                const cleanAmount = Number(p.amount) || 0;
+                acc[p.tenant_id] = (acc[p.tenant_id] || 0) + cleanAmount;
+                return acc;
+            }, {});
+
+            const today = new Date();
+            const updates = [];
+
+            // 3. Compare system-calculated balance vs current DB balance
+            for (const tenant of tenants) {
+                const moveIn = new Date(tenant.move_in_date || tenant.created_at);
+                if (isNaN(moveIn.getTime())) continue;
+
+                const room = Array.isArray(tenant.rooms) ? tenant.rooms[0] : tenant.rooms;
+                const rent = Number(tenant.rent_per_month || room?.rent || 0);
+                const maintenance = Number(tenant.maintenance_amount || 0);
+
+                // Anniversary-based month calculation
+                let monthDiff = (today.getFullYear() - moveIn.getFullYear()) * 12 + (today.getMonth() - moveIn.getMonth());
+                if (today.getDate() >= moveIn.getDate()) {
+                    monthDiff++;
+                }
+                monthDiff = Math.max(1, monthDiff);
+
+                let expectedTotal = monthDiff * rent;
+
+                // Apply Maintenance
+                if (tenant.maintenance_type === 'monthly') {
+                    expectedTotal += (monthDiff * maintenance);
+                } else if (tenant.maintenance_type === 'one_time') {
+                    expectedTotal += maintenance;
+                }
+
+                const paidTotal = paymentMap[tenant.id] || 0;
+                const correctedBalance = Math.max(0, expectedTotal - paidTotal);
+
+                // Only update if there is a discrepancy
+                const currentBalance = Number(tenant.balance || 0);
+                if (Math.abs(correctedBalance - currentBalance) > 1) {
+                    updates.push(supabase.from("tenants").update({ balance: correctedBalance }).eq("id", tenant.id));
+                }
+            }
+
+            // 4. Run updates in parallel
+            if (updates.length > 0) {
+                await Promise.all(updates);
+            }
+
+            return { success: true, updatedCount: updates.length };
+        }, "Reconcile All Balances");
     }
 };
 

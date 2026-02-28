@@ -40,6 +40,18 @@ interface PaymentFormModalProps {
     initialTenantId?: string;
 }
 
+const DEFAULT_PAYMENT_VALUES: any = {
+    tenant_id: "",
+    pg_id: "",
+    amount: 0,
+    payment_date: new Date().toISOString().split('T')[0],
+    billing_month: new Date().toISOString().slice(0, 7),
+    type: "RENT",
+    payment_method: "CASH",
+    status: "COMPLETED",
+    notes: "",
+};
+
 const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, onSuccess, editingPayment, initialTenantId }) => {
     const COLORS = useThemePalette();
     const [loading, setLoading] = useState(false);
@@ -68,17 +80,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
     const { control, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<PaymentFormData>({
         resolver: zodResolver(paymentSchema) as any,
         mode: "onChange",
-        defaultValues: {
-            tenant_id: "",
-            pg_id: "",
-            amount: 0,
-            payment_date: new Date().toISOString().split('T')[0],
-            billing_month: new Date().toISOString().slice(0, 7),
-            type: "RENT",
-            payment_method: "CASH",
-            status: "COMPLETED",
-            notes: "",
-        }
+        defaultValues: DEFAULT_PAYMENT_VALUES
     });
 
     const watchTenantId = watch("tenant_id");
@@ -124,14 +126,8 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                 });
             } else {
                 reset({
+                    ...DEFAULT_PAYMENT_VALUES,
                     tenant_id: initialTenantId || "",
-                    payment_date: new Date().toISOString().split('T')[0],
-                    billing_month: new Date().toISOString().slice(0, 7),
-                    type: "RENT",
-                    payment_method: "CASH",
-                    status: "COMPLETED",
-                    amount: 0,
-                    notes: "",
                 });
             }
         }
@@ -142,9 +138,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
             const tenant = tenants.find(t => t.id === watchTenantId);
             if (tenant) {
                 setValue("pg_id", tenant.pg_id);
-                if (watchType === "RENT") {
-                    setValue("amount", getTenantBalance(tenant));
-                }
+                // Removed auto-fill of amount per user request to prevent accidental overpayment warnings
             }
         }
     }, [watchTenantId, watchType, tenants, editingPayment]);
@@ -162,12 +156,12 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                 if (isDuplicate) {
                     setConfirmState({
                         visible: true,
-                        title: "Payment Blocked",
-                        message: "Payment already exists for this billing period.",
-                        type: "danger",
-                        singleButton: true,
-                        cancelText: "Review",
-                        onClose: () => setConfirmState(prev => ({ ...prev, visible: false }))
+                        title: "Possible Duplicate",
+                        message: "A payment record for this resident in this billing period already exists. Do you want to record another one?",
+                        type: "warning",
+                        confirmText: "Yes, Proceed",
+                        cancelText: "Cancel",
+                        onConfirm: () => handleFormSubmit(data, true)
                     });
                     return;
                 }
@@ -370,6 +364,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                                 ]}
                                 value={value}
                                 onChange={onChange}
+                                error={errors.type?.message}
                             />
                         )}
                     />
@@ -411,6 +406,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                                 ]}
                                 value={value}
                                 onChange={onChange}
+                                error={errors.payment_method?.message}
                             />
                         )}
                     />
@@ -430,6 +426,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                         ]}
                         value={value}
                         onChange={onChange}
+                        error={errors.status?.message}
                     />
                 )}
             />

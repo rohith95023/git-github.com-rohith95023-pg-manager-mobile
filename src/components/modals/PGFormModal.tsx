@@ -332,11 +332,10 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                                         value={value || ""}
                                         onChange={onChange}
                                         placeholder="Select Type"
-                                        highlight={!!errors.maintenance_type}
+                                        error={errors.maintenance_type?.message}
                                     />
                                 )}
                             />
-                            {errors.maintenance_type && <Text style={[styles.errorText, { color: COLORS.danger }]}>{errors.maintenance_type.message}</Text>}
                         </View>
                     </View>
                 </View>
@@ -354,6 +353,7 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                             ]}
                             value={value}
                             onChange={onChange}
+                            error={errors.gender_type?.message}
                         />
                     )}
                 />

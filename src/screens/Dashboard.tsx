@@ -32,15 +32,22 @@ const Dashboard = ({ navigation, route }: any) => {
 
     const fetchData = useCallback(async () => {
         try {
+            // Balance reconciliation (optional but ensures accuracy like web sync)
+            try {
+                await statsAPI.reconcileAllBalances();
+            } catch (err) {
+                console.warn("Auto-reconciliation failed:", err);
+            }
+
             const [statsRes, paymentsRes, tenantsRes]: any = await Promise.all([
                 statsAPI.getDashboardStats(),
                 paymentAPI.getAll(),
                 tenantAPI.getActive()
             ]);
 
-            if (statsRes) setStats(statsRes);
-            setRecentPayments((paymentsRes || []).slice(0, 5));
-            setDailyTenants((tenantsRes || []).filter((t: any) => t.stay_type === 'DAILY').slice(0, 5));
+            if (statsRes) setStats(statsRes.data || statsRes);
+            setRecentPayments((paymentsRes?.data || paymentsRes || []).slice(0, 5));
+            setDailyTenants((tenantsRes?.data || tenantsRes || []).filter((t: any) => t.stay_type === 'DAILY').slice(0, 5));
         } catch (error) {
             console.error("Failed to fetch dashboard data:", error);
         } finally {
@@ -117,9 +124,11 @@ const Dashboard = ({ navigation, route }: any) => {
                     <KPICard title="Total PGs" value={stats?.totalPGs || 0} icon="home" />
                     <KPICard title="Active Rooms" value={stats?.activeRooms || 0} icon="door-open" iconType="Material" color={COLORS.success} />
                     <KPICard title="Residents" value={stats?.totalTenants || 0} icon="users" color={COLORS.warning} />
-                    <KPICard title="Active Beds" value={stats?.occupiedBeds || 0} icon="bed" iconType="Material" color={COLORS.primary} />
+                    <KPICard title="Active Beds" value={(stats?.totalBeds || 0) - (stats?.maintenanceBeds || 0)} icon="bed" iconType="Material" color={COLORS.primary} />
                     <KPICard title="Available" value={stats?.availableBeds || 0} icon="bed-outline" iconType="Material" color={COLORS.success} />
                     <KPICard title="Occupancy" value={`${stats?.occupancyRate || 0}%`} icon="percent" color="#8884d8" />
+                    <KPICard title="Daily Stays" value={stats?.dailyActiveTenants || 0} icon="clock" color={COLORS.primary} />
+                    <KPICard title="Monthly Stays" value={stats?.monthlyActiveTenants || 0} icon="calendar" color={COLORS.success} />
                 </View>
 
                 {/* Financial Summary Grouped Card */}
@@ -152,23 +161,51 @@ const Dashboard = ({ navigation, route }: any) => {
                 <SectionHeader title="Daily Stay Tenants" onSeeAll={() => navigation.navigate("Residents")} />
                 {dailyTenants.length > 0 ? (
                     <View style={styles.listContainer}>
-                        {dailyTenants.map((t: any) => (
-                            <TouchableOpacity key={t.id} style={styles.listItem} activeOpacity={0.7}>
-                                <View style={styles.listIcon}>
-                                    <View style={[styles.avatar, { backgroundColor: COLORS.warning + "20" }]}>
-                                        <Text style={[styles.avatarText, { color: COLORS.warning }]}>{t.full_name[0]}</Text>
+                        {dailyTenants.map((t: any) => {
+                            const daily = Array.isArray(t.daily_stay_details) ? t.daily_stay_details[0] : t.daily_stay_details;
+                            const moveIn = t.move_in_date || daily?.move_in_date;
+                            const vacate = t.vacate_date || daily?.vacate_date;
+                            const rentPerDay = daily?.rent_per_day || t.rent_per_day || 0;
+                            const maintenance = daily?.maintenance_amount || t.maintenance_amount || 0;
+                            const paid = Number(daily?.paid_amount || t.paid_amount || 0);
+
+                            let balance = 0;
+                            if (moveIn && vacate) {
+                                const start = new Date(moveIn);
+                                const end = new Date(vacate);
+                                let diffDays = 1;
+                                if (end > start) {
+                                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                }
+                                const totalRentCount = (diffDays * Number(rentPerDay)) + Number(maintenance);
+                                balance = Math.max(0, totalRentCount - paid);
+                            }
+
+                            return (
+                                <TouchableOpacity key={t.id} style={styles.listItem} activeOpacity={0.7} onPress={() => navigation.navigate("ResidentDetail", { tenant: t })}>
+                                    <View style={styles.listIcon}>
+                                        <View style={[styles.avatar, { backgroundColor: COLORS.warning + "20" }]}>
+                                            <Text style={[styles.avatarText, { color: COLORS.warning }]}>{t.full_name[0]}</Text>
+                                        </View>
                                     </View>
-                                </View>
-                                <View style={styles.listMain}>
-                                    <Text style={styles.listTitle}>{t.full_name}</Text>
-                                    <Text style={styles.listSubTitle}>Room {t.rooms?.room_number || "N/A"}</Text>
-                                </View>
-                                <View style={styles.listRight}>
-                                    <Text style={styles.listPrice}>₹{t.daily_stay_details?.rent_per_day}/d</Text>
-                                    <Text style={styles.listDate}>Ends: {new Date(t.daily_stay_details?.vacate_date).toLocaleDateString([], { month: 'short', day: 'numeric' })}</Text>
-                                </View>
-                            </TouchableOpacity>
-                        ))}
+                                    <View style={styles.listMain}>
+                                        <Text style={styles.listTitle}>{t.full_name}</Text>
+                                        <Text style={styles.listSubTitle}>Room {t.rooms?.room_number || "N/A"} • {t.pgs?.name || "N/A"}</Text>
+                                        {balance > 0 && (
+                                            <View style={[styles.dueBadge, { marginTop: 4, alignSelf: 'flex-start' }]}>
+                                                <Text style={styles.dueBadgeText}>DUE: ₹{balance.toLocaleString()}</Text>
+                                            </View>
+                                        )}
+                                    </View>
+                                    <View style={styles.listRight}>
+                                        <Text style={styles.listPrice}>₹{rentPerDay}/d</Text>
+                                        {vacate && (
+                                            <Text style={styles.listDate}>Ends: {new Date(vacate).toLocaleDateString([], { month: 'short', day: 'numeric' })}</Text>
+                                        )}
+                                    </View>
+                                </TouchableOpacity>
+                            );
+                        })}
                     </View>
                 ) : (
                     <View style={styles.emptyCard}>
@@ -218,7 +255,7 @@ const Dashboard = ({ navigation, route }: any) => {
                                 </View>
                                 <View style={styles.listMain}>
                                     <Text style={styles.listTitle} numberOfLines={1}>{p.tenants?.full_name || "Unknown"}</Text>
-                                    <Text style={styles.listSubTitle}>{p.type} • {p.payment_method}</Text>
+                                    <Text style={styles.listSubTitle}>{p.pgs?.name || "N/A"} • {p.type} • {p.payment_method}</Text>
                                 </View>
                                 <View style={styles.listRight}>
                                     <Text style={styles.paymentAmount}>₹{p.amount?.toLocaleString()}</Text>
@@ -340,6 +377,18 @@ const createStyles = (COLORS: ThemePalette) =>
         listPrice: { fontSize: 14, fontWeight: "800", color: COLORS.warning },
         listDate: { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
         paymentAmount: { fontSize: 15, fontWeight: "900", color: COLORS.success },
+        dueBadge: {
+            backgroundColor: "rgba(255, 71, 87, 0.15)",
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 6,
+        },
+        dueBadgeText: {
+            color: "#ff4757",
+            fontSize: 10,
+            fontWeight: "800",
+            letterSpacing: 0.2,
+        },
 
         emptyCard: {
             backgroundColor: COLORS.card,

@@ -23,6 +23,8 @@ interface ConfirmationModalProps {
     cancelText?: string;
     type?: "danger" | "warning" | "info" | "success";
     loading?: boolean;
+    confirmDisabled?: boolean;
+    disableOutsideTap?: boolean;
     singleButton?: boolean;
     needsInput?: boolean;
     inputValue?: string;
@@ -30,6 +32,8 @@ interface ConfirmationModalProps {
     inputPlaceholder?: string;
     inputLabel?: string;
     inputError?: string;
+    secondaryText?: string;
+    onSecondary?: () => void;
 }
 
 const ConfirmationModal = ({
@@ -43,6 +47,8 @@ const ConfirmationModal = ({
     cancelText = "Cancel",
     type = "info",
     loading = false,
+    confirmDisabled = false,
+    disableOutsideTap = false,
     singleButton = false,
     needsInput = false,
     inputValue = "",
@@ -50,27 +56,31 @@ const ConfirmationModal = ({
     inputPlaceholder = "Type here...",
     inputLabel = "Confirmation",
     inputError = "",
+    secondaryText,
+    onSecondary,
 }: ConfirmationModalProps) => {
     const COLORS = useThemePalette();
 
     const getIconConfig = () => {
         switch (type) {
             case "danger":
-                return { name: "close-outline", color: COLORS.danger, bg: COLORS.danger + "10" };
+                return { name: "close-outline", color: COLORS.danger, bg: COLORS.danger + "15" };
             case "warning":
-                return { name: "alert-circle-outline", color: COLORS.warning, bg: COLORS.warning + "10" };
+                return { name: "alert-circle-outline", color: COLORS.warning, bg: COLORS.warning + "15" };
             case "success":
-                return { name: "checkmark-circle-outline", color: COLORS.success, bg: COLORS.success + "10" };
+                return { name: "checkmark-circle-outline", color: COLORS.success, bg: COLORS.success + "15" };
             default:
-                return { name: "help-circle-outline", color: COLORS.primary, bg: COLORS.primary + "10" };
+                return { name: "help-circle-outline", color: COLORS.primary, bg: COLORS.primary + "15" };
         }
     };
 
     const iconConfig = getIconConfig();
 
+    const shouldPreventDismiss = disableOutsideTap || type === "danger";
+
     return (
-        <Modal visible={visible} transparent animationType="fade" onRequestClose={onClose}>
-            <TouchableWithoutFeedback onPress={onClose}>
+        <Modal visible={visible} transparent animationType="fade" onRequestClose={shouldPreventDismiss ? undefined : onClose}>
+            <TouchableWithoutFeedback onPress={shouldPreventDismiss ? undefined : onClose}>
                 <View style={styles.overlay}>
                     <TouchableWithoutFeedback onPress={() => { }}>
                         <View style={[styles.modalCard, { backgroundColor: COLORS.card }]}>
@@ -90,37 +100,63 @@ const ConfirmationModal = ({
                                 {/* Input Section */}
                                 {needsInput && (
                                     <View style={styles.inputContainer}>
-                                        {!!inputLabel && <Text style={[styles.inputLabel, { color: COLORS.primary }]}>{inputLabel.toUpperCase()}</Text>}
+                                        <View style={styles.codeDisplayWrapper}>
+                                            <Text style={[styles.codeLabel, { color: COLORS.textMuted }]}>CONFIRMATION CODE</Text>
+                                            <View style={[styles.codeBadge, { backgroundColor: COLORS.bg }]}>
+                                                <Text style={[styles.codeText, { color: iconConfig.color }]}>
+                                                    {inputPlaceholder.match(/"([^"]+)"/)?.[1] || "----"}
+                                                </Text>
+                                            </View>
+                                        </View>
+                                        {/* {!!inputLabel && <Text style={[styles.inputLabel, { color: COLORS.primary }]}>{inputLabel.toUpperCase()}</Text>} */}
                                         <TextInput
-                                            style={[styles.input, { backgroundColor: COLORS.bg, color: COLORS.text, borderColor: COLORS.border }]}
-                                            placeholder={inputPlaceholder}
+                                            style={[
+                                                styles.input,
+                                                { backgroundColor: COLORS.bg, color: COLORS.text, borderColor: COLORS.border, textAlign: 'center' },
+                                                inputValue === inputPlaceholder.match(/"([^"]+)"/)?.[1] && { borderColor: COLORS.success, borderWidth: 2 }
+                                            ]}
+                                            placeholder="Enter Code"
                                             placeholderTextColor={COLORS.textMuted + "80"}
                                             value={inputValue}
                                             onChangeText={onInputChange}
                                             autoCapitalize="none"
+                                            keyboardType="default"
                                         />
                                         {!!inputError ? <Text style={[styles.inputError, { color: COLORS.danger }]}>{inputError}</Text> : null}
                                     </View>
                                 )}
 
-                                {/* Buttons */}
                                 <View style={styles.buttonContainer}>
                                     <TouchableOpacity
                                         style={[
                                             styles.confirmButton,
                                             { backgroundColor: type === "danger" ? COLORS.danger : COLORS.primary },
-                                            loading && styles.disabledButton,
+                                            (loading || confirmDisabled) && styles.disabledButton,
                                         ]}
-                                        onPress={onConfirm}
-                                        disabled={loading}
+                                        onPress={onConfirm || onClose}
+                                        disabled={loading || confirmDisabled}
                                         activeOpacity={0.8}
                                     >
                                         {loading ? (
                                             <ActivityIndicator color="#FFF" size="small" />
                                         ) : (
-                                            <Text style={styles.confirmText}>{confirmText.toUpperCase()}</Text>
+                                            <Text style={styles.confirmText}>
+                                                {(singleButton && cancelText !== "Cancel" && confirmText === "Confirm")
+                                                    ? cancelText.toUpperCase()
+                                                    : confirmText.toUpperCase()}
+                                            </Text>
                                         )}
                                     </TouchableOpacity>
+
+                                    {!!secondaryText && (
+                                        <TouchableOpacity
+                                            style={[styles.secondaryButton, { borderColor: COLORS.border, borderWidth: 1 }]}
+                                            onPress={onSecondary}
+                                            activeOpacity={0.7}
+                                        >
+                                            <Text style={[styles.secondaryText, { color: COLORS.text }]}>{secondaryText.toUpperCase()}</Text>
+                                        </TouchableOpacity>
+                                    )}
 
                                     {!singleButton && (
                                         <TouchableOpacity style={styles.cancelButton} onPress={onClose} disabled={loading} activeOpacity={0.7}>
@@ -132,8 +168,8 @@ const ConfirmationModal = ({
                         </View>
                     </TouchableWithoutFeedback>
                 </View>
-            </TouchableWithoutFeedback>
-        </Modal>
+            </TouchableWithoutFeedback >
+        </Modal >
     );
 };
 
@@ -249,6 +285,42 @@ const styles = StyleSheet.create({
     },
     disabledButton: {
         opacity: 0.6,
+    },
+    secondaryButton: {
+        width: "100%",
+        height: 52,
+        borderRadius: 14,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    secondaryText: {
+        fontSize: 14,
+        fontWeight: "700",
+        letterSpacing: 1,
+    },
+    codeDisplayWrapper: {
+        alignItems: "center",
+        marginBottom: 16,
+    },
+    codeLabel: {
+        fontSize: 9,
+        fontWeight: "800",
+        letterSpacing: 1,
+        marginBottom: 6,
+        opacity: 0.6,
+    },
+    codeBadge: {
+        paddingHorizontal: 20,
+        paddingVertical: 10,
+        borderRadius: 12,
+        borderWidth: 1.5,
+        borderColor: "rgba(0,0,0,0.05)",
+        borderStyle: "dashed",
+    },
+    codeText: {
+        fontSize: 24,
+        fontWeight: "900",
+        letterSpacing: 4,
     },
 });
 

@@ -32,6 +32,7 @@ import ChangePasswordScreen from "../screens/ChangePasswordScreen";
 import SmartTenantFinder from "../screens/SmartTenantFinder";
 import ResidentDetailScreen from "../screens/ResidentDetailScreen";
 
+
 const Drawer = createDrawerNavigator();
 const Stack = createNativeStackNavigator();
 
@@ -90,11 +91,12 @@ const HeaderTitle = ({ title, colors }: any) => (
     <Text style={[styles.headerTitle, { color: "#fff" }]}>{title}</Text>
 );
 
-// Custom Header Left Component
-const CustomHeaderLeft = ({ navigation, tintColor }: any) => (
+// Custom Header Right Component (Menu)
+const CustomHeaderRight = ({ navigation, tintColor }: any) => (
     <TouchableOpacity
-        style={{ marginLeft: 20 }}
+        style={{ marginRight: 20, padding: 4 }}
         onPress={() => navigation.toggleDrawer()}
+        hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
     >
         <Ionicons name="menu" size={26} color={tintColor || "#fff"} />
     </TouchableOpacity>
@@ -104,61 +106,54 @@ const MainNavigator = () => {
     const { colors, isDark } = useTheme();
 
     return (
-            <Drawer.Navigator
-                drawerContent={(props) => <CustomDrawerContent {...props} />}
-                screenOptions={({ navigation }) => ({
-                    headerShown: true,
-                    headerLeft: () => <CustomHeaderLeft navigation={navigation} tintColor={colors.text} />,
-                    headerRight: () => <ThemeToggleButton style={{ marginRight: 20 }} />,
-                    headerRightContainerStyle: { paddingRight: 16 },
-                    headerStyle: {
-                        backgroundColor: colors.card,
-                        elevation: 0,
-                        shadowOpacity: 0,
-                        height: 100,
-                    },
-                    headerTintColor: colors.text,
-                    headerTitleAlign: "center",
-                    headerTitleStyle: {
-                        color: colors.text,
-                    },
-                    drawerStyle: {
-                        width: 300,
-                        backgroundColor: colors.background,
-                    },
-                    drawerActiveTintColor: colors.primary,
-                    drawerInactiveTintColor: colors.textSecondary,
-                    drawerActiveBackgroundColor: isDark ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.15)",
-                    drawerLabelStyle: {
-                        fontSize: 15,
-                        fontWeight: "600",
-                        marginLeft: -10,
-                    },
-                    drawerItemStyle: {
-                        borderRadius: 12,
-                        marginHorizontal: 12,
-                        marginVertical: 4,
-                        paddingHorizontal: 8,
-                    }
-                })}
-            >
+        <Drawer.Navigator
+            drawerContent={(props) => <CustomDrawerContent {...props} />}
+            screenOptions={({ navigation }) => ({
+                headerShown: true,
+                headerLeft: () => (
+                    <View style={{ marginLeft: 20 }}>
+                        <ThemeToggleButton />
+                    </View>
+                ),
+                headerRight: () => <CustomHeaderRight navigation={navigation} tintColor={colors.text} />,
+                headerStyle: {
+                    backgroundColor: colors.card,
+                    elevation: 0,
+                    shadowOpacity: 0,
+                    height: 100,
+                },
+                headerTintColor: colors.text,
+                headerTitleAlign: "center",
+                headerTitleStyle: {
+                    color: colors.text,
+                },
+                drawerStyle: {
+                    width: 300,
+                    backgroundColor: colors.background,
+                },
+                drawerActiveTintColor: colors.primary,
+                drawerInactiveTintColor: colors.textSecondary,
+                drawerActiveBackgroundColor: isDark ? "rgba(59, 130, 246, 0.25)" : "rgba(59, 130, 246, 0.15)",
+                drawerLabelStyle: {
+                    fontSize: 15,
+                    fontWeight: "600",
+                    marginLeft: -10,
+                },
+                drawerItemStyle: {
+                    borderRadius: 12,
+                    marginHorizontal: 12,
+                    marginVertical: 4,
+                    paddingHorizontal: 8,
+                }
+            })}
+        >
             <Drawer.Screen
                 name="Dashboard"
                 component={Dashboard}
                 options={({ navigation }) => ({
                     drawerIcon: ({ color }) => <Feather name="grid" size={20} color={color} />,
                     headerTitle: "Dashboard",
-                    headerRight: () => (
-                        <View style={{ flexDirection: "row", alignItems: "center", marginRight: 16 }}>
-                            <TouchableOpacity
-                                onPress={() => navigation.setParams({ refresh: Date.now() })}
-                                style={{ marginRight: 16 }}
-                            >
-                                <Ionicons name="refresh-outline" size={24} color={colors.text} />
-                            </TouchableOpacity>
-                            <ThemeToggleButton />
-                        </View>
-                    )
+                    headerRight: () => <CustomHeaderRight navigation={navigation} tintColor={colors.text} />
                 })}
             />
             <Drawer.Screen
@@ -179,6 +174,7 @@ const MainNavigator = () => {
                     headerTitle: "Rooms & Beds"
                 }}
             />
+
             <Drawer.Screen
                 name="Residents"
                 component={TenantsScreen}

@@ -16,6 +16,7 @@ import { pgAPI } from "../services/api";
 import { supabase } from "../lib/supabaseClient";
 import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
 import PGFormModal from "../components/modals/PGFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
@@ -45,12 +46,17 @@ const PGsScreen = ({ navigation }: any) => {
         cancelText?: string;
         singleButton?: boolean;
         loading?: boolean;
+        needsInput?: boolean;
+        inputPlaceholder?: string;
     }>({
         visible: false,
         title: "",
         message: "",
         type: "info"
     });
+
+    const [confirmInput, setConfirmInput] = useState("");
+    const [confirmTargetCode, setConfirmTargetCode] = useState("");
 
     const fetchPGs = useCallback(async () => {
         try {
@@ -118,6 +124,10 @@ const PGsScreen = ({ navigation }: any) => {
                 return;
             }
 
+            const deleteCode = generateDeleteCode();
+            setConfirmTargetCode(deleteCode);
+            setConfirmInput("");
+
             setConfirmState({
                 visible: true,
                 title: "Archive Property?",
@@ -125,13 +135,17 @@ const PGsScreen = ({ navigation }: any) => {
                 type: "warning",
                 confirmText: "Archive Now",
                 cancelText: "Cancel",
+                needsInput: true,
+                inputPlaceholder: `Type "${deleteCode}" to confirm`,
                 onConfirm: async () => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
-                        const date = new Date().toLocaleDateString();
+                        const date = new Date().toISOString().split('T')[0];
                         await pgAPI.archive(id, date);
                         await fetchPGs();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        setConfirmInput("");
+                        setConfirmTargetCode("");
                         Alert.alert("Success", "Property archived successfully");
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
@@ -188,32 +202,46 @@ const PGsScreen = ({ navigation }: any) => {
         }
     };
 
-    const handleDelete = (id: string, name: string) => {
+    const handleDelete = async (id: string, name: string) => {
         if (activeTab === "Active") {
             handleArchive(id, name);
             return;
         }
 
-        setConfirmState({
-            visible: true,
-            title: "Hard Delete Property?",
-            message: "This will PERMANENTLY delete this property and all its related data (Rooms, Beds, Payments). This action is irreversible!",
-            type: "danger",
-            confirmText: "Hard Delete",
-            cancelText: "Cancel",
-            onConfirm: async () => {
-                try {
-                    setConfirmState(prev => ({ ...prev, loading: true }));
-                    await pgAPI.hardDelete(id);
-                    await fetchPGs();
-                    setConfirmState({ visible: false, title: "", message: "", type: "info" });
-                    Alert.alert("Success", "Property deleted permanently");
-                } catch (error: any) {
-                    setConfirmState(prev => ({ ...prev, loading: false }));
-                    Alert.alert("Error", error.message || "Failed to delete property");
+        try {
+
+            const deleteCode = generatePgDeleteCode(name);
+            setConfirmTargetCode(deleteCode);
+            setConfirmInput("");
+
+            setConfirmState({
+                visible: true,
+                title: "Hard Delete Property?",
+                message: `This will PERMANENTLY delete "${name}" and all related data. This action is irreversible!`,
+                type: "danger",
+                confirmText: "Hard Delete Now",
+                cancelText: "Cancel",
+                needsInput: true,
+                inputPlaceholder: `Type "${deleteCode}" to confirm`,
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        await pgAPI.hardDelete(id);
+                        await fetchPGs();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        setConfirmInput("");
+                        setConfirmTargetCode("");
+                        Alert.alert("Success", "Property deleted permanently");
+                    } catch (error: any) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", error.message || "Failed to delete property");
+                    }
                 }
-            }
-        });
+            });
+        } catch (error: any) {
+            setLoading(false);
+            Alert.alert("Error", error.message || "Something went wrong during deletion check");
+        }
     };
 
     const PropertyCard = ({ item }: { item: any }) => {
@@ -401,7 +429,11 @@ const PGsScreen = ({ navigation }: any) => {
 
             <ConfirmationModal
                 visible={confirmState.visible}
-                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
+                onClose={() => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    setConfirmInput("");
+                    setConfirmTargetCode("");
+                }}
                 onConfirm={confirmState.onConfirm}
                 title={confirmState.title}
                 message={confirmState.message}
@@ -410,6 +442,12 @@ const PGsScreen = ({ navigation }: any) => {
                 cancelText={confirmState.cancelText}
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
+                needsInput={confirmState.needsInput}
+                inputPlaceholder={confirmState.inputPlaceholder}
+                inputValue={confirmInput}
+                onInputChange={(val) => setConfirmInput(val)}
+                confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
+                disableOutsideTap={confirmState.type === "danger"}
             />
         </SafeAreaView>
     );
@@ -423,7 +461,7 @@ const createStyles = (COLORS: ThemePalette) =>
         header: { padding: 20, paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
         title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
         subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-        syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border },
+        syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border, marginRight: -4 },
 
         tabBar: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
         tab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },

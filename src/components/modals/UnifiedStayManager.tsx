@@ -11,6 +11,7 @@ import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI, roomAPI, bedAPI, tenantAPI, paymentAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
+import { MaterialCommunityIcons } from "@expo/vector-icons";
 
 const PROFESSION_OPTIONS = [
     "Software Engineer", "IT Professional", "Student", "Business Owner",
@@ -39,7 +40,7 @@ const onboardingSchema = z.object({
     joinedDate: z.string().min(1, "Joined Date is required"),
     vacateDate: z.string().optional().or(z.literal("")),
     rentPaymentType: z.enum(["FIXED_FIRST_DAY", "JOIN_DATE_BASED"]),
-    rentAmount: z.coerce.number().min(0),
+    rentAmount: z.preprocess((val) => (val === "" || val === undefined || val === null ? -1 : Number(val)), z.number().min(0, "Rent amount is required")),
     securityDeposit: z.coerce.number().min(0).default(0),
     maintenanceAmount: z.coerce.number().min(0).default(0),
     maintenanceType: z.string().nullable().optional(),
@@ -83,6 +84,16 @@ const onboardingSchema = z.object({
             path: ["vacateDate"],
         });
     }
+
+    if (data.stayType === "DAILY" && data.vacateDate && data.joinedDate) {
+        if (new Date(data.vacateDate) < new Date(data.joinedDate)) {
+            ctx.addIssue({
+                code: z.ZodIssueCode.custom,
+                message: "Vacate date cannot be before join date",
+                path: ["vacateDate"],
+            });
+        }
+    }
 });
 
 type OnboardingFormData = z.infer<typeof onboardingSchema>;
@@ -93,6 +104,32 @@ interface UnifiedStayManagerProps {
     onSuccess: () => void;
     editingTenant?: any;
 }
+
+const DEFAULT_VALUES: OnboardingFormData = {
+    fullName: "",
+    email: "",
+    phone: "",
+    gender: "MALE",
+    dob: "",
+    profession: "",
+    guardianName: "",
+    guardianPhone: "",
+    idType: "AADHAR",
+    idNumber: "",
+    pgId: "",
+    roomId: "",
+    bedId: "",
+    stayType: "MONTHLY",
+    joinedDate: new Date().toISOString().split('T')[0],
+    vacateDate: "",
+    rentPaymentType: "FIXED_FIRST_DAY",
+    rentAmount: "" as any,
+    securityDeposit: 0,
+    maintenanceAmount: 0,
+    maintenanceType: null,
+    paidAmount: 0,
+    paymentMethod: "CASH",
+};
 
 const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClose, onSuccess, editingTenant }) => {
     const COLORS = useThemePalette();
@@ -124,36 +161,17 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
     const { control, handleSubmit, reset, watch, setValue, trigger, formState: { errors } } = useForm<OnboardingFormData>({
         resolver: zodResolver(onboardingSchema) as any,
         mode: "all",
-        defaultValues: {
-            fullName: "",
-            email: "",
-            phone: "",
-            gender: "MALE",
-            dob: "",
-            profession: "",
-            guardianName: "",
-            guardianPhone: "",
-            idType: "AADHAR",
-            idNumber: "",
-            pgId: "",
-            roomId: "",
-            bedId: "",
-            stayType: "MONTHLY",
-            joinedDate: new Date().toISOString().split('T')[0],
-            vacateDate: "",
-            rentPaymentType: "FIXED_FIRST_DAY",
-            rentAmount: 0,
-            securityDeposit: 0,
-            maintenanceAmount: 0,
-            maintenanceType: null,
-            paidAmount: 0,
-            paymentMethod: "CASH",
-        }
+        defaultValues: DEFAULT_VALUES
     });
 
     const watchPgId = watch("pgId");
     const watchRoomId = watch("roomId");
     const watchStayType = watch("stayType");
+    const watchRentAmount = watch("rentAmount");
+    const watchMaintenanceAmount = watch("maintenanceAmount");
+    const watchJoinedDate = watch("joinedDate");
+    const watchVacateDate = watch("vacateDate");
+    const watchSecurityDeposit = watch("securityDeposit");
 
     // Data fetching
     useEffect(() => {
@@ -165,7 +183,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             fetchPgs();
 
             if (editingTenant) {
-                // Map database fields to form fields
+                const daily = editingTenant.daily_stay_details?.[0] || editingTenant.daily_stay_details;
                 reset({
                     fullName: editingTenant.full_name,
                     email: editingTenant.email || "",
@@ -182,17 +200,21 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     bedId: editingTenant.bed_id,
                     stayType: editingTenant.stay_type,
                     joinedDate: editingTenant.move_in_date,
-                    vacateDate: editingTenant.vacate_date || "",
+                    vacateDate: editingTenant.vacate_date || daily?.vacate_date || "",
                     rentPaymentType: editingTenant.rent_cycle || "FIXED_FIRST_DAY",
-                    rentAmount: editingTenant.custom_rent || editingTenant.rent_per_month || editingTenant.rent_per_day || 0,
+                    rentAmount: editingTenant.stay_type === "DAILY"
+                        ? (daily?.rent_per_day || editingTenant.rent_per_day || 0)
+                        : (editingTenant.custom_rent || editingTenant.rent_per_month || editingTenant.rooms?.rent || 0),
                     securityDeposit: editingTenant.security_deposit || 0,
-                    maintenanceAmount: editingTenant.maintenance_amount || 0,
-                    maintenanceType: editingTenant.maintenance_type || null,
-                    paidAmount: 0, // Reset payment for editing
+                    maintenanceAmount: editingTenant.maintenance_amount || daily?.maintenance_amount || 0,
+                    maintenanceType: editingTenant.maintenance_type || daily?.maintenance_type || null,
+                    paidAmount: 0,
                     paymentMethod: "CASH",
                 });
             } else {
-                reset();
+                reset(DEFAULT_VALUES);
+                setRooms([]);
+                setBeds([]);
                 setCurrentStep(1);
             }
         }
@@ -212,14 +234,17 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 const roomsData = (data as any) || [];
                 setRooms(roomsData);
 
-                // Check for ANY available beds in the entire PG
-                const { count, error } = await supabase
+                // Check for ANY available beds in the entire PG and ignore inactive/maintenance rooms
+                const { data: availableBedsInPg, error } = await supabase
                     .from("beds")
-                    .select("id", { count: "exact", head: true })
-                    .eq("pg_id", watchPgId)
+                    .select("id, rooms!inner(pg_id, status)")
+                    .eq("rooms.pg_id", watchPgId)
+                    .neq("rooms.status", "INACTIVE")
+                    .neq("rooms.status", "MAINTENANCE")
                     .eq("status", "AVAILABLE");
 
-                if (!error && count === 0 && !editingTenant) {
+                // If no available beds found, show warning (unless we are editing)
+                if (!error && (!availableBedsInPg || availableBedsInPg.length === 0) && !editingTenant) {
                     setConfirmState({
                         visible: true,
                         title: "Property Full",
@@ -273,9 +298,9 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             };
             fetchBeds();
 
-            // Auto-fill rent/maintenance from room info
+            // Auto-fill rent/maintenance from room info ONLY for monthly
             const room = rooms.find(r => r.id === watchRoomId);
-            if (room && watchStayType === "MONTHLY") {
+            if (room && watchStayType === "MONTHLY" && !editingTenant) {
                 setValue("rentAmount", Number(room.rent || 0));
             }
         } else {
@@ -283,18 +308,27 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
         }
     }, [watchRoomId, watchStayType]); // rent relies on both room and stayType
 
+    // Handle Stay Type switching
     useEffect(() => {
         if (watchStayType === "DAILY") {
-            setValue("maintenanceAmount", 0);
-            setValue("securityDeposit", 0);
             setValue("rentPaymentType", "JOIN_DATE_BASED");
-        } else if (watchStayType === "MONTHLY" && watchPgId) {
+            if (!editingTenant) {
+                setValue("rentAmount", "" as any);
+                setValue("maintenanceAmount", 0);
+                setValue("maintenanceType", "");
+                setValue("securityDeposit", 0);
+            }
+        } else if (watchStayType === "MONTHLY" && watchPgId && !editingTenant) {
             const pg = pgs.find(p => p.id === watchPgId);
             if (pg) {
                 setValue("maintenanceAmount", pg.maintenance_amount || 0);
-                setValue("maintenanceType", pg.maintenance_type);
+                setValue("maintenanceType", pg.maintenance_type || "");
                 setValue("securityDeposit", pg.security_deposit || 0);
                 setValue("rentPaymentType", "FIXED_FIRST_DAY");
+            }
+            const room = rooms.find(r => r.id === watchRoomId);
+            if (room) {
+                setValue("rentAmount", Number(room.rent || 0));
             }
         }
     }, [watchStayType, watchPgId, pgs]);
@@ -402,8 +436,11 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 owner_id: user?.id
             };
 
-            // Only set balance for new onboards, don't override on edit
-            if (!editingTenant) {
+            // Calculate balance for daily stays or if rent changed
+            if (data.stayType === "DAILY") {
+                payload.balance = initialBalance;
+                payload.balance_amount = initialBalance;
+            } else if (!editingTenant) {
                 payload.balance = initialBalance;
             }
 
@@ -725,7 +762,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 control={control}
                                 name="rentAmount"
                                 render={({ field: { onChange, value } }) => (
-                                    <FormField label="Rent Amount *" placeholder="0" value={value !== undefined ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? 0 : Number(t))} error={errors.rentAmount?.message} keyboardType="numeric" />
+                                    <FormField label={watchStayType === "DAILY" ? "Rent Per Day *" : "Rent Amount *"} placeholder="0" value={value !== undefined && value !== -1 ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? "" : Number(t))} error={errors.rentAmount?.message} keyboardType="numeric" />
                                 )}
                             />
                         </View>
@@ -739,6 +776,117 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                             />
                         </View>
                     </View>
+
+                    <View style={styles.row}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                            <Controller
+                                control={control}
+                                name="maintenanceAmount"
+                                render={({ field: { onChange, value } }) => (
+                                    <FormField label="Maintenance Charge" placeholder="0" value={value !== undefined ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? 0 : Number(t))} error={errors.maintenanceAmount?.message} keyboardType="numeric" />
+                                )}
+                            />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                            <Controller
+                                control={control}
+                                name="maintenanceType"
+                                render={({ field: { onChange, value } }) => (
+                                    <DropdownSelector
+                                        label="Type"
+                                        options={[
+                                            { label: "No Maintenance", value: "" },
+                                            { label: "One Time", value: "one_time" },
+                                            { label: "Monthly", value: "monthly" }
+                                        ]}
+                                        value={value || ""}
+                                        onChange={onChange}
+                                    />
+                                )}
+                            />
+                        </View>
+                    </View>
+                    {watchStayType === 'DAILY' && watchJoinedDate && watchVacateDate && Number(watchRentAmount) >= 0 && (
+                        <View style={[styles.estimateCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
+                            <View style={styles.estimateHeader}>
+                                <Text style={[styles.estimateLabel, { color: COLORS.textMuted }]}>TOTAL STAY RENT</Text>
+                                <View style={[styles.dayRangeBadge, { backgroundColor: COLORS.primary + "10" }]}>
+                                    <Text style={[styles.dayRangeText, { color: COLORS.primary }]}>
+                                        {new Date(watchJoinedDate).toLocaleDateString([], { day: 'numeric', month: 'short' })} → {new Date(watchVacateDate).toLocaleDateString([], { day: 'numeric', month: 'short' })}
+                                        {(() => {
+                                            const start = new Date(watchJoinedDate);
+                                            const end = new Date(watchVacateDate);
+                                            const diff = end.getTime() - start.getTime();
+                                            const diffDays = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
+                                            return ` (${diffDays} Days)`;
+                                        })()}
+                                    </Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.estimateBody}>
+                                <Text style={[styles.estimateValue, { color: COLORS.text }]}>
+                                    ₹{(() => {
+                                        const start = new Date(watchJoinedDate);
+                                        const end = new Date(watchVacateDate);
+                                        const diff = end.getTime() - start.getTime();
+                                        const diffDays = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
+                                        const total = (diffDays * Number(watchRentAmount || 0)) + Number(watchMaintenanceAmount || 0);
+                                        return total.toLocaleString();
+                                    })()}
+                                </Text>
+                                <View style={{ flex: 1, gap: 2, paddingLeft: 8 }}>
+                                    <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
+                                        (₹{Number(watchRentAmount || 0).toLocaleString()} × {(() => {
+                                            const start = new Date(watchJoinedDate);
+                                            const end = new Date(watchVacateDate);
+                                            const diff = end.getTime() - start.getTime();
+                                            return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24))) + 1;
+                                        })()} days)
+                                    </Text>
+                                    {Number(watchMaintenanceAmount || 0) > 0 && (
+                                        <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted, fontSize: 10 }]}>
+                                            + ₹{Number(watchMaintenanceAmount).toLocaleString()} fees
+                                        </Text>
+                                    )}
+                                </View>
+                            </View>
+                        </View>
+                    )}
+
+                    {watchStayType === 'MONTHLY' && Number(watchRentAmount) >= 0 && (
+                        <View style={[styles.estimateCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
+                            <View style={styles.estimateHeader}>
+                                <Text style={[styles.estimateLabel, { color: COLORS.textMuted }]}>TOTAL JOINING AMOUNT</Text>
+                                <View style={[styles.dayRangeBadge, { backgroundColor: COLORS.success + "10" }]}>
+                                    <Text style={[styles.dayRangeText, { color: COLORS.success }]}>Monthly Stay</Text>
+                                </View>
+                            </View>
+
+                            <View style={styles.estimateBody}>
+                                <Text style={[styles.estimateValue, { color: COLORS.text }]}>
+                                    ₹{(Number(watchRentAmount || 0) + Number(watchSecurityDeposit || 0) + Number(watchMaintenanceAmount || 0)).toLocaleString()}
+                                </Text>
+                                <View style={{ flex: 1, gap: 2, paddingLeft: 8 }}>
+                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
+                                        <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
+                                            ₹{Number(watchRentAmount || 0).toLocaleString()} Rent
+                                        </Text>
+                                        {Number(watchSecurityDeposit || 0) > 0 && (
+                                            <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
+                                                + ₹{Number(watchSecurityDeposit).toLocaleString()} Deposit
+                                            </Text>
+                                        )}
+                                    </View>
+                                    {Number(watchMaintenanceAmount || 0) > 0 && (
+                                        <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted, fontSize: 10 }]}>
+                                            + ₹{Number(watchMaintenanceAmount).toLocaleString()} Maintenance
+                                        </Text>
+                                    )}
+                                </View>
+                            </View>
+                        </View>
+                    )}
                 </View>
 
                 <View style={[styles.section, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}>
@@ -818,6 +966,48 @@ const styles = StyleSheet.create({
     backText: {
         fontSize: 14,
         fontWeight: "700",
+    },
+    estimateCard: {
+        marginTop: 12,
+        padding: 16,
+        borderRadius: 20,
+        borderWidth: 1,
+        borderStyle: 'dashed',
+    },
+    estimateHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    estimateLabel: {
+        fontSize: 10,
+        fontWeight: '900',
+        letterSpacing: 1,
+    },
+    dayRangeBadge: {
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        paddingHorizontal: 8,
+        paddingVertical: 4,
+        borderRadius: 8,
+    },
+    dayRangeText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: 'rgba(255,255,255,0.6)',
+    },
+    estimateBody: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+        gap: 8,
+    },
+    estimateValue: {
+        fontSize: 28,
+        fontWeight: '900',
+    },
+    estimateBreakdown: {
+        fontSize: 12,
+        fontWeight: '600',
     },
 });
 

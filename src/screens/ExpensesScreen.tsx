@@ -9,6 +9,7 @@ import {
     ActivityIndicator,
     RefreshControl,
     Dimensions,
+    Alert,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { expenseAPI, pgAPI } from "../services/api";
@@ -18,6 +19,7 @@ import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import ExpenseFormModal from "../components/modals/ExpenseFormModal";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const { width } = Dimensions.get("window");
 
@@ -26,7 +28,7 @@ const DEFAULT_EXPENSE_FILTERS = { category: "ALL", propertyId: "ALL" };
 
 const ExpensesScreen = () => {
     const COLORS = useThemePalette();
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [expenses, setExpenses] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
@@ -47,6 +49,23 @@ const ExpensesScreen = () => {
     const [isModalVisible, setModalVisible] = useState(false);
     const [editingExpense, setEditingExpense] = useState<any>(null);
 
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
+
     const handleAddExpense = () => {
         setEditingExpense(null);
         setModalVisible(true);
@@ -62,8 +81,31 @@ const ExpensesScreen = () => {
         return () => clearTimeout(timer);
     }, [searchTerm]);
 
+    const handleDeleteExpense = (expense: any) => {
+        setConfirmState({
+            visible: true,
+            title: "Delete Expense?",
+            message: `Are you sure you want to delete this expense record for "${expense.title || expense.description}" (₹${Number(expense.amount).toLocaleString()})?`,
+            type: "danger",
+            confirmText: "Yes, Delete",
+            cancelText: "Cancel",
+            onConfirm: async () => {
+                try {
+                    setConfirmState(prev => ({ ...prev, loading: true }));
+                    await expenseAPI.delete(expense.id);
+                    await loadExpenses(1, false);
+                    setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                    Alert.alert("Success", "Expense deleted successfully");
+                } catch (error: any) {
+                    setConfirmState(prev => ({ ...prev, loading: false }));
+                    Alert.alert("Error", error.message || "Failed to delete expense");
+                }
+            }
+        });
+    };
+
     const loadExpenses = useCallback(async (pageNum = 1, shouldAppend = false) => {
-        if (loadingMore || (loading && pageNum === 1)) return;
+        if (loading || loadingMore) return;
 
         try {
             if (pageNum === 1) setLoading(true);
@@ -194,7 +236,7 @@ const ExpensesScreen = () => {
                     <Feather name="edit-2" size={14} color={COLORS.primary} />
                     <Text style={styles.actionButtonText}>Edit</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton}>
+                <TouchableOpacity style={styles.actionButton} onPress={() => handleDeleteExpense(item)}>
                     <Feather name="trash-2" size={14} color={COLORS.danger} />
                     <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>Delete</Text>
                 </TouchableOpacity>
@@ -326,6 +368,20 @@ const ExpensesScreen = () => {
                     setModalVisible(false);
                 }}
                 editingExpense={editingExpense}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
+                disableOutsideTap={confirmState.type === "danger"}
             />
         </SafeAreaView>
     );

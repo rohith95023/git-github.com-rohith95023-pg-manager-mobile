@@ -85,12 +85,25 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                         <View style={[styles.statusIndicator, { backgroundColor: getStatusColor(tenant.status) }]} />
                     </View>
                     <Text style={styles.profileName}>{tenant.full_name}</Text>
-                    <View style={[styles.profileStatusBadge, { backgroundColor: getStatusColor(tenant.status) + "20" }]}>
-                        <Text style={[styles.profileStatusText, { color: getStatusColor(tenant.status) }]}>{tenant.status}</Text>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 4 }}>
+                        <View style={[styles.profileStatusBadge, { backgroundColor: getStatusColor(tenant.status) + "20", marginBottom: 0 }]}>
+                            <Text style={[styles.profileStatusText, { color: getStatusColor(tenant.status) }]}>{tenant.status}</Text>
+                        </View>
+                        {tenant.stay_type === 'DAILY' && (
+                            <View style={[styles.profileStatusBadge, { backgroundColor: COLORS.warning + "20", marginBottom: 0 }]}>
+                                <Text style={[styles.profileStatusText, { color: COLORS.warning }]}>DAILY</Text>
+                            </View>
+                        )}
                     </View>
+
                     <Text style={styles.enrollmentDate}>
                         Enrolled: {new Date(tenant.move_in_date || tenant.created_at).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
                     </Text>
+                    {tenant.stay_type === 'DAILY' && tenant.vacate_date && (
+                        <Text style={[styles.enrollmentDate, { color: COLORS.warning, marginTop: 4 }]}>
+                            Checkout: {new Date(tenant.vacate_date).toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' })}
+                        </Text>
+                    )}
                 </View>
 
                 {/* Contact Directory */}
@@ -178,11 +191,39 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                 <DetailCard title="Financial Status" icon="credit-card" color={COLORS.danger}>
                     <View style={styles.financeItem}>
                         <View>
-                            <Text style={styles.financeLabel}>Monthly Rent</Text>
-                            <Text style={styles.financeSubLabel}>Standard monthly lease</Text>
+                            <Text style={styles.financeLabel}>{tenant.stay_type === 'DAILY' ? 'Rent (Per Day)' : 'Monthly Rent'}</Text>
+                            <Text style={styles.financeSubLabel}>{tenant.stay_type === 'DAILY' ? 'Daily accommodation fee' : 'Standard monthly lease'}</Text>
                         </View>
-                        <Text style={[styles.financeValue, { color: COLORS.text }]}>₹{Number(tenant.rent_per_month || tenant.rent || tenant.rooms?.rent || 0).toLocaleString()}</Text>
+                        <Text style={[styles.financeValue, { color: COLORS.text }]}>₹{Number(tenant.rent_per_day || tenant.rent_per_month || tenant.rent || tenant.rooms?.rent || 0).toLocaleString()}</Text>
                     </View>
+                    {tenant.stay_type === 'DAILY' && (
+                        <View style={styles.financeItem}>
+                            <View>
+                                <Text style={styles.financeLabel}>Total Estimated Rent</Text>
+                                <Text style={styles.financeSubLabel}>Based on stay duration</Text>
+                            </View>
+                            <Text style={[styles.financeValue, { color: COLORS.success }]}>
+                                ₹{(() => {
+                                    const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
+                                    const moveIn = tenant.move_in_date || daily?.move_in_date;
+                                    const vacate = tenant.vacate_date || daily?.vacate_date;
+                                    const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
+                                    const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
+
+                                    if (moveIn && vacate) {
+                                        const start = new Date(moveIn);
+                                        const end = new Date(vacate);
+                                        let diffDays = 1;
+                                        if (end > start) {
+                                            diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                        }
+                                        return (diffDays * Number(rentPerDay)) + Number(maintenance);
+                                    }
+                                    return Number(tenant.total_rent || daily?.total_rent || 0);
+                                })().toLocaleString()}
+                            </Text>
+                        </View>
+                    )}
                     <View style={styles.financeItem}>
                         <View>
                             <Text style={styles.financeLabel}>Balance Due</Text>

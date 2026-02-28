@@ -213,6 +213,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
                                 value={value || ""}
                                 onChange={onChange}
                                 placeholder="Select PG"
+                                error={errors.pg_id?.message}
                             />
                         )}
                     />

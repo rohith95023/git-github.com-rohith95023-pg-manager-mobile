@@ -21,6 +21,7 @@ import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import { supabase } from "../lib/supabaseClient";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
+import { generateDeleteCode } from "../utils/security";
 
 const { width, height } = Dimensions.get("window");
 
@@ -58,7 +59,7 @@ const createDefaultTenantFilters = () => ({
 const TenantsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
 
     const [tenants, setTenants] = useState<any[]>([]);
@@ -87,12 +88,20 @@ const TenantsScreen = ({ navigation }: any) => {
         singleButton?: boolean;
         loading?: boolean;
         onClose?: () => void;
+        needsInput?: boolean;
+        inputPlaceholder?: string;
+        secondaryText?: string;
+        onSecondary?: () => void;
     }>({
         visible: false,
         title: "",
         message: "",
         type: "info"
     });
+
+    const [confirmInput, setConfirmInput] = useState("");
+    const [confirmTargetCode, setConfirmTargetCode] = useState("");
+    const [selectedTenantIds, setSelectedTenantIds] = useState<string[]>([]);
 
     // Onboarding Modal State
     const [isOnboardingVisible, setOnboardingVisible] = useState(false);
@@ -119,18 +128,29 @@ const TenantsScreen = ({ navigation }: any) => {
                 message: "Cannot delete tenant with pending dues.",
                 type: "danger",
                 singleButton: true,
-                cancelText: "Close"
+                confirmText: "Close",
+                secondaryText: "Pay Due",
+                onSecondary: () => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    navigation.navigate("Finance", { tenantId: tenant.id });
+                }
             });
             return;
         }
 
+        const deleteCode = generateDeleteCode();
+        setConfirmTargetCode(deleteCode);
+        setConfirmInput("");
+
         setConfirmState({
             visible: true,
-            title: "Delete Resident?",
-            message: `Are you sure you want to delete ${tenant.full_name}? This action cannot be undone.`,
+            title: "Delete Resident Permanently?",
+            message: `You are about to PERMANENTLY delete ${tenant.full_name} and free their bed. This action is irreversible.`,
             type: "danger",
-            confirmText: "Yes, Delete",
+            confirmText: "Yes, Delete Resident",
             cancelText: "Cancel",
+            needsInput: true,
+            inputPlaceholder: `Type "${deleteCode}" to confirm`,
             onConfirm: async () => {
                 try {
                     setConfirmState(prev => ({ ...prev, loading: true }));
@@ -179,7 +199,7 @@ const TenantsScreen = ({ navigation }: any) => {
     }, [searchTerm]);
 
     const loadTenants = useCallback(async (pageNum = 1, shouldAppend = false) => {
-        if (loadingMore || (loading && pageNum === 1)) return;
+        if (loading || loadingMore) return;
 
         if (pageNum === 1) setLoading(true);
         else setLoadingMore(true);
@@ -222,7 +242,7 @@ const TenantsScreen = ({ navigation }: any) => {
             setLoadingMore(false);
             setRefreshing(false);
         }
-    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore]);
+    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore, tenantAPI, pgAPI]);
 
     // Reset pagination when search or filters change
     useEffect(() => {
@@ -312,8 +332,158 @@ const TenantsScreen = ({ navigation }: any) => {
         }
     };
 
+    const getTenantBalance = (tenant: any) => {
+        if (tenant.stay_type === 'DAILY') {
+            const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details?.[0] : tenant.daily_stay_details;
+            const moveIn = tenant.move_in_date || daily?.move_in_date;
+            const vacate = tenant.vacate_date || daily?.vacate_date;
+            const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
+            const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
+
+            if (moveIn && vacate) {
+                const start = new Date(moveIn);
+                const end = new Date(vacate);
+                let diffDays = 1;
+                if (end > start) {
+                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                }
+                const totalRent = (diffDays * Number(rentPerDay)) + Number(maintenance);
+                const paid = Number(daily?.paid_amount || tenant.paid_amount || 0);
+                return Math.max(0, totalRent - paid);
+            }
+            return Number(daily?.balance_amount || tenant.balance_amount || tenant.balance || 0);
+        }
+        return Number(tenant.balance || 0);
+    };
+
+    const getTenantTotalRent = (tenant: any) => {
+        if (tenant.stay_type === 'DAILY') {
+            const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details?.[0] : tenant.daily_stay_details;
+            const moveIn = tenant.move_in_date || daily?.move_in_date;
+            const vacate = tenant.vacate_date || daily?.vacate_date;
+            const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
+            const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
+
+            if (moveIn && vacate) {
+                const start = new Date(moveIn);
+                const end = new Date(vacate);
+                let diffDays = 1;
+                if (end > start) {
+                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                }
+                return (diffDays * Number(rentPerDay)) + Number(maintenance);
+            }
+            return Number(tenant.total_rent || daily?.total_rent || 0);
+        }
+        return Number(tenant.custom_rent || tenant.rent_per_month || tenant.rooms?.rent || 0);
+    };
+
+    const getDailyStayInfo = (tenant: any) => {
+        if (tenant.stay_type !== 'DAILY') return null;
+        const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
+        const vacateDateStr = tenant.vacate_date || daily?.vacate_date;
+        if (!vacateDateStr) return null;
+
+        const vacateDate = new Date(vacateDateStr);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+
+        const diffTime = vacateDate.getTime() - today.getTime();
+        const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+        return {
+            dateStr: vacateDate.toLocaleDateString([], { month: 'short', day: 'numeric' }),
+            daysLeft: diffDays
+        };
+    };
+
+    const handleBulkDelete = () => {
+        if (selectedTenantIds.length === 0) return;
+
+        const deleteCode = Math.floor(1000 + Math.random() * 9000).toString();
+        setConfirmTargetCode(deleteCode);
+        setConfirmInput("");
+
+        setConfirmState({
+            visible: true,
+            title: "Bulk Delete Residents?",
+            message: `You are about to PERMANENTLY delete ${selectedTenantIds.length} residents and free their beds. This action is irreversible.\nNote: Only residents with no dues can be bulk deleted.`,
+            type: "danger",
+            confirmText: "Yes, Delete Selected",
+            cancelText: "Cancel",
+            needsInput: true,
+            inputPlaceholder: `Type "${deleteCode}" to confirm`,
+            onConfirm: async () => {
+                try {
+                    setConfirmState(prev => ({ ...prev, loading: true }));
+
+                    const deletePromises = selectedTenantIds.map(async (tenantId) => {
+                        const tenant = tenants.find(t => t.id === tenantId);
+                        if (!tenant) return;
+                        if (tenant.bed_id) {
+                            await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
+                        }
+                        await tenantAPI.update(tenant.id, { status: "DELETED" });
+                        if (tenant.room_id) {
+                            await roomAPI.recalculateOccupancy(tenant.room_id);
+                        }
+                    });
+
+                    await Promise.all(deletePromises);
+
+                    setConfirmState({
+                        visible: true,
+                        title: "Success",
+                        message: "Selected residents deleted successfully.",
+                        type: "success",
+                        singleButton: true,
+                        cancelText: "Done",
+                        onClose: () => {
+                            setConfirmState(prev => ({ ...prev, visible: false }));
+                            setSelectedTenantIds([]);
+                            onRefresh();
+                        }
+                    });
+                } catch (err: any) {
+                    console.error("Bulk delete error:", err);
+                    setConfirmState({
+                        visible: true,
+                        title: "Error",
+                        message: "Failed to delete selected residents. Please try again.",
+                        type: "danger",
+                        singleButton: true,
+                        cancelText: "Review",
+                        onClose: () => setConfirmState(prev => ({ ...prev, visible: false }))
+                    });
+                }
+            }
+        });
+    };
+
+    const eligibleTenants = filteredTenants.filter(t => getTenantBalance(t) <= 0);
+    const allEligibleSelected = eligibleTenants.length > 0 && eligibleTenants.every(t => selectedTenantIds.includes(t.id));
+
+    const toggleSelectAll = () => {
+        if (allEligibleSelected) {
+            setSelectedTenantIds(prev => prev.filter(id => !eligibleTenants.some(t => t.id === id)));
+        } else {
+            const newSelections = new Set([...selectedTenantIds, ...eligibleTenants.map(t => t.id)]);
+            setSelectedTenantIds(Array.from(newSelections));
+        }
+    };
+
+    const toggleTenantSelection = (id: string, balance: number) => {
+        if (balance > 0) return; // Cannot select tenants with dues
+        setSelectedTenantIds(prev =>
+            prev.includes(id) ? prev.filter(tid => tid !== id) : [...prev, id]
+        );
+    };
+
     const ResidentCard = ({ item }: { item: any }) => {
         const initials = (item.full_name || "U").split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
+        const balance = getTenantBalance(item);
+        const isDaily = item.stay_type === 'DAILY';
+        const stayInfo = isDaily ? getDailyStayInfo(item) : null;
 
         return (
             <TouchableOpacity
@@ -322,68 +492,126 @@ const TenantsScreen = ({ navigation }: any) => {
                 onPress={() => navigation.navigate("ResidentDetail", { tenant: item })}
             >
                 {/* Top Row: Avatar, Name, Status, Actions */}
-                <View style={styles.cardHeader}>
-                    <View style={[styles.avatar, { backgroundColor: COLORS.primary + "20" }]}>
-                        <Text style={[styles.avatarText, { color: COLORS.primary }]}>{initials}</Text>
+                <View style={[styles.cardHeader, { alignItems: 'center' }]}>
+                    {balance <= 0 ? (
+                        <TouchableOpacity
+                            style={{ marginRight: 12, padding: 4 }}
+                            onPress={(e) => { e.stopPropagation(); toggleTenantSelection(item.id, balance); }}
+                        >
+                            <Feather name={selectedTenantIds.includes(item.id) ? "check-square" : "square"} size={22} color={selectedTenantIds.includes(item.id) ? COLORS.primary : COLORS.border} />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={{ marginRight: 12, padding: 4, opacity: 0.3 }}>
+                            <Feather name="square" size={22} color={COLORS.border} />
+                        </View>
+                    )}
+                    <View style={[styles.avatar, { backgroundColor: COLORS.primary + "10" }]}>
+                        {isDaily ? (
+                            <MaterialCommunityIcons name="clock-outline" size={24} color={COLORS.warning} />
+                        ) : (
+                            <Text style={[styles.avatarText, { color: COLORS.primary }]}>{initials}</Text>
+                        )}
                     </View>
                     <View style={styles.headerInfo}>
                         <View style={styles.nameRow}>
-                            <Text style={styles.name} numberOfLines={1}>{item.full_name}</Text>
-                            <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
-                                <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+                            <View style={{ flex: 1 }}>
+                                <Text style={styles.name} numberOfLines={1}>{item.full_name}</Text>
+                                {isDaily && balance > 0 && (
+                                    <View style={styles.dueBadge}>
+                                        <Text style={styles.dueBadgeText}>DUE: ₹{balance.toLocaleString()}</Text>
+                                    </View>
+                                )}
                             </View>
-                        </View>
-                        <View style={styles.actionsRow}>
-                            <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditTenant(item)}>
-                                <Feather name="edit-2" size={14} color={COLORS.textMuted} />
-                            </TouchableOpacity>
-                            <TouchableOpacity style={styles.actionBtn} onPress={() => handleDeleteTenant(item)}>
-                                <Feather name="trash-2" size={14} color={COLORS.danger} />
-                            </TouchableOpacity>
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                                {isDaily && (
+                                    <View style={[styles.stayBadge, { marginLeft: 0 }]}>
+                                        <Text style={styles.stayBadgeText}>DAILY</Text>
+                                    </View>
+                                )}
+                                <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
+                                    <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+                                </View>
+                            </View>
                         </View>
                     </View>
                 </View>
 
-                {/* Sub-Header: Phone, Profession */}
+                {/* Sub-Header: Phone, Profession, Actions */}
                 <View style={styles.subHeader}>
-                    <TouchableOpacity style={styles.phoneRow} onPress={() => Linking.openURL(`tel:${item.phone}`)}>
-                        <Feather name="phone" size={14} color={COLORS.primary} />
-                        <Text style={styles.phoneText}>{item.phone || "No Phone"}</Text>
-                    </TouchableOpacity>
-                    <View style={[styles.profBadge, { backgroundColor: "rgba(255,255,255,0.05)" }]}>
-                        <Text style={styles.profText}>{item.profession || "No Profession"}</Text>
+                    <View style={{ flex: 1, gap: 8 }}>
+                        <TouchableOpacity style={styles.phoneRow} onPress={() => Linking.openURL(`tel:${item.phone}`)}>
+                            <Feather name="phone" size={12} color={COLORS.primary} />
+                            <Text style={styles.phoneText}>{item.phone || "No Phone"}</Text>
+                        </TouchableOpacity>
+                        <View style={[styles.profBadge, { backgroundColor: "rgba(255,255,255,0.05)", alignSelf: 'flex-start' }]}>
+                            <Text style={styles.profText}>{item.profession || "No Profession"}</Text>
+                        </View>
+                    </View>
+                    <View style={styles.actionsRow}>
+                        {balance > 0 && (
+                            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.success + "15" }]} onPress={() => navigation.navigate("Finance", { tenantId: item.id })}>
+                                <MaterialCommunityIcons name="currency-inr" size={14} color={COLORS.success} />
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditTenant(item)}>
+                            <Feather name="edit-2" size={14} color={COLORS.primary} />
+                        </TouchableOpacity>
+                        <TouchableOpacity style={styles.actionBtn} onPress={() => handleDeleteTenant(item)}>
+                            <Feather name="trash-2" size={14} color={COLORS.danger} />
+                        </TouchableOpacity>
                     </View>
                 </View>
 
                 <View style={styles.divider} />
 
-                {/* Assignment Details */}
+                {/* Assignment & Financial Details */}
                 <View style={styles.detailsSection}>
-                    <View style={styles.detailRow}>
-                        <View style={styles.detailItem}>
-                            <Text style={styles.detailLabel}>PROPERTY</Text>
-                            <Text style={styles.detailValue} numberOfLines={1}>{item.pgs?.name || "N/A"}</Text>
-                        </View>
-                        <View style={styles.detailItem}>
-                            <Text style={styles.detailLabel}>ROOM / BED</Text>
-                            <Text style={styles.detailValue}>
-                                {item.rooms?.room_number || "N/A"}{item.beds?.bed_number ? ` • ${item.beds.bed_number}` : ""}
-                            </Text>
-                        </View>
+                    <View style={styles.assignmentColumn}>
+                        <Text style={styles.pgNameText}>{item.pgs?.name || "N/A"}</Text>
+                        <Text style={styles.roomBedText}>
+                            Room {item.rooms?.room_number || "N/A"}{item.beds?.bed_number ? ` - ${item.beds.bed_number}` : ""}
+                        </Text>
                     </View>
 
-                    <View style={[styles.detailRow, { marginTop: 12 }]}>
-                        <View style={styles.detailItem}>
-                            <Text style={styles.detailLabel}>MONTHLY RENT</Text>
-                            <Text style={[styles.detailValue, { color: COLORS.success }]}>₹{Number(item.rent || 0).toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.detailItem}>
-                            <Text style={styles.detailLabel}>MAINTENANCE</Text>
-                            <Text style={styles.detailValue}>
-                                ₹{Number(item.maintenance_amount || 0).toLocaleString()}
-                                <Text style={{ fontSize: 9, color: COLORS.textMuted }}> ({item.maintenance_type || "ONE_TIME"})</Text>
+                    <View style={styles.financialList}>
+                        <View style={styles.finDetailRow}>
+                            <Text style={styles.finDetailLabel}>
+                                {isDaily ? 'RENT (TOTAL) : ' : 'RENT : '}
+                                <Text style={[styles.finDetailValue, isDaily && { color: COLORS.success }]}>
+                                    ₹{getTenantTotalRent(item).toLocaleString()}
+                                </Text>
                             </Text>
+                            {!isDaily && item.custom_rent && (
+                                <View style={styles.customBadge}>
+                                    <Text style={styles.customBadgeText}>CUSTOM</Text>
+                                </View>
+                            )}
                         </View>
+
+                        {stayInfo && (
+                            <View style={styles.finDetailRow}>
+                                <Text style={styles.finDetailLabel}>
+                                    Checkout : <Text style={styles.finDetailValue}>{stayInfo.dateStr}</Text>
+                                    <Text style={[styles.finDetailSubText, { color: stayInfo.daysLeft <= 1 ? COLORS.danger : COLORS.warning }]}>
+                                        {stayInfo.daysLeft > 0 ? ` (${stayInfo.daysLeft} days left)` : (stayInfo.daysLeft === 0 ? " (Today)" : " (Passed)")}
+                                    </Text>
+                                </Text>
+                            </View>
+                        )}
+
+                        {Number(item.maintenance_amount || 0) > 0 && (
+                            <View style={styles.finDetailRow}>
+                                <Text style={styles.finDetailLabel}>
+                                    + ₹{Number(item.maintenance_amount).toLocaleString()} MAINT
+                                    <Text style={styles.finDetailSubText}> ({item.maintenance_type || "ONE_TIME"})</Text>
+                                </Text>
+                                <View style={[styles.maintStatusBadge, item.maintenance_paid ? styles.maintPaidBadge : styles.maintUnpaidBadge]}>
+                                    <Text style={[styles.maintStatusText, { color: item.maintenance_paid ? COLORS.success : COLORS.danger }]}>
+                                        {item.maintenance_paid ? 'PAID' : 'PENDING'}
+                                    </Text>
+                                </View>
+                            </View>
+                        )}
                     </View>
                 </View>
 
@@ -406,12 +634,10 @@ const TenantsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Header */}
             <View style={styles.header}>
                 <Text style={styles.headerTitle}>Resident Directory</Text>
             </View>
 
-            {/* Content with FlatList */}
             <FlatList
                 data={filteredTenants}
                 keyExtractor={(item) => item.id}
@@ -429,7 +655,6 @@ const TenantsScreen = ({ navigation }: any) => {
                 }
                 ListHeaderComponent={
                     <View style={styles.topSection}>
-                        {/* Search Row */}
                         <View style={styles.searchRow}>
                             <View style={styles.searchBar}>
                                 <Feather name="search" size={18} color={COLORS.textMuted} />
@@ -461,24 +686,44 @@ const TenantsScreen = ({ navigation }: any) => {
                             </TouchableOpacity>
                         </View>
 
-                        {/* Filter Status Bar */}
                         <View style={styles.filterStatusRow}>
-                            <Text style={styles.countText}>
-                                {loading && page === 1 ? "Finding residents..." : `Found ${totalCount} residents`}
-                            </Text>
-                            {(filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && (
-                                <TouchableOpacity
-                                    onPress={() => {
-                                        const defaults = createDefaultTenantFilters();
-                                        setFilters(defaults);
-                                        setPendingFilters(defaults);
-                                    }}
-                                    style={styles.clearFiltersBtn}
-                                >
-                                    <Text style={styles.clearFiltersText}>Clear All</Text>
-                                    <Feather name="x" size={12} color={COLORS.danger} />
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                <TouchableOpacity style={{ padding: 4 }} onPress={toggleSelectAll}>
+                                    <Feather
+                                        name={allEligibleSelected ? "check-square" : "square"}
+                                        size={22}
+                                        color={allEligibleSelected ? COLORS.primary : COLORS.border}
+                                    />
                                 </TouchableOpacity>
-                            )}
+                                <Text style={styles.countText}>
+                                    {loading && page === 1 ? "Finding residents..." : `Found ${totalCount} residents`}
+                                </Text>
+                            </View>
+
+                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                                {selectedTenantIds.length > 0 && (
+                                    <TouchableOpacity
+                                        onPress={handleBulkDelete}
+                                        style={[styles.clearFiltersBtn, { backgroundColor: COLORS.danger + '15', borderColor: 'transparent' }]}
+                                    >
+                                        <Text style={[styles.clearFiltersText, { color: COLORS.danger, fontWeight: '700' }]}>Delete ({selectedTenantIds.length})</Text>
+                                        <Feather name="trash-2" size={14} color={COLORS.danger} />
+                                    </TouchableOpacity>
+                                )}
+                                {(filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && (
+                                    <TouchableOpacity
+                                        onPress={() => {
+                                            const defaults = createDefaultTenantFilters();
+                                            setFilters(defaults);
+                                            setPendingFilters(defaults);
+                                        }}
+                                        style={styles.clearFiltersBtn}
+                                    >
+                                        <Text style={styles.clearFiltersText}>Clear All</Text>
+                                        <Feather name="x" size={12} color={COLORS.danger} />
+                                    </TouchableOpacity>
+                                )}
+                            </View>
                         </View>
                     </View>
                 }
@@ -595,7 +840,6 @@ const TenantsScreen = ({ navigation }: any) => {
                 />
             </FilterBottomSheet>
 
-            {/* FAB */}
             <TouchableOpacity
                 style={styles.fab}
                 activeOpacity={0.8}
@@ -618,9 +862,11 @@ const TenantsScreen = ({ navigation }: any) => {
             <ConfirmationModal
                 visible={confirmState.visible}
                 onClose={() => {
-                    const callback = confirmState.onClose;
+                    const callback = (confirmState as any).onClose;
                     setConfirmState(prev => ({ ...prev, visible: false }));
                     if (callback) callback();
+                    setConfirmInput("");
+                    setConfirmTargetCode("");
                 }}
                 onConfirm={confirmState.onConfirm}
                 title={confirmState.title}
@@ -630,6 +876,14 @@ const TenantsScreen = ({ navigation }: any) => {
                 cancelText={confirmState.cancelText}
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
+                needsInput={confirmState.needsInput}
+                inputPlaceholder={confirmState.inputPlaceholder}
+                inputValue={confirmInput}
+                onInputChange={(val) => setConfirmInput(val)}
+                confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
+                disableOutsideTap={confirmState.type === "danger"}
+                secondaryText={confirmState.secondaryText}
+                onSecondary={confirmState.onSecondary}
             />
         </SafeAreaView>
     );
@@ -742,7 +996,31 @@ const createStyles = (COLORS: ThemePalette) =>
 
         divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
 
-        detailsSection: { gap: 12 },
+        detailsSection: { gap: 16 },
+        assignmentColumn: { gap: 4 },
+        pgNameText: { fontSize: 13, fontWeight: "700", color: COLORS.primary, letterSpacing: 0.5 },
+        roomBedText: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+
+        financialList: { gap: 8 },
+        finDetailRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+        finDetailLabel: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
+        finDetailValue: { color: COLORS.text, fontWeight: '800' },
+        finDetailSubText: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted },
+
+        stayBadge: { backgroundColor: COLORS.warning + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 },
+        stayBadgeText: { fontSize: 9, fontWeight: "900", color: COLORS.warning },
+
+        dueBadge: { backgroundColor: COLORS.danger + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' },
+        dueBadgeText: { fontSize: 9, fontWeight: "900", color: COLORS.danger },
+
+        customBadge: { backgroundColor: COLORS.success + "15", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+        customBadgeText: { fontSize: 8, fontWeight: "900", color: COLORS.success },
+
+        maintStatusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+        maintPaidBadge: { backgroundColor: COLORS.success + "15" },
+        maintUnpaidBadge: { backgroundColor: COLORS.danger + "15" },
+        maintStatusText: { fontSize: 8, fontWeight: "900" },
+
         detailRow: { flexDirection: "row", justifyContent: "space-between" },
         detailItem: { flex: 1 },
         detailLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4, letterSpacing: 0.5 },

@@ -53,7 +53,7 @@ const SmartTenantFinder = ({ navigation }: any) => {
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
-    const [loading, setLoading] = useState(true);
+    const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
@@ -73,7 +73,7 @@ const SmartTenantFinder = ({ navigation }: any) => {
     }, [searchTerm]);
 
     const fetchData = useCallback(async (pageNum = 1, shouldAppend = false) => {
-        if (loadingMore || (loading && pageNum === 1)) return;
+        if (loading || loadingMore) return;
 
         try {
             if (pageNum === 1) setLoading(true);

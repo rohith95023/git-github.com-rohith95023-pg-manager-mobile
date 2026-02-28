@@ -18,6 +18,7 @@ import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 
 import PGFormModal from "../components/modals/PGFormModal";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const { width } = Dimensions.get("window");
 
@@ -33,6 +34,23 @@ const PGsScreen = ({ navigation }: any) => {
     // Modal State
     const [modalVisible, setModalVisible] = useState(false);
     const [editingPg, setEditingPg] = useState<any>(null);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const fetchPGs = useCallback(async () => {
         try {
@@ -89,34 +107,38 @@ const PGsScreen = ({ navigation }: any) => {
             if (error) throw error;
 
             if (count && count > 0) {
-                Alert.alert(
-                    "Archive Blocked",
-                    `Cannot archive PG while ${count} active tenant(s) are assigned. Please move them out first.`
-                );
+                setConfirmState({
+                    visible: true,
+                    title: "Archive Blocked",
+                    message: `Cannot archive PG while ${count} active tenant(s) are assigned. Please move them out first.`,
+                    type: "danger",
+                    singleButton: true,
+                    cancelText: "Close"
+                });
                 return;
             }
 
-            Alert.alert(
-                "Archive Property",
-                `Are you sure you want to archive "${name}"? This will also archive all its rooms and beds.`,
-                [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                        text: "Archive",
-                        style: "default",
-                        onPress: async () => {
-                            try {
-                                const date = new Date().toLocaleDateString();
-                                await pgAPI.archive(id, date);
-                                fetchPGs();
-                                Alert.alert("Success", "Property archived successfully");
-                            } catch (error: any) {
-                                Alert.alert("Error", error.message || "Failed to archive property");
-                            }
-                        }
+            setConfirmState({
+                visible: true,
+                title: "Archive Property?",
+                message: `Are you sure you want to archive "${name}"? This will also archive all its rooms and beds. You can restore it later.`,
+                type: "warning",
+                confirmText: "Archive Now",
+                cancelText: "Cancel",
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        const date = new Date().toLocaleDateString();
+                        await pgAPI.archive(id, date);
+                        await fetchPGs();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        Alert.alert("Success", "Property archived successfully");
+                    } catch (error: any) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", error.message || "Failed to archive property");
                     }
-                ]
-            );
+                }
+            });
         } catch (error: any) {
             setLoading(false);
             console.error("Archive check error:", error);
@@ -130,33 +152,37 @@ const PGsScreen = ({ navigation }: any) => {
             const conflict = pgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
 
             if (conflict) {
-                Alert.alert(
-                    "Restore Blocked",
-                    `Cannot restore: An active property named "${restoredNameCandidate}" already exists.`
-                );
+                setConfirmState({
+                    visible: true,
+                    title: "Restore Blocked",
+                    message: `Cannot restore: An active property named "${restoredNameCandidate}" already exists.`,
+                    type: "danger",
+                    singleButton: true,
+                    cancelText: "Close"
+                });
                 return;
             }
 
-            Alert.alert(
-                "Restore Property",
-                `Are you sure you want to restore "${restoredNameCandidate}"?`,
-                [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                        text: "Restore",
-                        style: "default",
-                        onPress: async () => {
-                            try {
-                                await pgAPI.restore(id);
-                                fetchPGs();
-                                Alert.alert("Success", "Property restored successfully");
-                            } catch (error: any) {
-                                Alert.alert("Error", error.message || "Failed to restore property");
-                            }
-                        }
+            setConfirmState({
+                visible: true,
+                title: "Restore Property?",
+                message: `Are you sure you want to restore "${restoredNameCandidate}" to active status?`,
+                type: "success",
+                confirmText: "Restore Now",
+                cancelText: "Cancel",
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        await pgAPI.restore(id);
+                        await fetchPGs();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        Alert.alert("Success", "Property restored successfully");
+                    } catch (error: any) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", error.message || "Failed to restore property");
                     }
-                ]
-            );
+                }
+            });
         } catch (error: any) {
             Alert.alert("Error", "Failed to initiate restore: " + error.message);
         }
@@ -168,29 +194,26 @@ const PGsScreen = ({ navigation }: any) => {
             return;
         }
 
-        Alert.alert(
-            "Delete Property",
-            "This will PERMANENTLY delete this property and all its related data (Rooms, Beds, Payments). This cannot be undone.",
-            [
-                { text: "Cancel", style: "cancel" },
-                {
-                    text: "Hard Delete",
-                    style: "destructive",
-                    onPress: async () => {
-                        try {
-                            const cleanName = name.split(" (Archived")[0];
-                            // Using a simple code for prompt instead of custom modal in RN for now
-                            // but proceeding with API call
-                            await pgAPI.hardDelete(id);
-                            fetchPGs();
-                            Alert.alert("Success", "Property deleted permanently");
-                        } catch (error: any) {
-                            Alert.alert("Error", error.message || "Failed to delete property");
-                        }
-                    }
+        setConfirmState({
+            visible: true,
+            title: "Hard Delete Property?",
+            message: "This will PERMANENTLY delete this property and all its related data (Rooms, Beds, Payments). This action is irreversible!",
+            type: "danger",
+            confirmText: "Hard Delete",
+            cancelText: "Cancel",
+            onConfirm: async () => {
+                try {
+                    setConfirmState(prev => ({ ...prev, loading: true }));
+                    await pgAPI.hardDelete(id);
+                    await fetchPGs();
+                    setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                    Alert.alert("Success", "Property deleted permanently");
+                } catch (error: any) {
+                    setConfirmState(prev => ({ ...prev, loading: false }));
+                    Alert.alert("Error", error.message || "Failed to delete property");
                 }
-            ]
-        );
+            }
+        });
     };
 
     const PropertyCard = ({ item }: { item: any }) => {
@@ -374,6 +397,19 @@ const PGsScreen = ({ navigation }: any) => {
                 onClose={() => setModalVisible(false)}
                 onSuccess={fetchPGs}
                 editingPg={editingPg}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
             />
         </SafeAreaView>
     );

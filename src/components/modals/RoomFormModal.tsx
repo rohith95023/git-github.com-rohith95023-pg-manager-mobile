@@ -8,6 +8,7 @@ import FormModal from "../common/FormModal";
 import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
 import useThemePalette from "../../hooks/useThemePalette";
+import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI, roomAPI } from "../../services/api";
 
 const ROOM_TYPES = [
@@ -44,6 +45,24 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
     const COLORS = useThemePalette();
     const [loading, setLoading] = useState(false);
     const [pgs, setPgs] = useState<any[]>([]);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        onClose?: () => void;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const { control, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<RoomFormData>({
         resolver: zodResolver(roomSchema) as any,
@@ -143,15 +162,44 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
 
             if (editingRoom) {
                 await roomAPI.update(editingRoom.id, submissionData);
-                Alert.alert("Success", "Room updated successfully");
+                setConfirmState({
+                    visible: true,
+                    title: "Room Updated",
+                    message: "The room details have been saved successfully.",
+                    type: "success",
+                    singleButton: true,
+                    cancelText: "Great",
+                    onClose: () => {
+                        setConfirmState(prev => ({ ...prev, visible: false }));
+                        onSuccess();
+                        onClose();
+                    }
+                });
             } else {
                 await roomAPI.create(submissionData);
-                Alert.alert("Success", "Room created successfully. Beds generated.");
+                setConfirmState({
+                    visible: true,
+                    title: "Room Created",
+                    message: "New room and its beds have been generated successfully.",
+                    type: "success",
+                    singleButton: true,
+                    cancelText: "Awesome",
+                    onClose: () => {
+                        setConfirmState(prev => ({ ...prev, visible: false }));
+                        onSuccess();
+                        onClose();
+                    }
+                });
             }
-            onSuccess();
-            onClose();
         } catch (error: any) {
-            Alert.alert("Error", error.message || "Failed to save room");
+            setConfirmState({
+                visible: true,
+                title: "Error",
+                message: error.message || "Something went wrong while saving the room.",
+                type: "danger",
+                singleButton: true,
+                cancelText: "Retry"
+            });
         } finally {
             setLoading(false);
         }
@@ -299,6 +347,23 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                     AUTO: {watch("capacity") || 0} BEDS WILL BE GENERATED
                 </Text>
             </View>
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    const callback = confirmState.onClose;
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    if (callback) callback();
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
+            />
         </FormModal>
     );
 };

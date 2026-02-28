@@ -13,7 +13,8 @@ import {
     Linking
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { tenantAPI, pgAPI } from "../services/api";
+import { tenantAPI, pgAPI, roomAPI } from "../services/api";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
@@ -62,6 +63,10 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [totalCount, setTotalCount] = useState(0);
 
     const [searchTerm, setSearchTerm] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -71,6 +76,23 @@ const TenantsScreen = ({ navigation }: any) => {
     const [sheetFloorOptions, setSheetFloorOptions] = useState<any[]>([]);
     const [sheetRoomOptions, setSheetRoomOptions] = useState<any[]>([]);
     const [highlightProperty, setHighlightProperty] = useState(false);
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        onClose?: () => void;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     // Onboarding Modal State
     const [isOnboardingVisible, setOnboardingVisible] = useState(false);
@@ -86,18 +108,87 @@ const TenantsScreen = ({ navigation }: any) => {
         setOnboardingVisible(true);
     };
 
+    const handleDeleteTenant = async (tenant: any) => {
+        // 100% Logic Parity: Block if balance > 0
+        const balance = Number(tenant.balance || 0);
+
+        if (balance > 0) {
+            setConfirmState({
+                visible: true,
+                title: "Deletion Blocked",
+                message: "Cannot delete tenant with pending dues.",
+                type: "danger",
+                singleButton: true,
+                cancelText: "Close"
+            });
+            return;
+        }
+
+        setConfirmState({
+            visible: true,
+            title: "Delete Resident?",
+            message: `Are you sure you want to delete ${tenant.full_name}? This action cannot be undone.`,
+            type: "danger",
+            confirmText: "Yes, Delete",
+            cancelText: "Cancel",
+            onConfirm: async () => {
+                try {
+                    setConfirmState(prev => ({ ...prev, loading: true }));
+                    // 1. Free the bed
+                    if (tenant.bed_id) {
+                        await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
+                    }
+                    // 2. Perform soft delete
+                    await tenantAPI.update(tenant.id, { status: "DELETED" });
+                    // 3. Recalculate room occupancy
+                    if (tenant.room_id) {
+                        await roomAPI.recalculateOccupancy(tenant.room_id);
+                    }
+
+                    setConfirmState({
+                        visible: true,
+                        title: "Success",
+                        message: "Resident deleted successfully.",
+                        type: "success",
+                        singleButton: true,
+                        cancelText: "Done",
+                        onClose: () => {
+                            setConfirmState(prev => ({ ...prev, visible: false }));
+                            onRefresh();
+                        }
+                    });
+                } catch (err: any) {
+                    console.error("Delete error:", err);
+                    setConfirmState({
+                        visible: true,
+                        title: "Error",
+                        message: "Failed to delete resident. Please try again.",
+                        type: "danger",
+                        singleButton: true,
+                        cancelText: "Review",
+                        onClose: () => setConfirmState(prev => ({ ...prev, visible: false }))
+                    });
+                }
+            }
+        });
+    };
+
     useEffect(() => {
         const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
         return () => clearTimeout(timer);
     }, [searchTerm]);
 
-    const loadTenants = useCallback(async () => {
-        setLoading(true);
+    const loadTenants = useCallback(async (pageNum = 1, shouldAppend = false) => {
+        if (loadingMore || (loading && pageNum === 1)) return;
+
+        if (pageNum === 1) setLoading(true);
+        else setLoadingMore(true);
+
         try {
             const [tenantResponse, pgsData]: [any, any] = await Promise.all([
                 tenantAPI.search({
-                    page: 1,
-                    limit: 200,
+                    page: pageNum,
+                    limit: 10,
                     search: debouncedSearch,
                     status: filters.status,
                     profession: filters.profession,
@@ -107,20 +198,44 @@ const TenantsScreen = ({ navigation }: any) => {
                     sortBy: filters.sortBy,
                     sortOrder: filters.sortOrder,
                 }),
-                pgAPI.getAll()
+                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs)
             ]);
-            const tenantList = Array.isArray(tenantResponse)
-                ? tenantResponse
-                : tenantResponse?.data || [];
-            setTenants(tenantList);
-            setPgs(Array.isArray(pgsData) ? pgsData : []);
+
+            const tenantList = tenantResponse?.data || [];
+            const count = tenantResponse?.count || 0;
+
+            if (shouldAppend) {
+                setTenants(prev => [...prev, ...tenantList]);
+            } else {
+                setTenants(tenantList);
+            }
+
+            setTotalCount(count);
+            // Scalable check: stop when current count reaches total
+            setHasMore(shouldAppend ? (tenants.length + tenantList.length < count) : (tenantList.length < count));
+            if (pageNum === 1) setPgs(Array.isArray(pgsData) ? pgsData : []);
+            setPage(pageNum);
         } catch (error) {
             console.error("Failed to fetch Resident Directory data:", error);
         } finally {
             setLoading(false);
+            setLoadingMore(false);
             setRefreshing(false);
         }
+    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore]);
+
+    // Reset pagination when search or filters change
+    useEffect(() => {
+        setPage(1);
+        setHasMore(true);
+        loadTenants(1, false);
     }, [debouncedSearch, filters]);
+
+    const handleLoadMore = () => {
+        if (!loadingMore && hasMore && !loading) {
+            loadTenants(page + 1, true);
+        }
+    };
 
     const fetchFloors = useCallback(async (pgId: string) => {
         if (!pgId || pgId === "ALL") return [];
@@ -165,9 +280,7 @@ const TenantsScreen = ({ navigation }: any) => {
         }
     }, []);
 
-    useEffect(() => {
-        loadTenants();
-    }, [loadTenants]);
+    // Unified effect for search/filters handled above
 
     useEffect(() => {
         if (!isFilterSheetVisible) return;
@@ -181,21 +294,12 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const onRefresh = () => {
         setRefreshing(true);
-        loadTenants();
+        setPage(1);
+        setHasMore(true);
+        loadTenants(1, false);
     };
 
-    const filteredTenants = useMemo(() => {
-        const searchLower = searchTerm.toLowerCase();
-        return tenants.filter((tenant) => {
-            const fullName = (tenant.full_name || "").toLowerCase();
-            const propertyName = (tenant.pgs?.name || "").toLowerCase();
-            return (
-                fullName.includes(searchLower) ||
-                (tenant.phone || "").includes(searchTerm) ||
-                propertyName.includes(searchLower)
-            );
-        });
-    }, [tenants, searchTerm]);
+    const filteredTenants = tenants; // Rely 100% on server-side filtered data for pagination integrity
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -233,7 +337,7 @@ const TenantsScreen = ({ navigation }: any) => {
                             <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditTenant(item)}>
                                 <Feather name="edit-2" size={14} color={COLORS.textMuted} />
                             </TouchableOpacity>
-                            <TouchableOpacity style={styles.actionBtn}>
+                            <TouchableOpacity style={styles.actionBtn} onPress={() => handleDeleteTenant(item)}>
                                 <Feather name="trash-2" size={14} color={COLORS.danger} />
                             </TouchableOpacity>
                         </View>
@@ -314,6 +418,15 @@ const TenantsScreen = ({ navigation }: any) => {
                 renderItem={({ item }) => <ResidentCard item={item} />}
                 contentContainerStyle={styles.listContent}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={
+                    loadingMore ? (
+                        <View style={{ paddingVertical: 20 }}>
+                            <ActivityIndicator color={COLORS.primary} />
+                        </View>
+                    ) : null
+                }
                 ListHeaderComponent={
                     <View style={styles.topSection}>
                         {/* Search Row */}
@@ -351,7 +464,7 @@ const TenantsScreen = ({ navigation }: any) => {
                         {/* Filter Status Bar */}
                         <View style={styles.filterStatusRow}>
                             <Text style={styles.countText}>
-                                {loading ? "Finding residents..." : `Found ${filteredTenants.length} residents`}
+                                {loading && page === 1 ? "Finding residents..." : `Found ${totalCount} residents`}
                             </Text>
                             {(filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && (
                                 <TouchableOpacity
@@ -500,6 +613,23 @@ const TenantsScreen = ({ navigation }: any) => {
                     setOnboardingVisible(false);
                 }}
                 editingTenant={editingTenant}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    const callback = confirmState.onClose;
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    if (callback) callback();
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
             />
         </SafeAreaView>
     );

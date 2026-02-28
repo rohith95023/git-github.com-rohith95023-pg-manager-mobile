@@ -21,6 +21,7 @@ import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import RoomFormModal from "../components/modals/RoomFormModal";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const { width } = Dimensions.get("window");
 
@@ -50,6 +51,23 @@ const RoomsScreen = ({ navigation }: any) => {
     // Modal State
     const [roomModalVisible, setRoomModalVisible] = useState(false);
     const [editingRoom, setEditingRoom] = useState<any>(null);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const statusMode = filters.showArchived ? "ARCHIVED" : "ACTIVE";
     const updateShowArchived = (value: boolean) => {
@@ -109,35 +127,38 @@ const RoomsScreen = ({ navigation }: any) => {
             if (error) throw error;
 
             if (count && count > 0) {
-                Alert.alert(
-                    "Delete Blocked",
-                    `Cannot delete Room ${roomNumber}. It currently has ${count} occupied or reserved bed(s). Please unassign tenants before deleting.`
-                );
+                setConfirmState({
+                    visible: true,
+                    title: "Delete Blocked",
+                    message: `Cannot delete Room ${roomNumber}. It currently has ${count} occupied or reserved bed(s). Please unassign tenants before deleting.`,
+                    type: "danger",
+                    singleButton: true,
+                    cancelText: "Close"
+                });
                 return;
             }
 
-            Alert.alert(
-                "Delete Room",
-                `Are you sure you want to delete Room ${roomNumber} and its beds?`,
-                [
-                    { text: "Cancel", style: "cancel" },
-                    {
-                        text: "Delete",
-                        style: "destructive",
-                        onPress: async () => {
-                            try {
-                                await roomAPI.update(id, { status: "DELETED" });
-                                // We might also want to soft delete beds, or let API handle it
-                                await supabase.from("beds").update({ status: "DELETED" }).eq("room_id", id);
-                                fetchData();
-                                Alert.alert("Success", `Room ${roomNumber} deleted successfully`);
-                            } catch (error) {
-                                Alert.alert("Error", "Failed to delete room");
-                            }
-                        }
+            setConfirmState({
+                visible: true,
+                title: "Delete Room?",
+                message: `Are you sure you want to delete Room ${roomNumber} and its beds? This action is irreversible.`,
+                type: "danger",
+                confirmText: "Delete Room",
+                cancelText: "Cancel",
+                onConfirm: async () => {
+                    try {
+                        setConfirmState(prev => ({ ...prev, loading: true }));
+                        await roomAPI.update(id, { status: "DELETED" });
+                        await supabase.from("beds").update({ status: "DELETED" }).eq("room_id", id);
+                        await fetchData();
+                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                        Alert.alert("Success", `Room ${roomNumber} deleted successfully`);
+                    } catch (error) {
+                        setConfirmState(prev => ({ ...prev, loading: false }));
+                        Alert.alert("Error", "Failed to delete room");
                     }
-                ]
-            );
+                }
+            });
         } catch (error: any) {
             setLoading(false);
             console.error("Delete room check error:", error);
@@ -446,6 +467,19 @@ const RoomsScreen = ({ navigation }: any) => {
                 onSuccess={fetchData}
                 editingRoom={editingRoom}
                 initialPgId={filters.property || undefined}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
             />
         </SafeAreaView>
     );

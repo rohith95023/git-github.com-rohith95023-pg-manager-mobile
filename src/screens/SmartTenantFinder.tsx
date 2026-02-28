@@ -55,6 +55,10 @@ const SmartTenantFinder = ({ navigation }: any) => {
     const [pgs, setPgs] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [totalCount, setTotalCount] = useState(0);
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
@@ -68,14 +72,18 @@ const SmartTenantFinder = ({ navigation }: any) => {
         return () => clearTimeout(timer);
     }, [searchTerm]);
 
-    const fetchData = useCallback(async () => {
+    const fetchData = useCallback(async (pageNum = 1, shouldAppend = false) => {
+        if (loadingMore || (loading && pageNum === 1)) return;
+
         try {
-            setLoading(true);
+            if (pageNum === 1) setLoading(true);
+            else setLoadingMore(true);
+
             const [pgsRes, tenantsRes]: any = await Promise.all([
-                pgAPI.getAll(),
+                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
                 tenantAPI.search({
-                    page: 1,
-                    limit: 200,
+                    page: pageNum,
+                    limit: 8,
                     search: debouncedSearch,
                     status: filters.status,
                     pgId: filters.propertyId,
@@ -85,26 +93,48 @@ const SmartTenantFinder = ({ navigation }: any) => {
                 })
             ]);
 
-            setPgs(pgsRes || []);
-            setTenants(tenantsRes.data || []);
+            const tenantList = tenantsRes.data || [];
+            const count = tenantsRes.count || 0;
+
+            if (shouldAppend) {
+                setTenants(prev => [...prev, ...tenantList]);
+            } else {
+                setTenants(tenantList);
+            }
+
+            if (pageNum === 1) setPgs(pgsRes || []);
+            setTotalCount(count);
+            setHasMore(shouldAppend ? (tenants.length + tenantList.length < count) : (tenantList.length < count));
+            setPage(pageNum);
         } catch (error) {
             console.error("Failed to fetch tenant finder data:", error);
         } finally {
             setLoading(false);
+            setLoadingMore(false);
             setRefreshing(false);
         }
+    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore]);
+
+    // Reset pagination when search or filters change
+    useEffect(() => {
+        setPage(1);
+        setHasMore(true);
+        fetchData(1, false);
     }, [debouncedSearch, filters]);
 
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            fetchData();
-        }, 500);
-        return () => clearTimeout(timer);
-    }, [fetchData]);
+    const handleLoadMore = () => {
+        if (!loadingMore && hasMore && !loading) {
+            fetchData(page + 1, true);
+        }
+    };
+
+    // Unified effect for search/filters handled above
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchData();
+        setPage(1);
+        setHasMore(true);
+        fetchData(1, false);
     };
 
     const getStatusColor = (status: string) => {
@@ -209,6 +239,13 @@ const SmartTenantFinder = ({ navigation }: any) => {
                         <Text style={styles.filterButtonText}>Filter</Text>
                     </TouchableOpacity>
                 </View>
+
+                {/* Filter Status Bar */}
+                <View style={styles.filterStatusRow}>
+                    <Text style={styles.countText}>
+                        {loading && page === 1 ? "Searching..." : `Showing ${tenants.length} of ${totalCount} matching residents`}
+                    </Text>
+                </View>
             </View>
 
             {/* Results List */}
@@ -223,6 +260,15 @@ const SmartTenantFinder = ({ navigation }: any) => {
                     renderItem={({ item }) => <ResultCard item={item} />}
                     contentContainerStyle={styles.listContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+                    onEndReached={handleLoadMore}
+                    onEndReachedThreshold={0.5}
+                    ListFooterComponent={
+                        loadingMore ? (
+                            <View style={{ paddingVertical: 20 }}>
+                                <ActivityIndicator color={COLORS.primary} />
+                            </View>
+                        ) : null
+                    }
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
                             <Feather name="search" size={48} color={COLORS.textMuted} />
@@ -326,6 +372,21 @@ const createStyles = (COLORS: ThemePalette) =>
             gap: 6
         },
         filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+
+        filterStatusRow: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: 10,
+            paddingHorizontal: 4
+        },
+        countText: {
+            fontSize: 11,
+            fontWeight: "700",
+            color: COLORS.textMuted,
+            textTransform: "uppercase",
+            letterSpacing: 0.5
+        },
 
         listContent: { padding: 20, paddingTop: 10, paddingBottom: 40 },
         card: {

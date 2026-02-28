@@ -8,6 +8,7 @@ import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
 import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
+import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI, roomAPI, bedAPI, tenantAPI, paymentAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -97,6 +98,24 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
     const COLORS = useThemePalette();
     const [currentStep, setCurrentStep] = useState(1);
     const [loading, setLoading] = useState(false);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        onClose?: () => void;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const [pgs, setPgs] = useState<any[]>([]);
     const [rooms, setRooms] = useState<any[]>([]);
@@ -190,7 +209,30 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
         if (watchPgId) {
             const fetchRooms = async () => {
                 const data = await roomAPI.getActiveByPgId(watchPgId);
-                setRooms((data as any) || []);
+                const roomsData = (data as any) || [];
+                setRooms(roomsData);
+
+                // Check for ANY available beds in the entire PG
+                const { count, error } = await supabase
+                    .from("beds")
+                    .select("id", { count: "exact", head: true })
+                    .eq("pg_id", watchPgId)
+                    .eq("status", "AVAILABLE");
+
+                if (!error && count === 0 && !editingTenant) {
+                    setConfirmState({
+                        visible: true,
+                        title: "Property Full",
+                        message: "No beds available in selected property. Please select another property or free up a bed first.",
+                        type: "danger",
+                        singleButton: true,
+                        cancelText: "Go Back",
+                        onClose: () => {
+                            setValue("pgId", "");
+                            setConfirmState(prev => ({ ...prev, visible: false }));
+                        }
+                    });
+                }
             };
             fetchRooms();
         } else {
@@ -202,8 +244,27 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
         if (watchRoomId) {
             const fetchBeds = async () => {
                 const data = await bedAPI.getByRoomId(watchRoomId);
+                const bedsData = (data as any) || [];
+
+                // Check if this specific room has available beds
+                const hasAvailable = bedsData.some((b: any) => b.status === "AVAILABLE" || b.id === editingTenant?.bed_id);
+                if (!hasAvailable && !editingTenant) {
+                    setConfirmState({
+                        visible: true,
+                        title: "Room Full",
+                        message: "No beds available in this room. Please select another room.",
+                        type: "warning",
+                        singleButton: true,
+                        cancelText: "Select Another",
+                        onClose: () => {
+                            setValue("roomId", "");
+                            setConfirmState(prev => ({ ...prev, visible: false }));
+                        }
+                    });
+                }
+
                 // Sort to put available beds first
-                const sorted = ((data as any) || []).sort((a: any, b: any) => {
+                const sorted = bedsData.sort((a: any, b: any) => {
                     if (a.status === "AVAILABLE" && b.status !== "AVAILABLE") return -1;
                     if (a.status !== "AVAILABLE" && b.status === "AVAILABLE") return 1;
                     return a.bed_number.localeCompare(b.bed_number, undefined, { numeric: true });
@@ -266,7 +327,14 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                         .maybeSingle();
 
                     if (exists) {
-                        Alert.alert("Error", `Resident with this ${data.idType} is already registered.`);
+                        setConfirmState({
+                            visible: true,
+                            title: "Resident Exists",
+                            message: `A resident with this ${data.idType} is already registered in the system. Please verify details.`,
+                            type: "danger",
+                            singleButton: true,
+                            cancelText: "Close"
+                        });
                     } else {
                         setCurrentStep(2);
                     }
@@ -378,12 +446,29 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 });
             }
 
-            Alert.alert("Success", editingTenant ? "Resident profile updated" : "Resident onboarded successfully");
-            onSuccess();
-            onClose();
+            setConfirmState({
+                visible: true,
+                title: "Success",
+                message: editingTenant ? "Resident profile updated successfully." : "Resident onboarded successfully.",
+                type: "success",
+                singleButton: true,
+                cancelText: "Great",
+                onClose: () => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    onSuccess();
+                    onClose();
+                }
+            });
         } catch (error: any) {
             console.error(error);
-            Alert.alert("Error", error.message || "Something went wrong");
+            setConfirmState({
+                visible: true,
+                title: "Operation Failed",
+                message: error.message || "Something went wrong during onboarding/update.",
+                type: "danger",
+                singleButton: true,
+                cancelText: "Review Form"
+            });
         } finally {
             setLoading(false);
         }
@@ -690,6 +775,23 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     </View>
                 </View>
             </View>
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    const callback = (confirmState as any).onClose;
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    if (callback) callback();
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
+            />
         </FormModal>
     );
 };

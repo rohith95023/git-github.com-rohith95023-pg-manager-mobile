@@ -12,6 +12,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { expenseAPI, pgAPI } from "../services/api";
+import { supabase } from "../lib/supabaseClient";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
@@ -21,17 +22,23 @@ import ExpenseFormModal from "../components/modals/ExpenseFormModal";
 const { width } = Dimensions.get("window");
 
 const CATEGORIES = ["ALL", "UTILITIES", "REPAIRS", "MAINTENANCE", "SALARY", "FOOD", "OTHER"];
-const DEFAULT_EXPENSE_FILTERS = { category: "ALL" };
+const DEFAULT_EXPENSE_FILTERS = { category: "ALL", propertyId: "ALL" };
 
 const ExpensesScreen = () => {
     const COLORS = useThemePalette();
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [expenses, setExpenses] = useState<any[]>([]);
-    const [pgsCount, setPgsCount] = useState(0);
+    const [pgs, setPgs] = useState<any[]>([]);
+    const [page, setPage] = useState(1);
+    const [hasMore, setHasMore] = useState(true);
+    const [loadingMore, setLoadingMore] = useState(false);
+    const [totalCount, setTotalCount] = useState(0);
+    const [totalOutflowSum, setTotalOutflowSum] = useState(0);
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
+    const [debouncedSearch, setDebouncedSearch] = useState("");
     const [filters, setFilters] = useState(DEFAULT_EXPENSE_FILTERS);
     const [pendingFilters, setPendingFilters] = useState(DEFAULT_EXPENSE_FILTERS);
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
@@ -50,48 +57,83 @@ const ExpensesScreen = () => {
         setModalVisible(true);
     };
 
-    const fetchExpenses = useCallback(async () => {
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
+        return () => clearTimeout(timer);
+    }, [searchTerm]);
+
+    const loadExpenses = useCallback(async (pageNum = 1, shouldAppend = false) => {
+        if (loadingMore || (loading && pageNum === 1)) return;
+
         try {
-            setLoading(true);
-            const [expensesRes, pgsRes]: any = await Promise.all([
-                expenseAPI.getAll(),
-                pgAPI.getAll()
+            if (pageNum === 1) setLoading(true);
+            else setLoadingMore(true);
+
+            const [expensesRes, pgsData, sumRes]: any = await Promise.all([
+                expenseAPI.search({
+                    page: pageNum,
+                    limit: 10,
+                    search: debouncedSearch,
+                    category: filters.category,
+                    pgId: filters.propertyId,
+                }),
+                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
+                pageNum === 1 ? supabase.from("expenses").select("amount")
+                    // .eq("is_deleted", false)
+                    .filter("category", filters.category === "ALL" ? "neq" : "eq", filters.category === "ALL" ? "RESERVED_FALLBACK_NONE" : filters.category.toUpperCase())
+                    .filter("pg_id", filters.propertyId === "ALL" ? "neq" : "eq", filters.propertyId === "ALL" ? "00000000-0000-0000-0000-000000000000" : filters.propertyId)
+                    .then(res => ({ sum: res.data?.reduce((s, e) => s + (Number(e.amount) || 0), 0) || 0 })) : Promise.resolve({ sum: totalOutflowSum })
             ]);
-            setExpenses(expensesRes || []);
-            setPgsCount((pgsRes || []).length);
+
+            const expenseList = expensesRes?.data || [];
+            const count = expensesRes?.count || 0;
+
+            if (shouldAppend) {
+                setExpenses(prev => [...prev, ...expenseList]);
+            } else {
+                setExpenses(expenseList);
+                setTotalOutflowSum(sumRes.sum);
+            }
+
+            setTotalCount(count);
+            setHasMore(shouldAppend ? (expenses.length + expenseList.length < count) : (expenseList.length < count));
+            if (pageNum === 1) setPgs(pgsData || []);
+            setPage(pageNum);
         } catch (error) {
             console.error("Failed to fetch expenses:", error);
         } finally {
             setLoading(false);
+            setLoadingMore(false);
             setRefreshing(false);
         }
-    }, []);
+    }, [debouncedSearch, filters, pgs, expenses.length, loading, loadingMore]);
 
     useEffect(() => {
-        fetchExpenses();
-    }, [fetchExpenses]);
+        loadExpenses(1, false);
+    }, [debouncedSearch, filters]);
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchExpenses();
+        setPage(1);
+        setHasMore(true);
+        loadExpenses(1, false);
+    };
+
+    const handleLoadMore = () => {
+        if (!loadingMore && hasMore && !loading) {
+            loadExpenses(page + 1, true);
+        }
     };
 
     const stats = useMemo(() => {
-        const totalOutflow = expenses.reduce((sum, e) => sum + (Number(e.amount) || 0), 0);
         return {
-            totalOutflow,
-            transactions: expenses.length,
-            linkedProperties: pgsCount
+            totalOutflow: totalOutflowSum,
+            transactions: totalCount,
+            linkedProperties: pgs.length
         };
-    }, [expenses, pgsCount]);
+    }, [totalOutflowSum, totalCount, pgs.length]);
 
-    const filteredExpenses = useMemo(() => {
-        return expenses.filter(e => {
-            const matchesSearch = (e.title || e.description || "").toLowerCase().includes(searchTerm.toLowerCase());
-            const matchesCategory = filters.category === "ALL" || e.category === filters.category;
-            return matchesSearch && matchesCategory;
-        });
-    }, [expenses, searchTerm, filters]);
+    const filteredExpenses = expenses; // Use server-side state directly for pagination integrity
 
     const getCategoryColor = (category: string) => {
         switch (category?.toUpperCase()) {
@@ -188,7 +230,10 @@ const ExpensesScreen = () => {
                         )}
                     </View>
                     <TouchableOpacity
-                        style={styles.filterButton}
+                        style={[
+                            styles.filterButton,
+                            (filters.category !== "ALL" || filters.propertyId !== "ALL") && { backgroundColor: COLORS.success }
+                        ]}
                         onPress={() => {
                             setPendingFilters(filters);
                             setFilterSheetVisible(true);
@@ -219,7 +264,13 @@ const ExpensesScreen = () => {
                         </View>
                     ) : null
                 }
-                ListFooterComponent={loading && !refreshing ? <ActivityIndicator color={COLORS.primary} style={{ marginTop: 20 }} /> : null}
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
+                ListFooterComponent={
+                    loadingMore ? (
+                        <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 20 }} />
+                    ) : null
+                }
             />
 
             <FilterBottomSheet
@@ -239,6 +290,17 @@ const ExpensesScreen = () => {
                     setFilterSheetVisible(false);
                 }}
             >
+                <DropdownSelector
+                    label="Property"
+                    options={[
+                        { label: "All Properties", value: "ALL" },
+                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                    ]}
+                    value={pendingFilters.propertyId}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}
+                    placeholder="Select property..."
+                />
+
                 <DropdownSelector
                     label="Category"
                     options={CATEGORIES.map(cat => ({
@@ -260,7 +322,7 @@ const ExpensesScreen = () => {
                 visible={isModalVisible}
                 onClose={() => setModalVisible(false)}
                 onSuccess={() => {
-                    fetchExpenses();
+                    loadExpenses();
                     setModalVisible(false);
                 }}
                 editingExpense={editingExpense}

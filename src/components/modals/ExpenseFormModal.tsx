@@ -8,6 +8,7 @@ import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
 import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
+import ConfirmationModal from "../common/ConfirmationModal";
 import { expenseAPI, pgAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -36,6 +37,24 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
     const COLORS = useThemePalette();
     const [loading, setLoading] = useState(false);
     const [pgs, setPgs] = useState<any[]>([]);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        onClose?: () => void;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const { control, handleSubmit, reset, formState: { errors } } = useForm<ExpenseFormData>({
         resolver: zodResolver(expenseSchema) as any,
@@ -99,12 +118,29 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
                 await expenseAPI.create(payload);
             }
 
-            Alert.alert("Success", editingExpense ? "Expense updated" : "Expense recorded");
-            onSuccess();
-            onClose();
+            setConfirmState({
+                visible: true,
+                title: "Success",
+                message: editingExpense ? "Expense updated successfully." : "Expense recorded successfully.",
+                type: "success",
+                singleButton: true,
+                cancelText: "Done",
+                onClose: () => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    onSuccess();
+                    onClose();
+                }
+            });
         } catch (error: any) {
             console.error(error);
-            Alert.alert("Error", error.message || "Something went wrong");
+            setConfirmState({
+                visible: true,
+                title: "Error",
+                message: error.message || "Failed to log expense.",
+                type: "danger",
+                singleButton: true,
+                cancelText: "Retry"
+            });
         } finally {
             setLoading(false);
         }
@@ -197,6 +233,23 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
                 render={({ field: { onChange, value } }) => (
                     <FormField label="Notes" placeholder="Additional details..." value={value || ""} onChangeText={onChange} multiline numberOfLines={3} style={{ height: 80 }} />
                 )}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    const callback = confirmState.onClose;
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    if (callback) callback();
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
             />
         </FormModal>
     );

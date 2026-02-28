@@ -7,6 +7,7 @@ import FormModal from "../common/FormModal";
 import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
 import useThemePalette from "../../hooks/useThemePalette";
+import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -52,6 +53,24 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
     const COLORS = useThemePalette();
     const [currentStep, setCurrentStep] = useState(1);
     const [loading, setLoading] = useState(false);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        onClose?: () => void;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const { control, handleSubmit, reset, watch, setValue, formState: { errors }, trigger } = useForm<PGFormData>({
         resolver: zodResolver(pgSchema) as any,
@@ -130,16 +149,45 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
 
             if (editingPg) {
                 await pgAPI.update(editingPg.id, payload);
-                Alert.alert("Success", "Property updated successfully");
+                setConfirmState({
+                    visible: true,
+                    title: "Update Successful",
+                    message: "Property details have been updated successfully.",
+                    type: "success",
+                    singleButton: true,
+                    cancelText: "Great",
+                    onClose: () => {
+                        setConfirmState(prev => ({ ...prev, visible: false }));
+                        onSuccess();
+                        onClose();
+                    }
+                });
             } else {
                 await pgAPI.create(payload);
-                Alert.alert("Success", "Property created successfully");
+                setConfirmState({
+                    visible: true,
+                    title: "Property Created",
+                    message: "New property has been registered successfully.",
+                    type: "success",
+                    singleButton: true,
+                    cancelText: "Finish",
+                    onClose: () => {
+                        setConfirmState(prev => ({ ...prev, visible: false }));
+                        onSuccess();
+                        onClose();
+                    }
+                });
             }
-            onSuccess();
-            onClose();
         } catch (error: any) {
             console.error(error);
-            Alert.alert("Error", error.message || "Something went wrong");
+            setConfirmState({
+                visible: true,
+                title: "Error",
+                message: error.message || "Failed to save property.",
+                type: "danger",
+                singleButton: true,
+                cancelText: "Retry"
+            });
         } finally {
             setLoading(false);
         }
@@ -152,10 +200,27 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
         const hasStep1Errors = step1Fields.some(field => errs[field]);
 
         if (hasStep1Errors) {
-            Alert.alert("Form Error", "Please verify Step 1 fields. Some data might be incomplete or have reset unexpectedly.");
-            setCurrentStep(1);
+            setConfirmState({
+                visible: true,
+                title: "Validation Error",
+                message: "Please verify Step 1 fields. Some data might be incomplete or invalid.",
+                type: "warning",
+                singleButton: true,
+                cancelText: "Check Step 1",
+                onClose: () => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    setCurrentStep(1);
+                }
+            });
         } else {
-            Alert.alert("Form Error", "Please fill all required address fields in Step 2.");
+            setConfirmState({
+                visible: true,
+                title: "Address Incomplete",
+                message: "Please fill all required address fields in Step 2.",
+                type: "warning",
+                singleButton: true,
+                cancelText: "Complete Address"
+            });
         }
     };
 
@@ -354,6 +419,23 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                     ))}
                 </View>
             </View>
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    const callback = confirmState.onClose;
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    if (callback) callback();
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
+            />
         </FormModal>
     );
 };

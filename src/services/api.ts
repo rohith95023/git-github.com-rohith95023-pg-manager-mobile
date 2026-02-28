@@ -260,6 +260,19 @@ export const expenseAPI = {
     create: (data: any) => apiClient.post('expenses', data),
     update: (id: string, data: any) => apiClient.update('expenses', id, data),
     delete: (id: string) => apiClient.delete('expenses', id),
+    search: async (params: any) => {
+        const { page = 1, limit = 10, search = "", category = "ALL", pgId = "", sortBy = "date", sortOrder = "desc" } = params;
+        return apiClient.request(async () => {
+            let query = supabase.from("expenses").select("*, pgs(name)", { count: "exact" });
+            if (category && category !== "ALL") query = query.eq("category", category.toUpperCase());
+            if (pgId && pgId !== "ALL") query = query.eq("pg_id", pgId);
+            if (search) query = query.or(`title.ilike.%${search}%,description.ilike.%${search}%,vendor_name.ilike.%${search}%`);
+            query = query.order(sortBy, { ascending: sortOrder === "asc" });
+            const from = (page - 1) * limit;
+            const to = from + limit - 1;
+            return await query.range(from, to).order("created_at", { ascending: false });
+        }, "Search Expenses");
+    },
 };
 
 // Dashboard Stats

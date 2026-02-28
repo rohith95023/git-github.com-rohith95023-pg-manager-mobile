@@ -8,6 +8,7 @@ import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
 import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
+import ConfirmationModal from "../common/ConfirmationModal";
 import { paymentAPI, pgAPI, tenantAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -45,6 +46,24 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
     const [payments, setPayments] = useState<any[]>([]);
+
+    const [confirmState, setConfirmState] = useState<{
+        visible: boolean;
+        title: string;
+        message: string;
+        type: 'danger' | 'warning' | 'info' | 'success';
+        onConfirm?: () => void;
+        confirmText?: string;
+        cancelText?: string;
+        singleButton?: boolean;
+        loading?: boolean;
+        onClose?: () => void;
+    }>({
+        visible: false,
+        title: "",
+        message: "",
+        type: "info"
+    });
 
     const { control, handleSubmit, reset, watch, setValue, formState: { errors } } = useForm<PaymentFormData>({
         resolver: zodResolver(paymentSchema) as any,
@@ -130,10 +149,10 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
         }
     }, [watchTenantId, watchType, tenants, editingPayment]);
 
-    const handleFormSubmit = async (data: PaymentFormData) => {
+    const handleFormSubmit = async (data: PaymentFormData, confirmed = false) => {
         try {
-            // Duplicate Check
-            if (data.type === "RENT") {
+            // Duplicate Check - Strict Block per Business Logic
+            if (data.type === "RENT" && !confirmed) {
                 const bMonth = `${data.billing_month}-01`;
                 const isDuplicate = payments.some(p =>
                     p.tenant_id === data.tenant_id &&
@@ -141,37 +160,36 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                     p.id !== (editingPayment?.id || "")
                 );
                 if (isDuplicate) {
-                    const proceed = await new Promise(resolve => {
-                        Alert.alert(
-                            "Duplicate Rent",
-                            "A RENT payment for this resident and month already exists. Add anyway?",
-                            [
-                                { text: "No", onPress: () => resolve(false), style: "cancel" },
-                                { text: "Yes, Add", onPress: () => resolve(true) }
-                            ]
-                        );
+                    setConfirmState({
+                        visible: true,
+                        title: "Payment Blocked",
+                        message: "Payment already exists for this billing period.",
+                        type: "danger",
+                        singleButton: true,
+                        cancelText: "Review",
+                        onClose: () => setConfirmState(prev => ({ ...prev, visible: false }))
                     });
-                    if (!proceed) return;
+                    return;
                 }
             }
 
-            // Overpayment Check
-            const balance = getTenantBalance(selectedTenant);
-            if (data.amount > balance) {
-                const proceed = await new Promise(resolve => {
-                    Alert.alert(
-                        "Confirm Overpayment",
-                        `Amount ₹${data.amount} exceeds pending balance ₹${balance}. Proceed?`,
-                        [
-                            { text: "Cancel", onPress: () => resolve(false), style: "cancel" },
-                            { text: "Record Overpayment", onPress: () => resolve(true) }
-                        ]
-                    );
+            // Overpayment Check - Compare against monthly rent
+            const rentAmount = selectedTenant ? Number(selectedTenant.rent_per_month || selectedTenant.rent || selectedTenant.rooms?.rent || 0) : 0;
+            if (data.type === "RENT" && data.amount > rentAmount && !confirmed) {
+                setConfirmState({
+                    visible: true,
+                    title: "Confirm Overpayment",
+                    message: "Entered amount exceeds monthly rent. Continue?",
+                    type: "warning",
+                    confirmText: "Continue",
+                    cancelText: "Cancel",
+                    onConfirm: () => handleFormSubmit(data, true)
                 });
-                if (!proceed) return;
+                return;
             }
 
             setLoading(true);
+            setConfirmState(prev => ({ ...prev, visible: false })); // Hide if showing
             const { data: { user } } = await supabase.auth.getUser();
 
             const payload: any = {
@@ -232,12 +250,29 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                 }
             }
 
-            Alert.alert("Success", editingPayment ? "Payment updated" : "Payment recorded");
-            onSuccess();
-            onClose();
+            setConfirmState({
+                visible: true,
+                title: "Success",
+                message: editingPayment ? "Payment updated successfully." : "Payment recorded successfully.",
+                type: "success",
+                singleButton: true,
+                cancelText: "Done",
+                onClose: () => {
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    onSuccess();
+                    onClose();
+                }
+            });
         } catch (error: any) {
             console.error(error);
-            Alert.alert("Error", error.message || "Something went wrong");
+            setConfirmState({
+                visible: true,
+                title: "Error",
+                message: error.message || "Failed to save payment record.",
+                type: "danger",
+                singleButton: true,
+                cancelText: "Review"
+            });
         } finally {
             setLoading(false);
         }
@@ -247,7 +282,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
         <FormModal
             visible={visible}
             onClose={onClose}
-            onSubmit={handleSubmit(handleFormSubmit)}
+            onSubmit={handleSubmit((data) => handleFormSubmit(data))}
             title={editingPayment ? "Edit Payment" : "Record Payment"}
             loading={loading}
         >
@@ -405,6 +440,23 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                 render={({ field: { onChange, value } }) => (
                     <FormField label="Notes" placeholder="Optional notes..." value={value} onChangeText={onChange} multiline numberOfLines={3} style={{ height: 80 }} />
                 )}
+            />
+
+            <ConfirmationModal
+                visible={confirmState.visible}
+                onClose={() => {
+                    const callback = confirmState.onClose;
+                    setConfirmState(prev => ({ ...prev, visible: false }));
+                    if (callback) callback();
+                }}
+                onConfirm={confirmState.onConfirm}
+                title={confirmState.title}
+                message={confirmState.message}
+                type={confirmState.type}
+                confirmText={confirmState.confirmText}
+                cancelText={confirmState.cancelText}
+                loading={confirmState.loading}
+                singleButton={confirmState.singleButton}
             />
         </FormModal>
     );

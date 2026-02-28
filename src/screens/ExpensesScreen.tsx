@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useIsFocused } from "@react-navigation/native";
 import {
     View,
     Text,
@@ -16,6 +17,7 @@ import { expenseAPI, pgAPI } from "../services/api";
 import { supabase } from "../lib/supabaseClient";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import ExpenseFormModal from "../components/modals/ExpenseFormModal";
@@ -26,8 +28,9 @@ const { width } = Dimensions.get("window");
 const CATEGORIES = ["ALL", "UTILITIES", "REPAIRS", "MAINTENANCE", "SALARY", "FOOD", "OTHER"];
 const DEFAULT_EXPENSE_FILTERS = { category: "ALL", propertyId: "ALL" };
 
-const ExpensesScreen = () => {
+const ExpensesScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
+    const isFocused = useIsFocused();
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [expenses, setExpenses] = useState<any[]>([]);
@@ -95,7 +98,6 @@ const ExpensesScreen = () => {
                     await expenseAPI.delete(expense.id);
                     await loadExpenses(1, false);
                     setConfirmState({ visible: false, title: "", message: "", type: "info" });
-                    Alert.alert("Success", "Expense deleted successfully");
                 } catch (error: any) {
                     setConfirmState(prev => ({ ...prev, loading: false }));
                     Alert.alert("Error", error.message || "Failed to delete expense");
@@ -121,7 +123,6 @@ const ExpensesScreen = () => {
                 }),
                 pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
                 pageNum === 1 ? supabase.from("expenses").select("amount")
-                    // .eq("is_deleted", false)
                     .filter("category", filters.category === "ALL" ? "neq" : "eq", filters.category === "ALL" ? "RESERVED_FALLBACK_NONE" : filters.category.toUpperCase())
                     .filter("pg_id", filters.propertyId === "ALL" ? "neq" : "eq", filters.propertyId === "ALL" ? "00000000-0000-0000-0000-000000000000" : filters.propertyId)
                     .then(res => ({ sum: res.data?.reduce((s, e) => s + (Number(e.amount) || 0), 0) || 0 })) : Promise.resolve({ sum: totalOutflowSum })
@@ -148,11 +149,15 @@ const ExpensesScreen = () => {
             setLoadingMore(false);
             setRefreshing(false);
         }
-    }, [debouncedSearch, filters, pgs, expenses.length, loading, loadingMore]);
+    }, [debouncedSearch, filters, pgs, expenses.length, loading, loadingMore, totalOutflowSum]);
 
     useEffect(() => {
-        loadExpenses(1, false);
-    }, [debouncedSearch, filters]);
+        if (isFocused) {
+            loadExpenses(1, false);
+        }
+    }, [debouncedSearch, filters, isFocused]);
+
+    useRefreshOnForeground(() => loadExpenses(1, false), isFocused);
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -175,8 +180,6 @@ const ExpensesScreen = () => {
         };
     }, [totalOutflowSum, totalCount, pgs.length]);
 
-    const filteredExpenses = expenses; // Use server-side state directly for pagination integrity
-
     const getCategoryColor = (category: string) => {
         switch (category?.toUpperCase()) {
             case 'UTILITIES': return COLORS.primary;
@@ -190,55 +193,43 @@ const ExpensesScreen = () => {
 
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
-    const SummaryCard = ({ title, value, icon, color }: any) => (
-        <View style={[styles.summaryCard, { borderColor: COLORS.border }]}>
-            <View style={[styles.summaryIcon, { backgroundColor: color + "10" }]}>
-                <MaterialCommunityIcons name={icon} size={20} color={color} />
-            </View>
-            <Text style={styles.summaryLabel}>{title}</Text>
-            <Text style={[styles.summaryValue, { color: color }]}>
-                {title === "TOTAL OUTFLOW" ? `₹${Number(value).toLocaleString()}` : value}
-            </Text>
-        </View>
-    );
-
     const renderExpenseItem = ({ item }: { item: any }) => (
         <View style={styles.expenseCard}>
-            <View style={styles.expenseHeader}>
-                <View style={styles.headerLeft}>
+            <View style={styles.cardTop}>
+                <View style={styles.cardHeaderLeft}>
                     <Text style={styles.descriptionText} numberOfLines={1}>{item.title || item.description}</Text>
-                    <View style={[styles.categoryBadge, { backgroundColor: getCategoryColor(item.category) + "15" }]}>
-                        <Text style={[styles.categoryText, { color: getCategoryColor(item.category) }]}>{item.category}</Text>
+                    <View style={[styles.categoryBadge, { backgroundColor: getCategoryColor(item.category) + "12" }]}>
+                        <Text style={[styles.categoryBadgeText, { color: getCategoryColor(item.category) }]}>{item.category}</Text>
                     </View>
                 </View>
                 <Text style={styles.expenseAmount}>₹{Number(item.amount || 0).toLocaleString()}</Text>
             </View>
 
-            <View style={styles.expenseBody}>
-                <View style={styles.infoRow}>
+            <View style={styles.cardBody}>
+                <View style={styles.metaRow}>
                     <Feather name="calendar" size={12} color={COLORS.textMuted} />
-                    <Text style={styles.infoText}>{item.date || "N/A"}</Text>
+                    <Text style={styles.metaText}>{item.date || "N/A"}</Text>
                     <View style={styles.dot} />
                     <Feather name="home" size={12} color={COLORS.textMuted} />
-                    <Text style={styles.infoText} numberOfLines={1}>{item.pgs?.name || "Multiple PGs"}</Text>
+                    <Text style={styles.metaText} numberOfLines={1}>{item.pgs?.name || "Multiple PGs"}</Text>
                 </View>
 
                 {item.vendor_name && (
-                    <View style={styles.vendorRow}>
+                    <View style={[styles.metaRow, { marginTop: 8 }]}>
                         <Feather name="shopping-bag" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.vendorText}>Vendor: {item.vendor_name}</Text>
+                        <Text style={styles.metaText}>Vendor: {item.vendor_name}</Text>
                     </View>
                 )}
             </View>
 
-            <View style={styles.expenseFooter}>
-                <TouchableOpacity style={styles.actionButton} onPress={() => handleEditExpense(item)}>
+            <View style={styles.cardFooter}>
+                <TouchableOpacity style={styles.cardAction} onPress={() => handleEditExpense(item)}>
                     <Feather name="edit-2" size={14} color={COLORS.primary} />
-                    <Text style={styles.actionButtonText}>Edit</Text>
+                    <Text style={styles.cardActionText}>Edit</Text>
                 </TouchableOpacity>
-                <TouchableOpacity style={styles.actionButton} onPress={() => handleDeleteExpense(item)}>
+                <TouchableOpacity style={styles.cardAction} onPress={() => handleDeleteExpense(item)}>
                     <Feather name="trash-2" size={14} color={COLORS.danger} />
-                    <Text style={[styles.actionButtonText, { color: COLORS.danger }]}>Delete</Text>
+                    <Text style={[styles.cardActionText, { color: COLORS.danger }]}>Delete</Text>
                 </TouchableOpacity>
             </View>
         </View>
@@ -246,84 +237,107 @@ const ExpensesScreen = () => {
 
     const ListHeader = () => (
         <View>
-            {/* Summary Cards */}
+            {/* Summary Grid */}
             <View style={styles.summaryContainer}>
-                <SummaryCard title="TOTAL OUTFLOW" value={stats.totalOutflow} icon="cash-remove" color={COLORS.danger} />
-                <SummaryCard title="TRANSACTIONS" value={stats.transactions} icon="swap-horizontal" color={COLORS.primary} />
-                <SummaryCard title="LINKED PROPERTIES" value={stats.linkedProperties} icon="office-building" color={COLORS.success} />
+                <View style={styles.mainStatCard}>
+                    <View>
+                        <Text style={styles.mainStatLabel}>TOTAL OUTFLOW</Text>
+                        <Text style={styles.mainStatValue}>₹{stats.totalOutflow.toLocaleString()}</Text>
+                    </View>
+                    <View style={[styles.mainStatIcon, { backgroundColor: COLORS.danger + '10' }]}>
+                        <MaterialCommunityIcons name="cash-remove" size={24} color={COLORS.danger} />
+                    </View>
+                </View>
+
+                <View style={styles.statGrid}>
+                    <View style={styles.statCell}>
+                        <Text style={styles.statLabel}>TRANSACTIONS</Text>
+                        <Text style={[styles.statValue, { color: COLORS.primary }]}>{stats.transactions}</Text>
+                    </View>
+                    <View style={styles.statCell}>
+                        <Text style={styles.statLabel}>PROPERTIES</Text>
+                        <Text style={[styles.statValue, { color: COLORS.success }]}>{stats.linkedProperties}</Text>
+                    </View>
+                </View>
             </View>
 
-            {/* Filters */}
-            <View style={styles.stickySection}>
-                <View style={styles.searchRow}>
-                    <View style={styles.searchBar}>
-                        <Feather name="search" size={18} color={COLORS.textMuted} />
-                        <TextInput
-                            placeholder="Search expenses..."
-                            placeholderTextColor={COLORS.textMuted}
-                            style={styles.searchInput}
-                            value={searchTerm}
-                            onChangeText={setSearchTerm}
-                        />
-                        {searchTerm.length > 0 && (
-                            <TouchableOpacity onPress={() => setSearchTerm("")}>
-                                <Feather name="x-circle" size={16} color={COLORS.textMuted} />
-                            </TouchableOpacity>
-                        )}
-                    </View>
+            {/* Search & Filter */}
+            <View style={styles.searchSection}>
+                <View style={styles.searchBox}>
+                    <Feather name="search" size={18} color={COLORS.textMuted} />
+                    <TextInput
+                        placeholder="Search expenses..."
+                        placeholderTextColor={COLORS.textMuted}
+                        style={styles.searchInput}
+                        value={searchTerm}
+                        onChangeText={setSearchTerm}
+                    />
+                    {searchTerm !== "" && (
+                        <TouchableOpacity onPress={() => setSearchTerm("")} style={styles.clearBadge}>
+                            <Feather name="x" size={12} color={COLORS.bg} />
+                        </TouchableOpacity>
+                    )}
+                    <View style={styles.searchDivider} />
                     <TouchableOpacity
-                        style={[
-                            styles.filterButton,
-                            (filters.category !== "ALL" || filters.propertyId !== "ALL") && { backgroundColor: COLORS.success }
-                        ]}
+                        style={styles.filterTrigger}
                         onPress={() => {
                             setPendingFilters(filters);
                             setFilterSheetVisible(true);
                         }}
                     >
-                        <Feather name="sliders" size={18} color="#fff" />
-                        <Text style={styles.filterButtonText}>Filter</Text>
+                        <Feather
+                            name="sliders"
+                            size={18}
+                            color={(filters.category !== "ALL" || filters.propertyId !== "ALL") ? COLORS.primary : COLORS.textMuted}
+                        />
                     </TouchableOpacity>
                 </View>
+                <Text style={styles.resultMetaText}>{loading && page === 1 ? "SEARCHING..." : `${totalCount} EXPENSES LOGGED`}</Text>
             </View>
         </View>
     );
 
     return (
         <SafeAreaView style={styles.container}>
+            {/* Compact Top App Bar */}
+            <View style={styles.appBar}>
+                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
+                    <Feather name="menu" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <Text style={styles.appBarTitle}>Expense Tracker</Text>
+                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                </TouchableOpacity>
+            </View>
+
             <FlatList
-                data={filteredExpenses}
+                data={expenses}
                 keyExtractor={item => item.id}
                 renderItem={renderExpenseItem}
                 ListHeaderComponent={ListHeader}
-                contentContainerStyle={styles.listContainer}
+                contentContainerStyle={styles.listContent}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
+                onEndReached={handleLoadMore}
+                onEndReachedThreshold={0.5}
                 ListEmptyComponent={
                     !loading ? (
-                        <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="invoice-text-outline" size={64} color={COLORS.textMuted + "20"} />
-                            <Text style={styles.emptyText}>No expenses logged yet</Text>
+                        <View style={styles.emptyView}>
+                            <View style={styles.emptyIconCircle}>
+                                <MaterialCommunityIcons name="invoice-text-outline" size={40} color={COLORS.textMuted} />
+                            </View>
+                            <Text style={styles.emptyTitle}>No expenses found</Text>
                         </View>
                     ) : null
                 }
-                onEndReached={handleLoadMore}
-                onEndReachedThreshold={0.5}
-                ListFooterComponent={
-                    loadingMore ? (
-                        <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 20 }} />
-                    ) : null
-                }
+                ListFooterComponent={loadingMore ? <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 20 }} /> : null}
             />
 
             <FilterBottomSheet
                 visible={isFilterSheetVisible}
                 title="Expense Filters"
-                description="Filter by category like the web view"
                 onClose={() => setFilterSheetVisible(false)}
                 onApply={() => {
-                    const applied = { ...pendingFilters };
-                    setFilters(applied);
-                    setPendingFilters(applied);
+                    setFilters(pendingFilters);
                     setFilterSheetVisible(false);
                 }}
                 onReset={() => {
@@ -340,9 +354,7 @@ const ExpensesScreen = () => {
                     ]}
                     value={pendingFilters.propertyId}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}
-                    placeholder="Select property..."
                 />
-
                 <DropdownSelector
                     label="Category"
                     options={CATEGORIES.map(cat => ({
@@ -351,13 +363,11 @@ const ExpensesScreen = () => {
                     }))}
                     value={pendingFilters.category}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, category: value }))}
-                    placeholder="Select category..."
                 />
             </FilterBottomSheet>
 
             <TouchableOpacity style={styles.fab} onPress={handleAddExpense}>
                 <Feather name="plus" size={24} color="#fff" />
-                <Text style={styles.fabText}>Log Expense</Text>
             </TouchableOpacity>
 
             <ExpenseFormModal
@@ -381,148 +391,121 @@ const ExpensesScreen = () => {
                 cancelText={confirmState.cancelText}
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
-                disableOutsideTap={confirmState.type === "danger"}
             />
         </SafeAreaView>
     );
 };
 
-type ThemePalette = ReturnType<typeof useThemePalette>;
-
-const createStyles = (COLORS: ThemePalette) =>
+const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        summaryContainer: {
-            flexDirection: "row",
-            flexWrap: "wrap",
-            justifyContent: "space-between",
-            paddingHorizontal: 20,
-            paddingVertical: 10,
-            gap: 10,
-        },
-        summaryCard: {
-            flexBasis: "48%",
-            maxWidth: "48%",
-            backgroundColor: COLORS.card,
-            borderRadius: 18,
-            paddingVertical: 10,
-            paddingHorizontal: 12,
-            borderWidth: 1,
-            minHeight: 90,
-            justifyContent: "space-between",
-            marginBottom: 10,
-        },
-        summaryIcon: { width: 28, height: 28, borderRadius: 8, justifyContent: "center", alignItems: "center", marginBottom: 8 },
-        summaryLabel: { fontSize: 10, fontWeight: "700", color: COLORS.textMuted, marginBottom: 4 },
-        summaryValue: { fontSize: 15, fontWeight: "800" },
 
-        stickySection: { backgroundColor: COLORS.bg, paddingBottom: 10 },
-        searchRow: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, gap: 10, marginBottom: 12 },
-        searchBar: {
-            flex: 1,
-            flexDirection: "row",
-            alignItems: "center",
+        // App Bar
+        appBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 16,
+            height: 60,
+            backgroundColor: COLORS.card,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border,
+        },
+        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
+
+        // Summary Section
+        summaryContainer: { padding: 16 },
+        mainStatCard: {
             backgroundColor: COLORS.card,
             borderRadius: 14,
-            paddingHorizontal: 16,
-            height: 50,
-            borderWidth: 1,
-            borderColor: COLORS.border
-        },
-        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-        filterButton: {
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: COLORS.primary,
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderRadius: 14,
-            gap: 6
-        },
-        filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
-
-        listContainer: { paddingHorizontal: 20, paddingBottom: 100 },
-        expenseCard: {
-            backgroundColor: COLORS.card,
-            borderRadius: 24,
             padding: 20,
-            marginBottom: 16,
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderWidth: 1,
+            borderColor: COLORS.danger + '20',
+            marginBottom: 12,
+            elevation: 2,
+        },
+        mainStatLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1 },
+        mainStatValue: { fontSize: 28, fontWeight: '900', color: COLORS.text, marginTop: 4 },
+        mainStatIcon: { width: 48, height: 48, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+
+        statGrid: { flexDirection: 'row', gap: 12 },
+        statCell: {
+            flex: 1,
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            padding: 16,
             borderWidth: 1,
             borderColor: COLORS.border,
         },
-        expenseHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 15 },
-        headerLeft: { flex: 1, marginRight: 10 },
-        descriptionText: { fontSize: 16, fontWeight: "800", color: COLORS.text, marginBottom: 6 },
-        categoryBadge: { alignSelf: "flex-start", paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-        categoryText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
-        expenseAmount: { fontSize: 18, fontWeight: "900", color: COLORS.danger },
+        statLabel: { fontSize: 10, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5 },
+        statValue: { fontSize: 18, fontWeight: '900', marginTop: 4 },
 
-        expenseBody: { marginBottom: 20 },
-        infoRow: { flexDirection: "row", alignItems: "center", marginBottom: 10 },
-        infoText: { fontSize: 12, color: COLORS.textMuted, marginLeft: 4, fontWeight: "600" },
-        dot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: COLORS.textMuted, marginHorizontal: 8 },
-        vendorRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-        vendorText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
-
-        expenseFooter: {
-            flexDirection: "row",
-            justifyContent: "flex-end",
-            alignItems: "center",
-            paddingTop: 15,
-            borderTopWidth: 1,
-            borderTopColor: "rgba(255,255,255,0.05)",
-            gap: 20
+        // Search Section
+        searchSection: { paddingHorizontal: 16, paddingBottom: 8 },
+        searchBox: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: COLORS.card,
+            paddingHorizontal: 16,
+            height: 52,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            elevation: 2,
         },
-        actionButton: { flexDirection: "row", alignItems: "center", gap: 6 },
-        actionButtonText: { fontSize: 13, fontWeight: "700", color: COLORS.primary },
+        searchInput: { flex: 1, marginLeft: 12, fontSize: 15, fontWeight: '600', color: COLORS.text },
+        clearBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
+        searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
+        filterTrigger: { padding: 4 },
+        resultMetaText: { fontSize: 10, fontWeight: '800', color: COLORS.textMuted, marginTop: 16, marginLeft: 4, letterSpacing: 1 },
+
+        // List & Cards
+        listContent: { paddingBottom: 100 },
+        expenseCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            marginHorizontal: 16,
+            marginBottom: 16,
+            padding: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            elevation: 2,
+        },
+        cardTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 12 },
+        cardHeaderLeft: { flex: 1, marginRight: 12 },
+        descriptionText: { fontSize: 16, fontWeight: '800', color: COLORS.text, marginBottom: 4 },
+        categoryBadge: { alignSelf: 'flex-start', paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+        categoryBadgeText: { fontSize: 9, fontWeight: '900', textTransform: 'uppercase' },
+        expenseAmount: { fontSize: 18, fontWeight: '900', color: COLORS.danger },
+
+        cardBody: { marginBottom: 16, paddingBottom: 16, borderBottomWidth: 1, borderBottomColor: COLORS.border + '40' },
+        metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+        metaText: { fontSize: 12, color: COLORS.textMuted, fontWeight: '600' },
+        dot: { width: 3, height: 3, borderRadius: 1.5, backgroundColor: COLORS.textMuted, marginHorizontal: 4 },
+
+        cardFooter: { flexDirection: 'row', justifyContent: 'flex-end', gap: 20 },
+        cardAction: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+        cardActionText: { fontSize: 13, fontWeight: '700', color: COLORS.primary },
 
         fab: {
-            position: "absolute",
+            position: 'absolute',
             bottom: 30,
-            right: 20,
-            flexDirection: "row",
-            paddingHorizontal: 20,
+            right: 24,
+            width: 56,
             height: 56,
             borderRadius: 28,
             backgroundColor: COLORS.danger,
-            justifyContent: "center",
-            alignItems: "center",
-            elevation: 8,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 6,
-            gap: 10
+            justifyContent: 'center',
+            alignItems: 'center',
+            elevation: 10,
         },
-        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 },
-        emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
-        emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
-        sheetSection: { marginBottom: 18, paddingHorizontal: 20 },
-        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
-        sheetChipsRow: { flexDirection: "row", gap: 10 },
-        sheetChip: {
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderRadius: 14,
-            backgroundColor: COLORS.card,
-            borderWidth: 1,
-            borderColor: COLORS.border
-        },
-        sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
-        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-        sheetChipTextActive: { color: COLORS.primary },
-        sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-        sheetSortButton: {
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderRadius: 14,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-            backgroundColor: COLORS.card
-        },
-        sheetSortButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
-        sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-        sheetSortTextActive: { color: COLORS.primary }
+        emptyView: { marginTop: 60, alignItems: 'center' },
+        emptyIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.card, justifyContent: 'center', alignItems: 'center', marginBottom: 20, borderWidth: 1, borderColor: COLORS.border },
+        emptyTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text },
     });
 
 export default ExpensesScreen;

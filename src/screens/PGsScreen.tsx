@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useIsFocused } from "@react-navigation/native";
 import {
     View,
     Text,
@@ -16,6 +17,7 @@ import { pgAPI } from "../services/api";
 import { supabase } from "../lib/supabaseClient";
 import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
 import PGFormModal from "../components/modals/PGFormModal";
@@ -25,6 +27,7 @@ const { width } = Dimensions.get("window");
 
 const PGsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
+    const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
@@ -65,7 +68,6 @@ const PGsScreen = ({ navigation }: any) => {
             setPgs(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Failed to fetch properties:", error);
-            Alert.alert("Error", "Failed to fetch properties");
         } finally {
             setLoading(false);
             setRefreshing(false);
@@ -73,8 +75,12 @@ const PGsScreen = ({ navigation }: any) => {
     }, [activeTab]);
 
     useEffect(() => {
-        fetchPGs();
-    }, [fetchPGs]);
+        if (isFocused) {
+            fetchPGs();
+        }
+    }, [fetchPGs, isFocused]);
+
+    useRefreshOnForeground(fetchPGs, isFocused);
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -146,7 +152,6 @@ const PGsScreen = ({ navigation }: any) => {
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
-                        Alert.alert("Success", "Property archived successfully");
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
                         Alert.alert("Error", error.message || "Failed to archive property");
@@ -190,7 +195,6 @@ const PGsScreen = ({ navigation }: any) => {
                         await pgAPI.restore(id);
                         await fetchPGs();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
-                        Alert.alert("Success", "Property restored successfully");
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
                         Alert.alert("Error", error.message || "Failed to restore property");
@@ -209,7 +213,6 @@ const PGsScreen = ({ navigation }: any) => {
         }
 
         try {
-
             const deleteCode = generatePgDeleteCode(name);
             setConfirmTargetCode(deleteCode);
             setConfirmInput("");
@@ -231,7 +234,6 @@ const PGsScreen = ({ navigation }: any) => {
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
-                        Alert.alert("Success", "Property deleted permanently");
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
                         Alert.alert("Error", error.message || "Failed to delete property");
@@ -244,12 +246,27 @@ const PGsScreen = ({ navigation }: any) => {
         }
     };
 
+    const showPropertyOptions = (item: any) => {
+        Alert.alert(
+            "Property Options",
+            `Manage ${item.name}`,
+            [
+                { text: "Edit Details", onPress: () => handleEdit(item) },
+                item.status === "ACTIVE"
+                    ? { text: "Archive", onPress: () => handleArchive(item.id, item.name), style: "destructive" }
+                    : { text: "Restore", onPress: () => handleRestore(item.id, item.name) },
+                { text: "Delete Permanently", onPress: () => handleDelete(item.id, item.name), style: "destructive" },
+                { text: "Cancel", style: "cancel" }
+            ],
+            { cancelable: true }
+        );
+    };
+
     const PropertyCard = ({ item }: { item: any }) => {
         const totalRooms = item.rooms?.[0]?.count || 0;
-        const occupiedRooms = item.occupied_beds?.[0]?.count || 0; // Approximate or use a better metric if available
+        const occupiedBeds = item.occupied_beds?.[0]?.count || 0;
         const totalBeds = item.beds?.[0]?.count || 0;
-        const availableBeds = totalBeds - occupiedRooms;
-        const occupancyRate = totalBeds > 0 ? Math.round((occupiedRooms / totalBeds) * 100) : 0;
+        const occupancyRate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
 
         return (
             <TouchableOpacity
@@ -258,79 +275,43 @@ const PGsScreen = ({ navigation }: any) => {
                 activeOpacity={0.7}
             >
                 <View style={styles.cardHeader}>
-                    <View style={styles.headerTitleContainer}>
-                        <Text style={styles.propertyName}>{item.name}</Text>
-                        <View style={styles.badgeRow}>
-                            <View style={[styles.badge, { backgroundColor: COLORS.primary + "15" }]}>
-                                <Text style={[styles.badgeText, { color: COLORS.primary }]}>{item.gender_type || "CO-LIVING"}</Text>
-                            </View>
-                            <View style={[styles.badge, { backgroundColor: COLORS.success + "15" }]}>
-                                <Text style={[styles.badgeText, { color: COLORS.success }]}>{item.total_floors || 0} FLOORS</Text>
-                            </View>
+                    <View style={styles.headerLeft}>
+                        <Text style={styles.propertyName} numberOfLines={1}>{item.name}</Text>
+                        <View style={styles.locationContainer}>
+                            <Feather name="map-pin" size={10} color={COLORS.textMuted} />
+                            <Text style={styles.locationText} numberOfLines={1}>{item.city || "No location"}</Text>
                         </View>
                     </View>
-                    <View style={styles.headerIcons}>
-                        {item.status === "INACTIVE" && (
-                            <TouchableOpacity style={styles.iconBtn} onPress={() => handleRestore(item.id, item.name)}>
-                                <MaterialCommunityIcons name="backup-restore" size={18} color={COLORS.success} />
-                            </TouchableOpacity>
-                        )}
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleEdit(item)}>
-                            <Feather name="edit-2" size={18} color={COLORS.textMuted} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleDelete(item.id, item.name)}>
-                            <Feather name="trash-2" size={18} color={COLORS.danger} />
-                        </TouchableOpacity>
+                    <TouchableOpacity style={styles.menuBtn} onPress={() => showPropertyOptions(item)}>
+                        <Feather name="more-horizontal" size={20} color={COLORS.textMuted} />
+                    </TouchableOpacity>
+                </View>
+
+                <View style={styles.statsGrid}>
+                    <View style={styles.statCell}>
+                        <Text style={styles.statValue}>{totalRooms}</Text>
+                        <Text style={styles.statLabel}>Rooms</Text>
+                    </View>
+                    <View style={[styles.statCell, styles.statDivider]}>
+                        <Text style={styles.statValue}>{totalBeds}</Text>
+                        <Text style={styles.statLabel}>Total Beds</Text>
+                    </View>
+                    <View style={styles.statCell}>
+                        <Text style={[styles.statValue, { color: COLORS.success }]}>{occupancyRate}%</Text>
+                        <Text style={styles.statLabel}>Occupancy</Text>
                     </View>
                 </View>
 
-                <View style={styles.locationContainer}>
-                    <Ionicons name="location-sharp" size={14} color={COLORS.danger} />
-                    <Text style={styles.locationText}>{item.city ? `${item.city}, ` : ""}{item.address || "No address set"}</Text>
-                </View>
-
-                <View style={styles.divider} />
-
-                <View style={styles.statsRow}>
-                    <View style={styles.statContainer}>
-                        <View style={styles.statBox}>
-                            <View style={styles.statSubBox}>
-                                <Text style={styles.statSubValue}>{totalRooms}</Text>
-                                <Text style={styles.statSubLabel} numberOfLines={1}>ROOMS</Text>
-                            </View>
-                            <View style={[styles.statSubBox, { borderLeftWidth: 1, borderLeftColor: COLORS.border }]}>
-                                <Text style={styles.statSubValue}>{availableBeds}</Text>
-                                <Text style={[styles.statSubLabel, { color: COLORS.success }]} numberOfLines={1}>AVAIL BEDS</Text>
-                            </View>
+                <View style={styles.cardFooter}>
+                    <View style={styles.badgeGroup}>
+                        <View style={[styles.miniBadge, { backgroundColor: COLORS.primary + "10" }]}>
+                            <Text style={[styles.miniBadgeText, { color: COLORS.primary }]}>{item.gender_type || "CO-LIVING"}</Text>
                         </View>
-                        <Text style={styles.statMainLabel}>INVENTORY (R/A.B)</Text>
-                    </View>
-
-                    <View style={styles.occupancyContainer}>
-                        <View style={styles.occupancyHeader}>
-                            <View style={[styles.progressBarBg, { flex: 1 }]}>
-                                <View style={[styles.progressBarFill, { width: `${occupancyRate}%`, backgroundColor: COLORS.success }]} />
-                            </View>
-                            <Text style={[styles.occupancyValue, { color: COLORS.success }]}>{occupancyRate}%</Text>
+                        <View style={[styles.miniBadge, { backgroundColor: COLORS.success + "10" }]}>
+                            <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>{item.total_floors || 0} Floors</Text>
                         </View>
-                        <Text style={styles.statMainLabel}>OCCUPANCY</Text>
                     </View>
-
-                    <View style={styles.statusContainer}>
-                        <View style={[styles.statusBadge, {
-                            backgroundColor: item.status === "ACTIVE" ? COLORS.success + "15" : COLORS.warning + "15"
-                        }]}>
-                            <View style={[styles.statusDot, {
-                                backgroundColor: item.status === "ACTIVE" ? COLORS.success : COLORS.warning
-                            }]} />
-                            <Text style={[styles.statusText, {
-                                color: item.status === "ACTIVE" ? COLORS.success : COLORS.warning
-                            }]}>
-                                {item.status}
-                            </Text>
-                        </View>
-                        <Text style={styles.statMainLabel}>STATUS</Text>
-                    </View>
+                    <View style={[styles.statusIndicator, { backgroundColor: item.status === "ACTIVE" ? COLORS.success : COLORS.warning }]} />
                 </View>
             </TouchableOpacity>
         );
@@ -338,35 +319,39 @@ const PGsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
-                <View>
-                    <Text style={styles.title}>PG Properties</Text>
-                    <Text style={styles.subtitle}>Real-time property analytics active</Text>
+            {/* Compact Top App Bar */}
+            <View style={styles.appBar}>
+                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
+                    <Feather name="menu" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <Text style={styles.appBarTitle}>PG Properties</Text>
+                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                    <MaterialCommunityIcons name="database-sync" size={18} color={COLORS.text} />
+                </TouchableOpacity>
+            </View>
+
+            {/* Segmented Control for Tabs */}
+            <View style={styles.controlsWrapper}>
+                <View style={styles.segmentedControl}>
+                    <TouchableOpacity
+                        style={[styles.segment, activeTab === "Active" && styles.segmentActive]}
+                        onPress={() => setActiveTab("Active")}
+                    >
+                        <Text style={[styles.segmentText, activeTab === "Active" && styles.segmentTextActive]}>Active</Text>
+                    </TouchableOpacity>
+                    <TouchableOpacity
+                        style={[styles.segment, activeTab === "Archived" && styles.segmentActive]}
+                        onPress={() => setActiveTab("Archived")}
+                    >
+                        <Text style={[styles.segmentText, activeTab === "Archived" && styles.segmentTextActive]}>Archived</Text>
+                    </TouchableOpacity>
                 </View>
-                <TouchableOpacity style={styles.syncBtn} onPress={onRefresh}>
-                    <MaterialCommunityIcons name="database-sync" size={20} color={COLORS.textMuted} />
-                </TouchableOpacity>
             </View>
 
-            {/* Tab Switch */}
-            <View style={styles.tabBar}>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === "Active" && styles.tabActive]}
-                    onPress={() => setActiveTab("Active")}
-                >
-                    <Text style={[styles.tabText, activeTab === "Active" && styles.tabTextActive]}>Active</Text>
-                </TouchableOpacity>
-                <TouchableOpacity
-                    style={[styles.tab, activeTab === "Archived" && styles.tabActive]}
-                    onPress={() => setActiveTab("Archived")}
-                >
-                    <Text style={[styles.tabText, activeTab === "Archived" && styles.tabTextActive]}>Archived</Text>
-                </TouchableOpacity>
-            </View>
-
-            <View style={styles.searchSection}>
-                <View style={[styles.searchBar, searchTerm ? { borderColor: COLORS.primary } : {}]}>
-                    <Feather name="search" size={20} color={searchTerm ? COLORS.primary : COLORS.textMuted} />
+            {/* Full Width Search Bar */}
+            <View style={styles.searchContainer}>
+                <View style={styles.searchBar}>
+                    <Feather name="search" size={18} color={COLORS.textMuted} />
                     <TextInput
                         placeholder="Search by name or city..."
                         placeholderTextColor={COLORS.textMuted}
@@ -374,26 +359,17 @@ const PGsScreen = ({ navigation }: any) => {
                         value={searchTerm}
                         onChangeText={setSearchTerm}
                     />
-                    {searchTerm ? (
+                    {searchTerm !== "" && (
                         <TouchableOpacity onPress={() => setSearchTerm("")}>
                             <Feather name="x-circle" size={18} color={COLORS.textMuted} />
                         </TouchableOpacity>
-                    ) : (
-                        <View style={styles.filterDot} />
                     )}
-                </View>
-                <View style={styles.totalRow}>
-                    <View style={[styles.totalDot, searchTerm ? { backgroundColor: COLORS.primary } : { backgroundColor: COLORS.success }]} />
-                    <Text style={[styles.totalText, searchTerm ? { color: COLORS.primary } : { color: COLORS.textMuted }]}>
-                        {searchTerm ? `FOUND ${filteredPgs.length} PROPERTIES` : `TOTAL ${filteredPgs.length} PROPERTIES`}
-                    </Text>
                 </View>
             </View>
 
             {loading && !refreshing ? (
-                <View style={styles.loadingContainer}>
+                <View style={styles.centerContainer}>
                     <ActivityIndicator size="large" color={COLORS.primary} />
-                    <Text style={styles.loadingText}>Fetching properties...</Text>
                 </View>
             ) : (
                 <FlatList
@@ -403,21 +379,17 @@ const PGsScreen = ({ navigation }: any) => {
                     contentContainerStyle={styles.listContent}
                     refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
                     ListEmptyComponent={
-                        <View style={styles.emptyContainer}>
-                            <MaterialCommunityIcons name="office-building-cog-outline" size={64} color={COLORS.textMuted + "20"} />
-                            <Text style={styles.emptyText}>No {activeTab.toLowerCase()} properties found</Text>
+                        <View style={styles.emptyView}>
+                            <MaterialCommunityIcons name="office-building-marker-outline" size={48} color={COLORS.textMuted + "30"} />
+                            <Text style={styles.emptyTitle}>No properties found</Text>
                         </View>
                     }
                 />
             )}
 
-            <TouchableOpacity
-                style={styles.fab}
-                activeOpacity={0.8}
-                onPress={handleAdd}
-            >
+            {/* FAB */}
+            <TouchableOpacity style={styles.fab} activeOpacity={0.8} onPress={handleAdd}>
                 <Feather name="plus" size={24} color="#fff" />
-                <Text style={styles.fabText}>Create Property</Text>
             </TouchableOpacity>
 
             <PGFormModal
@@ -432,154 +404,135 @@ const PGsScreen = ({ navigation }: any) => {
                 onClose={() => {
                     setConfirmState(prev => ({ ...prev, visible: false }));
                     setConfirmInput("");
-                    setConfirmTargetCode("");
                 }}
                 onConfirm={confirmState.onConfirm}
                 title={confirmState.title}
                 message={confirmState.message}
                 type={confirmState.type}
-                confirmText={confirmState.confirmText}
+                confirmText={confirmTextForState(confirmState)}
                 cancelText={confirmState.cancelText}
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
                 needsInput={confirmState.needsInput}
                 inputPlaceholder={confirmState.inputPlaceholder}
                 inputValue={confirmInput}
-                onInputChange={(val) => setConfirmInput(val)}
-                confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
+                onInputChange={setConfirmInput}
                 disableOutsideTap={confirmState.type === "danger"}
             />
         </SafeAreaView>
     );
+
+    function confirmTextForState(state: any) {
+        return state.confirmText || (state.type === 'danger' ? 'Delete' : 'Confirm');
+    }
 };
 
-type ThemePalette = ReturnType<typeof useThemePalette>;
-
-const createStyles = (COLORS: ThemePalette) =>
+const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        header: { padding: 20, paddingTop: 10, flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
-        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-        subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-        syncBtn: { width: 44, height: 44, borderRadius: 14, backgroundColor: COLORS.card, justifyContent: "center", alignItems: "center", borderWidth: 1, borderColor: COLORS.border, marginRight: -4 },
 
-        tabBar: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
-        tab: { paddingHorizontal: 20, paddingVertical: 10, borderRadius: 12, backgroundColor: COLORS.card, borderWidth: 1, borderColor: COLORS.border },
-        tabActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-        tabText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "700" },
-        tabTextActive: { color: "#fff" },
-
-        searchSection: { marginHorizontal: 20, marginBottom: 20 },
-        searchBar: {
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: COLORS.card,
-            borderRadius: 16,
+        // App Bar
+        appBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
             paddingHorizontal: 16,
-            height: 52,
+            height: 60,
+            backgroundColor: COLORS.card,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border,
+        },
+        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
+
+        // Controls
+        controlsWrapper: { padding: 16, paddingBottom: 8 },
+        segmentedControl: {
+            flexDirection: 'row',
+            backgroundColor: COLORS.card,
+            borderRadius: 12,
+            padding: 4,
             borderWidth: 1,
             borderColor: COLORS.border,
         },
-        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-        filterDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
-        totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 10 },
-        totalDot: { width: 6, height: 6, borderRadius: 3 },
-        totalText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
+        segment: { flex: 1, paddingVertical: 8, alignItems: 'center', borderRadius: 8 },
+        segmentActive: { backgroundColor: COLORS.primary },
+        segmentText: { fontSize: 13, fontWeight: '700', color: COLORS.textMuted },
+        segmentTextActive: { color: '#fff' },
 
-        listContent: { paddingHorizontal: 20, paddingBottom: 100 },
+        // Search
+        searchContainer: { paddingHorizontal: 16, paddingBottom: 12 },
+        searchBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            backgroundColor: COLORS.card,
+            borderRadius: 12,
+            paddingHorizontal: 16,
+            height: 48,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        searchInput: { flex: 1, marginLeft: 12, fontSize: 14, fontWeight: '600', color: COLORS.text },
+
+        // List
+        listContent: { padding: 16, paddingBottom: 100 },
         card: {
             backgroundColor: COLORS.card,
-            borderRadius: 24,
-            padding: 20,
+            borderRadius: 16,
+            padding: 16,
             marginBottom: 16,
             borderWidth: 1,
             borderColor: COLORS.border,
+            elevation: 2,
         },
-        cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 12 },
-        headerTitleContainer: { flex: 1 },
-        propertyName: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 6 },
-        badgeRow: { flexDirection: "row", gap: 8 },
-        badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8 },
-        badgeText: { fontSize: 9, fontWeight: "900" },
-        headerIcons: { flexDirection: "row", gap: 10 },
-        iconBtn: { padding: 4 },
+        cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
+        headerLeft: { flex: 1, marginRight: 12 },
+        propertyName: { fontSize: 18, fontWeight: '800', color: COLORS.text },
+        locationContainer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
+        locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: '600' },
+        menuBtn: { padding: 4 },
 
-        locationContainer: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 16 },
-        locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
-
-        divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
-
-        statsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
-        statContainer: { flex: 1.8 },
-        statBox: {
-            flexDirection: "row",
-            backgroundColor: COLORS.bg,
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-            paddingVertical: 10,
-            paddingHorizontal: 8,
-            marginBottom: 6,
-            minHeight: 56,
-            alignItems: "center"
-        },
-        statSubBox: { flex: 1, alignItems: "center", justifyContent: "center" },
-        statSubValue: { fontSize: 16, fontWeight: "800", color: COLORS.text, marginBottom: 2 },
-        statSubLabel: {
-            fontSize: 7.5,
-            fontWeight: "900",
-            color: COLORS.textMuted,
-            textTransform: "uppercase",
-            textAlign: "center",
-            width: "100%"
-        },
-        statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5, textAlign: "center" },
-
-        occupancyContainer: { flex: 1, marginHorizontal: 8 },
-        occupancyHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, height: 44, justifyContent: "center" },
-        progressBarBg: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
-        progressBarFill: { height: "100%", borderRadius: 3 },
-        occupancyValue: { fontSize: 13, fontWeight: "800" },
-
-        statusContainer: { flex: 1, alignItems: "flex-end" },
-        statusBadge: {
-            flexDirection: "row",
-            alignItems: "center",
-            paddingHorizontal: 10,
-            paddingVertical: 6,
+        statsGrid: {
+            flexDirection: 'row',
+            backgroundColor: COLORS.bg + '50',
             borderRadius: 12,
-            gap: 6,
-            marginBottom: 8,
-            height: 44,
-            justifyContent: "center"
+            paddingVertical: 12,
+            borderWidth: 1,
+            borderColor: COLORS.border + '40',
+            marginBottom: 16
         },
-        statusDot: { width: 6, height: 6, borderRadius: 3 },
-        statusText: { fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+        statCell: { flex: 1, alignItems: 'center' },
+        statDivider: { borderLeftWidth: 1, borderRightWidth: 1, borderColor: COLORS.border + '40' },
+        statValue: { fontSize: 16, fontWeight: '900', color: COLORS.text },
+        statLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase', marginTop: 2 },
 
-        loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-        loadingText: { color: COLORS.textMuted, marginTop: 12, fontWeight: "600" },
-        emptyContainer: { alignItems: "center", marginTop: 60, gap: 16 },
-        emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+        cardFooter: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+        badgeGroup: { flexDirection: 'row', gap: 8 },
+        miniBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+        miniBadgeText: { fontSize: 9, fontWeight: '900' },
+        statusIndicator: { width: 8, height: 8, borderRadius: 4 },
+
+        // States
+        centerContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+        emptyView: { alignItems: 'center', marginTop: 60, gap: 12 },
+        emptyTitle: { fontSize: 16, fontWeight: '800', color: COLORS.textMuted },
 
         fab: {
-            position: "absolute",
+            position: 'absolute',
             bottom: 30,
-            right: 20,
-            flexDirection: "row",
-            paddingHorizontal: 20,
+            right: 24,
+            width: 56,
             height: 56,
             borderRadius: 28,
             backgroundColor: COLORS.primary,
-            justifyContent: "center",
-            alignItems: "center",
+            justifyContent: 'center',
+            alignItems: 'center',
             elevation: 8,
             shadowColor: COLORS.primary,
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.3,
             shadowRadius: 6,
-            gap: 10
-        },
-        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
+        }
     });
 
 export default PGsScreen;

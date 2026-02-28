@@ -8,7 +8,6 @@ import {
     ActivityIndicator,
     Dimensions,
     TouchableOpacity,
-    TextInput,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { pnlAPI } from "../services/api";
@@ -18,17 +17,15 @@ import {
     VictoryChart,
     VictoryAxis,
     VictoryGroup,
-    VictoryLegend,
     VictoryPie,
-    VictoryTooltip,
-    VictoryLabel
+    VictoryTheme,
 } from "victory-native";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 
 const { width } = Dimensions.get("window");
 
-const ProfitLossScreen = () => {
+const ProfitLossScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
@@ -93,7 +90,6 @@ const ProfitLossScreen = () => {
     }, [summary]);
 
     const chartData = useMemo(() => {
-        // Take last 6 months for chart
         const sorted = [...summary].sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
         const recent = sorted.slice(-6);
 
@@ -117,18 +113,6 @@ const ProfitLossScreen = () => {
         })).sort((a, b) => b.y - a.y).slice(0, 5); // Top 5 categories
     }, [categoryStats]);
 
-    const StatCard = ({ title, value, icon, color, isPercent = false, style }: any) => (
-        <View style={[styles.statCard, style, { borderColor: COLORS.border }]}>
-            <View style={[styles.statIcon, { backgroundColor: color + "10" }]}>
-                <MaterialCommunityIcons name={icon} size={20} color={color} />
-            </View>
-            <Text style={styles.statLabel}>{title}</Text>
-            <Text style={[styles.statValue, { color: color }]}>
-                {isPercent ? `${value}%` : `₹${Number(value).toLocaleString()}`}
-            </Text>
-        </View>
-    );
-
     const BreakdownCard = ({ item }: { item: any }) => (
         <View style={styles.breakdownCard}>
             <View style={styles.breakdownHeader}>
@@ -138,7 +122,7 @@ const ProfitLossScreen = () => {
                     </Text>
                     <Text style={styles.breakdownProperty}>{item.pgs?.name || "All Properties"}</Text>
                 </View>
-                <View style={[styles.profitBadge, { backgroundColor: item.net_profit >= 0 ? COLORS.success + "15" : COLORS.danger + "15" }]}>
+                <View style={[styles.profitBadge, { backgroundColor: item.net_profit >= 0 ? COLORS.success + "12" : COLORS.danger + "12" }]}>
                     <Text style={[styles.profitBadgeText, { color: item.net_profit >= 0 ? COLORS.success : COLORS.danger }]}>
                         {item.net_profit >= 0 ? "PROFIT" : "LOSS"}
                     </Text>
@@ -172,39 +156,60 @@ const ProfitLossScreen = () => {
 
     return (
         <SafeAreaView style={styles.container}>
+            {/* Compact Top App Bar */}
+            <View style={styles.appBar}>
+                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
+                    <Feather name="menu" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <Text style={styles.appBarTitle}>Profit & Loss</Text>
+                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                </TouchableOpacity>
+            </View>
+
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
             >
-                <View style={styles.header}>
-                    <Text style={styles.title}>Profit & Loss</Text>
-                    <Text style={styles.subtitle}>Financial performance analysis</Text>
+                {/* Analytics Summary */}
+                <View style={styles.summarySection}>
+                    {/* Primary Dominant Card */}
+                    <View style={styles.mainProfitCard}>
+                        <View>
+                            <Text style={styles.mainLabel}>NET PROFIT</Text>
+                            <Text style={[styles.mainValue, { color: stats.netProfit >= 0 ? COLORS.success : COLORS.danger }]}>
+                                ₹{stats.netProfit.toLocaleString()}
+                            </Text>
+                        </View>
+                        <View style={[styles.mainIcon, { backgroundColor: (stats.netProfit >= 0 ? COLORS.success : COLORS.danger) + '10' }]}>
+                            <MaterialCommunityIcons
+                                name={stats.netProfit >= 0 ? "trending-up" : "trending-down"}
+                                size={24}
+                                color={stats.netProfit >= 0 ? COLORS.success : COLORS.danger}
+                            />
+                        </View>
+                    </View>
+
+                    {/* Secondary Compact Grid */}
+                    <View style={styles.statGrid}>
+                        <View style={styles.statCell}>
+                            <Text style={styles.statLabel}>REVENUE</Text>
+                            <Text style={[styles.statValue, { color: COLORS.success }]}>₹{stats.totalRevenue.toLocaleString()}</Text>
+                        </View>
+                        <View style={styles.statCell}>
+                            <Text style={styles.statLabel}>EXPENSES</Text>
+                            <Text style={[styles.statValue, { color: COLORS.danger }]}>₹{stats.totalExpenses.toLocaleString()}</Text>
+                        </View>
+                        <View style={styles.statCell}>
+                            <Text style={styles.statLabel}>MARGIN</Text>
+                            <Text style={[styles.statValue, { color: COLORS.primary }]}>{stats.profitMargin}%</Text>
+                        </View>
+                    </View>
                 </View>
 
-                {/* KPI Cards */}
-                <View style={styles.kpiGrid}>
-                    <View style={styles.kpiRow}>
-                        <StatCard
-                            title="TOTAL REVENUE"
-                            value={stats.totalRevenue}
-                            icon="cash-plus"
-                            color={COLORS.success}
-                        />
-                        <StatCard title="TOTAL EXPENSES" value={stats.totalExpenses} icon="cash-minus" color={COLORS.danger} />
-                    </View>
-                    <View style={styles.kpiRow}>
-                        <StatCard
-                            title="NET PROFIT"
-                            value={stats.netProfit}
-                            icon="bank"
-                            color={COLORS.primary}
-                        />
-                        <StatCard title="PROFIT MARGIN" value={stats.profitMargin} icon="percent" color={COLORS.warning} isPercent />
-                    </View>
-                </View>
-
-                {/* Filters - now opens bottom sheet */}
-                <View style={styles.filtersRow}>
+                {/* Section Header with Filter aligned right */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionTitle}>Performance Analytics</Text>
                     <TouchableOpacity
                         style={styles.filterTrigger}
                         onPress={() => {
@@ -213,118 +218,102 @@ const ProfitLossScreen = () => {
                             setFilterSheetVisible(true);
                         }}
                     >
-                        <Feather name="sliders" size={16} color={COLORS.primary} />
                         <Text style={styles.filterTriggerText}>
-                            {selectedMonth === "all" ? selectedTimeFilter : new Date(selectedMonth).toLocaleDateString(undefined, { month: 'short', year: 'numeric' })}
+                            {selectedMonth === "all" ? selectedTimeFilter : new Date(selectedMonth).toLocaleDateString(undefined, { month: 'short' })}
                         </Text>
-                        <Feather name="chevron-down" size={16} color={COLORS.textMuted} />
+                        <Feather name="chevron-down" size={14} color={COLORS.textMuted} />
                     </TouchableOpacity>
                 </View>
 
                 {/* Monthly Performance Chart */}
-                <View style={styles.chartSection}>
-                    <Text style={styles.sectionTitle}>Monthly Performance</Text>
-                    <View style={styles.chartContainer}>
-                        {chartData.length > 0 ? (
+                <View style={styles.chartCard}>
+                    {chartData.length > 0 ? (
+                        <View style={styles.chartWrapper}>
                             <VictoryChart
                                 width={width - 40}
                                 height={220}
-                                domainPadding={{ x: 20 }}
-                                padding={{ top: 20, bottom: 40, left: 50, right: 30 }}
                             >
-                                <VictoryAxis
-                                    style={{
-                                        axis: { stroke: COLORS.border },
-                                        tickLabels: { fill: COLORS.textMuted, fontSize: 10, fontWeight: "600" }
-                                    }}
+                                <VictoryBar
+                                    data={chartData}
+                                    x="month"
+                                    y="revenue"
+                                    style={{ data: { fill: COLORS.success } }}
                                 />
-                                <VictoryAxis
-                                    dependentAxis
-                                    tickFormat={(t) => `₹${t >= 1000 ? (t / 1000).toFixed(1) + 'k' : t}`}
-                                    style={{
-                                        axis: { stroke: COLORS.border },
-                                        grid: { stroke: COLORS.border, strokeDasharray: "4, 4" },
-                                        tickLabels: { fill: COLORS.textMuted, fontSize: 8 }
-                                    }}
+                                <VictoryBar
+                                    data={chartData}
+                                    x="month"
+                                    y="expense"
+                                    style={{ data: { fill: COLORS.danger } }}
                                 />
-                                <VictoryGroup offset={12}>
-                                    <VictoryBar
-                                        data={chartData}
-                                        x="month"
-                                        y="revenue"
-                                        style={{ data: { fill: COLORS.success, width: 10, borderRadius: 5 } }}
-                                        animate={{ duration: 500 }}
-                                    />
-                                    <VictoryBar
-                                        data={chartData}
-                                        x="month"
-                                        y="expense"
-                                        style={{ data: { fill: COLORS.danger, width: 10, borderRadius: 5 } }}
-                                        animate={{ duration: 500 }}
-                                    />
-                                </VictoryGroup>
                             </VictoryChart>
-                        ) : (
-                            <View style={styles.emptyChart}>
-                                <Text style={styles.emptyText}>Not enough data for chart</Text>
-                            </View>
-                        )}
-                        <View style={styles.legendRow}>
-                            <View style={styles.legendItem}>
-                                <View style={[styles.legendDot, { backgroundColor: COLORS.success }]} />
-                                <Text style={styles.legendText}>Revenue</Text>
-                            </View>
-                            <View style={styles.legendItem}>
-                                <View style={[styles.legendDot, { backgroundColor: COLORS.danger }]} />
-                                <Text style={styles.legendText}>Expenses</Text>
+                            <View style={styles.legendRow}>
+                                <View style={styles.legendItem}>
+                                    <View style={[styles.legendDot, { backgroundColor: COLORS.success }]} />
+                                    <Text style={styles.legendText}>Revenue</Text>
+                                </View>
+                                <View style={styles.legendItem}>
+                                    <View style={[styles.legendDot, { backgroundColor: COLORS.danger }]} />
+                                    <Text style={styles.legendText}>Expenses</Text>
+                                </View>
                             </View>
                         </View>
-                    </View>
+                    ) : (
+                        <View style={styles.emptyChart}>
+                            <MaterialCommunityIcons name="chart-bar-stacked" size={40} color={COLORS.textMuted + "30"} />
+                            <Text style={styles.emptyTitle}>No Performance Data</Text>
+                            <Text style={styles.emptySubtitle}>Log payments and expenses to see charts</Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Expense Distribution */}
-                <View style={styles.chartSection}>
-                    <Text style={styles.sectionTitle}>Expense Distribution</Text>
-                    <View style={styles.donutContainer}>
-                        {pieData.length > 0 ? (
-                            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                                <VictoryPie
-                                    data={pieData}
-                                    innerRadius={70}
-                                    width={width * 0.5}
-                                    height={width * 0.5}
-                                    padding={20}
-                                    colorScale={[COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"]}
-                                    labels={() => null}
-                                />
-                                <View style={styles.pieLegend}>
-                                    {pieData.map((item, i) => (
-                                        <View key={i} style={styles.pieLegendItem}>
-                                            <View style={[styles.legendDot, { backgroundColor: [COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"][i] }]} />
-                                            <Text style={styles.pieLegendText} numberOfLines={1}>{item.x}</Text>
-                                        </View>
-                                    ))}
-                                </View>
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionTitle}>Expense Breakup</Text>
+                </View>
+                <View style={styles.chartCard}>
+                    {pieData.length > 0 ? (
+                        <View style={styles.pieWrapper}>
+                            <VictoryPie
+                                data={pieData}
+                                innerRadius={65}
+                                width={width * 0.45}
+                                height={width * 0.45}
+                                padding={10}
+                                colorScale={[COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"]}
+                                labels={() => ""}
+                            />
+                            <View style={styles.pieLegend}>
+                                {pieData.map((item, i) => (
+                                    <View key={i} style={styles.pieLegendItem}>
+                                        <View style={[styles.legendDot, { backgroundColor: [COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"][i] }]} />
+                                        <Text style={styles.pieLegendText} numberOfLines={1}>{item.x}</Text>
+                                        <Text style={styles.pieValueText}>₹{item.y >= 1000 ? `${(item.y / 1000).toFixed(1)}k` : item.y}</Text>
+                                    </View>
+                                ))}
                             </View>
-                        ) : (
-                            <View style={styles.emptyChart}>
-                                <Text style={styles.emptyText}>No expense categories found</Text>
-                            </View>
-                        )}
-                    </View>
+                        </View>
+                    ) : (
+                        <View style={styles.emptyChart}>
+                            <MaterialCommunityIcons name="chart-donut" size={40} color={COLORS.textMuted + "30"} />
+                            <Text style={styles.emptyTitle}>No Expense Data</Text>
+                            <Text style={styles.emptySubtitle}>Add expenses to see the category breakup</Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Detailed Breakdown */}
                 <View style={styles.breakdownSection}>
-                    <Text style={styles.sectionTitle}>Detailed Breakdown</Text>
+                    <View style={styles.sectionHeaderRow}>
+                        <Text style={styles.sectionTitle}>Monthly History</Text>
+                    </View>
                     {summary.length > 0 ? (
                         summary.map((item, index) => (
                             <BreakdownCard key={index} item={item} />
                         ))
                     ) : (
                         <View style={styles.emptyState}>
-                            <MaterialCommunityIcons name="finance" size={64} color={COLORS.textMuted + "20"} />
-                            <Text style={styles.emptyText}>No financial records found</Text>
+                            <MaterialCommunityIcons name="finance" size={48} color={COLORS.textMuted + "20"} />
+                            <Text style={styles.emptyTitle}>No History Available</Text>
                         </View>
                     )}
                 </View>
@@ -334,8 +323,7 @@ const ProfitLossScreen = () => {
 
             <FilterBottomSheet
                 visible={isFilterSheetVisible}
-                title="P&L Filters"
-                description="Filter by time period and month (matching web behavior)"
+                title="Analytics Filters"
                 onClose={() => setFilterSheetVisible(false)}
                 onApply={() => {
                     setSelectedTimeFilter(pendingTimeFilter);
@@ -352,7 +340,7 @@ const ProfitLossScreen = () => {
             >
                 <View style={styles.sheetSection}>
                     <Text style={styles.sheetLabel}>Time Period</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
+                    <View style={styles.sheetChipsRow}>
                         {["All Time", "Monthly", "Yearly"].map(filter => (
                             <TouchableOpacity
                                 key={filter}
@@ -362,18 +350,18 @@ const ProfitLossScreen = () => {
                                 <Text style={[styles.sheetChipText, pendingTimeFilter === filter && styles.sheetChipTextActive]}>{filter}</Text>
                             </TouchableOpacity>
                         ))}
-                    </ScrollView>
+                    </View>
                 </View>
 
                 {availableMonths.length > 0 && (
                     <View style={styles.sheetSection}>
-                        <Text style={styles.sheetLabel}>Month</Text>
+                        <Text style={styles.sheetLabel}>Select Month</Text>
                         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
                             <TouchableOpacity
                                 style={[styles.sheetChip, pendingMonth === "all" && styles.sheetChipActive]}
                                 onPress={() => setPendingMonth("all")}
                             >
-                                <Text style={[styles.sheetChipText, pendingMonth === "all" && styles.sheetChipTextActive]}>All Months</Text>
+                                <Text style={[styles.sheetChipText, pendingMonth === "all" && styles.sheetChipTextActive]}>All Time</Text>
                             </TouchableOpacity>
                             {availableMonths.map(month => (
                                 <TouchableOpacity
@@ -394,131 +382,142 @@ const ProfitLossScreen = () => {
     );
 };
 
-type ThemePalette = ReturnType<typeof useThemePalette>;
-
-const createStyles = (COLORS: ThemePalette) =>
+const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        header: { padding: 20, paddingBottom: 10 },
-        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-        subtitle: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
 
-        kpiGrid: {
+        // App Bar
+        appBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 16,
+            height: 60,
+            backgroundColor: COLORS.card,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border,
+        },
+        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
+
+        // Summary Section
+        summarySection: { padding: 16 },
+        mainProfitCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            padding: 20,
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderWidth: 1,
+            borderColor: COLORS.primary + '20',
+            marginBottom: 12,
+            elevation: 2,
+        },
+        mainLabel: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1 },
+        mainValue: { fontSize: 28, fontWeight: '900', marginTop: 4 },
+        mainIcon: { width: 48, height: 48, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+
+        statGrid: { flexDirection: 'row', gap: 10 },
+        statCell: {
+            flex: 1,
+            backgroundColor: COLORS.card,
+            borderRadius: 12,
+            padding: 12,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            alignItems: 'center',
+        },
+        statLabel: { fontSize: 9, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5, marginBottom: 4 },
+        statValue: { fontSize: 15, fontWeight: '800' },
+
+        // Section Headers
+        sectionHeaderRow: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
             paddingHorizontal: 20,
-            paddingVertical: 8,
-            gap: 8,
+            marginBottom: 12,
         },
-        kpiRow: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            marginBottom: 8,
-            gap: 10,
-        },
-        statCard: {
-            flexBasis: "48%",
-            maxWidth: "48%",
-            backgroundColor: COLORS.card,
-            borderRadius: 18,
-            paddingVertical: 10,
-            paddingHorizontal: 12,
-            borderWidth: 1,
-            minHeight: 90,
-            justifyContent: "space-between",
-            marginBottom: 10,
-        },
-        statIcon: { width: 32, height: 32, borderRadius: 10, justifyContent: "center", alignItems: "center", marginBottom: 8 },
-        statLabel: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, marginBottom: 4 },
-        statValue: { fontSize: 15, fontWeight: "800" },
-
-        filtersRow: { flexDirection: "row", paddingHorizontal: 20, gap: 10, marginBottom: 20 },
+        sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text },
         filterTrigger: {
-            flexDirection: "row",
-            alignItems: "center",
+            flexDirection: 'row',
+            alignItems: 'center',
             backgroundColor: COLORS.card,
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderRadius: 12,
+            paddingHorizontal: 12,
+            paddingVertical: 6,
+            borderRadius: 8,
             borderWidth: 1,
             borderColor: COLORS.border,
-            gap: 8
+            gap: 6,
         },
-        filterTriggerText: { fontSize: 14, fontWeight: "700", color: COLORS.text },
-        filterChip: {
-            paddingHorizontal: 16,
-            paddingVertical: 8,
-            borderRadius: 12,
-            backgroundColor: COLORS.card,
-            borderWidth: 1,
-            borderColor: COLORS.border
-        },
-        filterChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-        filterChipText: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
-        filterChipTextActive: { color: "#fff" },
+        filterTriggerText: { fontSize: 12, fontWeight: '700', color: COLORS.primary },
 
-        chartSection: { marginHorizontal: 20, marginBottom: 24 },
-        sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text, marginBottom: 16 },
-        chartContainer: {
+        // Charts
+        chartCard: {
             backgroundColor: COLORS.card,
-            borderRadius: 24,
-            paddingVertical: 10,
+            borderRadius: 16,
+            marginHorizontal: 16,
+            marginBottom: 24,
+            padding: 16,
             borderWidth: 1,
             borderColor: COLORS.border,
-            alignItems: "center"
+            alignItems: 'center',
         },
-        legendRow: { flexDirection: "row", gap: 20, marginTop: -10, marginBottom: 10 },
-        legendItem: { flexDirection: "row", alignItems: "center", gap: 6 },
+        chartWrapper: { alignItems: 'center' },
+        legendRow: { flexDirection: 'row', gap: 20, marginTop: 10 },
+        legendItem: { flexDirection: 'row', alignItems: 'center', gap: 6 },
         legendDot: { width: 8, height: 8, borderRadius: 4 },
-        legendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted },
+        legendText: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted },
 
-        donutContainer: {
-            backgroundColor: COLORS.card,
-            borderRadius: 24,
-            padding: 10,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-        },
-        pieLegend: { flex: 1, gap: 10, paddingRight: 10 },
-        pieLegendItem: { flexDirection: "row", alignItems: "center", gap: 8 },
-        pieLegendText: { fontSize: 11, fontWeight: "700", color: COLORS.textMuted, flex: 1 },
+        pieWrapper: { flexDirection: 'row', alignItems: 'center', width: '100%', justifyContent: 'space-around' },
+        pieLegend: { flex: 1, gap: 10, marginLeft: 10 },
+        pieLegendItem: { flexDirection: 'row', alignItems: 'center' },
+        pieLegendText: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted, flex: 1, marginLeft: 8 },
+        pieValueText: { fontSize: 11, fontWeight: '800', color: COLORS.text },
 
-        breakdownSection: { paddingHorizontal: 20 },
+        // Detailed Breakdown
+        breakdownSection: { paddingBottom: 20 },
         breakdownCard: {
             backgroundColor: COLORS.card,
-            borderRadius: 24,
-            padding: 20,
-            marginBottom: 16,
+            borderRadius: 14,
+            marginHorizontal: 16,
+            marginBottom: 12,
+            padding: 16,
             borderWidth: 1,
             borderColor: COLORS.border,
         },
-        breakdownHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 20 },
-        breakdownMonth: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-        breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-        profitBadge: { paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
-        profitBadgeText: { fontSize: 9, fontWeight: "900" },
+        breakdownHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+        breakdownMonth: { fontSize: 15, fontWeight: '800', color: COLORS.text },
+        breakdownProperty: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: '600' },
+        profitBadge: { paddingHorizontal: 8, paddingVertical: 2, borderRadius: 6 },
+        profitBadgeText: { fontSize: 9, fontWeight: '900' },
 
-        breakdownGrid: { flexDirection: "row", justifyContent: "space-between" },
+        breakdownGrid: { flexDirection: 'row', justifyContent: 'space-between' },
         gridItem: { flex: 1 },
-        gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 6 },
-        gridValue: { fontSize: 14, fontWeight: "800" },
+        gridLabel: { fontSize: 9, fontWeight: '800', color: COLORS.textMuted, marginBottom: 4 },
+        gridValue: { fontSize: 13, fontWeight: '800' },
 
-        emptyChart: { height: 150, justifyContent: "center", alignItems: "center" },
-        emptyState: { alignItems: "center", marginTop: 40, gap: 16 },
-        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+        // Empty States
+        emptyChart: { padding: 20, alignItems: 'center', justifyContent: 'center' },
+        emptyTitle: { fontSize: 15, fontWeight: '800', color: COLORS.text, marginTop: 12 },
+        emptySubtitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 4, textAlign: 'center' },
+        emptyState: { alignItems: 'center', paddingVertical: 40 },
 
-        // Bottom sheet styles
+        // Bottom Sheet
         sheetSection: { marginBottom: 20 },
-        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 10 },
-        sheetChipsRow: { flexDirection: "row", gap: 10 },
+        sheetLabel: { fontSize: 13, fontWeight: '700', color: COLORS.text, marginBottom: 10 },
+        sheetChipsRow: { flexDirection: 'row', gap: 10 },
         sheetChip: {
             paddingHorizontal: 16,
             paddingVertical: 10,
-            borderRadius: 14,
+            borderRadius: 12,
             backgroundColor: COLORS.card,
             borderWidth: 1,
-            borderColor: COLORS.border
+            borderColor: COLORS.border,
         },
         sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
-        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetChipText: { fontSize: 13, fontWeight: '600', color: COLORS.text },
         sheetChipTextActive: { color: COLORS.primary }
     });
 

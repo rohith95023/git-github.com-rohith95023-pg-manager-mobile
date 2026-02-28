@@ -16,6 +16,7 @@ import { useAuth } from "../context/AuthContext";
 import { statsAPI, paymentAPI, tenantAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 
 const { width } = Dimensions.get("window");
 
@@ -32,7 +33,7 @@ const Dashboard = ({ navigation, route }: any) => {
 
     const fetchData = useCallback(async () => {
         try {
-            // Balance reconciliation (optional but ensures accuracy like web sync)
+            // Balance reconciliation
             try {
                 await statsAPI.reconcileAllBalances();
             } catch (err) {
@@ -62,6 +63,8 @@ const Dashboard = ({ navigation, route }: any) => {
         }
     }, [route.params?.refresh]);
 
+    useRefreshOnForeground(fetchData, isFocused);
+
     useEffect(() => {
         if (isFocused) {
             fetchData();
@@ -81,195 +84,148 @@ const Dashboard = ({ navigation, route }: any) => {
         );
     }
 
-    const KPICard = ({ title, value, icon, iconType = "Feather", color = COLORS.primary }: any) => {
-        const IconComponent = iconType === "Material" ? MaterialCommunityIcons : Feather;
-        return (
-            <View style={styles.kpiCard}>
-                <View style={[styles.kpiIconBox, { backgroundColor: color + "15" }]}>
-                    <IconComponent name={icon as any} size={20} color={color} />
-                </View>
-                <Text style={styles.kpiValue}>{value}</Text>
-                <Text style={styles.kpiTitle}>{title}</Text>
-            </View>
-        );
-    };
-
-    const SectionHeader = ({ title, onSeeAll }: any) => (
-        <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>{title}</Text>
-            {onSeeAll && (
-                <TouchableOpacity onPress={onSeeAll} style={styles.seeAllBtn}>
-                    <Text style={styles.seeAllText}>View All</Text>
-                    <Feather name="arrow-right" size={12} color={COLORS.primary} />
-                </TouchableOpacity>
-            )}
-        </View>
-    );
-
     return (
-        <SafeAreaView style={styles.container} edges={['bottom', 'left', 'right']}>
+        <SafeAreaView style={styles.container}>
+            {/* Top App Bar */}
+            <View style={styles.appBar}>
+                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
+                    <Feather name="menu" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <Text style={styles.appBarTitle}>Overview</Text>
+                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                    <Ionicons name="notifications-outline" size={20} color={COLORS.text} />
+                </TouchableOpacity>
+            </View>
+
             <ScrollView
                 showsVerticalScrollIndicator={false}
                 contentContainerStyle={styles.scrollContent}
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
             >
-                {/* Header Info */}
-                <View style={styles.welcomeSection}>
-                    <Text style={styles.welcomeSubtitle}>Welcome back{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : ''}</Text>
-                    <Text style={styles.dateText}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric' })}</Text>
-                </View>
-
-                {/* KPI Grid */}
-                <View style={styles.kpiGrid}>
-                    <KPICard title="Total PGs" value={stats?.totalPGs || 0} icon="home" />
-                    <KPICard title="Active Rooms" value={stats?.activeRooms || 0} icon="door-open" iconType="Material" color={COLORS.success} />
-                    <KPICard title="Residents" value={stats?.totalTenants || 0} icon="users" color={COLORS.warning} />
-                    <KPICard title="Active Beds" value={(stats?.totalBeds || 0) - (stats?.maintenanceBeds || 0)} icon="bed" iconType="Material" color={COLORS.primary} />
-                    <KPICard title="Available" value={stats?.availableBeds || 0} icon="bed-outline" iconType="Material" color={COLORS.success} />
-                    <KPICard title="Occupancy" value={`${stats?.occupancyRate || 0}%`} icon="percent" color="#8884d8" />
-                    <KPICard title="Daily Stays" value={stats?.dailyActiveTenants || 0} icon="clock" color={COLORS.primary} />
-                    <KPICard title="Monthly Stays" value={stats?.monthlyActiveTenants || 0} icon="calendar" color={COLORS.success} />
-                </View>
-
-                {/* Financial Summary Grouped Card */}
-                <View style={styles.financeCard}>
-                    <View style={styles.financeHeader}>
-                        <Text style={styles.financeTitle}>Financial Summary</Text>
-                        <Feather name="trending-up" size={18} color={COLORS.success} />
+                {/* Modernized Welcome Section */}
+                <View style={styles.welcomeCard}>
+                    <View>
+                        <Text style={styles.welcomeTitle}>Hello{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : '!'}</Text>
+                        <Text style={styles.dateLabel}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Text>
                     </View>
+                    <View style={styles.mainKPIBox}>
+                        <Text style={styles.mainKPIValue}>{stats?.occupancyRate || 0}%</Text>
+                        <Text style={styles.mainKPILabel}>Occupancy</Text>
+                    </View>
+                </View>
+
+                {/* Performance Highlights Grid */}
+                <View style={styles.statsGrid}>
+                    <View style={styles.statBox}>
+                        <View style={[styles.iconPill, { backgroundColor: COLORS.primary + "15" }]}>
+                            <Feather name="home" size={14} color={COLORS.primary} />
+                        </View>
+                        <Text style={styles.statValue}>{stats?.totalPGs || 0}</Text>
+                        <Text style={styles.statLabel}>Properties</Text>
+                    </View>
+                    <View style={styles.statBox}>
+                        <View style={[styles.iconPill, { backgroundColor: COLORS.success + "15" }]}>
+                            <Feather name="box" size={14} color={COLORS.success} />
+                        </View>
+                        <Text style={styles.statValue}>{stats?.activeRooms || 0}</Text>
+                        <Text style={styles.statLabel}>Rooms</Text>
+                    </View>
+                    <View style={styles.statBox}>
+                        <View style={[styles.iconPill, { backgroundColor: COLORS.warning + "15" }]}>
+                            <Feather name="users" size={14} color={COLORS.warning} />
+                        </View>
+                        <Text style={styles.statValue}>{stats?.totalTenants || 0}</Text>
+                        <Text style={styles.statLabel}>Residents</Text>
+                    </View>
+                    <View style={styles.statBox}>
+                        <View style={[styles.iconPill, { backgroundColor: COLORS.danger + "15" }]}>
+                            <Feather name="clock" size={14} color={COLORS.danger} />
+                        </View>
+                        <Text style={styles.statValue}>{stats?.dailyActiveTenants || 0}</Text>
+                        <Text style={styles.statLabel}>Daily Stays</Text>
+                    </View>
+                </View>
+
+                {/* Financial Overview Card */}
+                <View style={styles.financialSummary}>
+                    <Text style={styles.sectionTitle}>Financials</Text>
                     <View style={styles.financeGrid}>
                         <View style={styles.financeItem}>
-                            <Text style={styles.financeLabel}>Monthly Revenue</Text>
+                            <Text style={styles.financeLabel}>Revenue</Text>
                             <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{(stats?.monthlyRevenue || 0).toLocaleString()}</Text>
                         </View>
                         <View style={styles.financeItem}>
-                            <Text style={styles.financeLabel}>Net Profit</Text>
+                            <Text style={styles.financeLabel}>Profit</Text>
                             <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(stats?.netProfit || 0).toLocaleString()}</Text>
                         </View>
                         <View style={styles.financeItem}>
-                            <Text style={styles.financeLabel}>All-time Revenue</Text>
-                            <Text style={styles.financeValue}>₹{(stats?.totalRevenue || 0).toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.financeItem}>
-                            <Text style={styles.financeLabel}>Pending Dues</Text>
+                            <Text style={styles.financeLabel}>Due</Text>
                             <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.pendingDues || 0).toLocaleString()}</Text>
                         </View>
+                        <TouchableOpacity
+                            style={styles.detailsBtn}
+                            onPress={() => navigation.navigate("ProfitLoss")}
+                        >
+                            <Text style={styles.detailsBtnText}>Analysis</Text>
+                            <Feather name="arrow-right" size={12} color={COLORS.textMuted} />
+                        </TouchableOpacity>
                     </View>
                 </View>
 
-                {/* Daily Stay Tenants */}
-                <SectionHeader title="Daily Stay Tenants" onSeeAll={() => navigation.navigate("Residents")} />
-                {dailyTenants.length > 0 ? (
-                    <View style={styles.listContainer}>
-                        {dailyTenants.map((t: any) => {
-                            const daily = Array.isArray(t.daily_stay_details) ? t.daily_stay_details[0] : t.daily_stay_details;
-                            const moveIn = t.move_in_date || daily?.move_in_date;
-                            const vacate = t.vacate_date || daily?.vacate_date;
-                            const rentPerDay = daily?.rent_per_day || t.rent_per_day || 0;
-                            const maintenance = daily?.maintenance_amount || t.maintenance_amount || 0;
-                            const paid = Number(daily?.paid_amount || t.paid_amount || 0);
-
-                            let balance = 0;
-                            if (moveIn && vacate) {
-                                const start = new Date(moveIn);
-                                const end = new Date(vacate);
-                                let diffDays = 1;
-                                if (end > start) {
-                                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                                }
-                                const totalRentCount = (diffDays * Number(rentPerDay)) + Number(maintenance);
-                                balance = Math.max(0, totalRentCount - paid);
-                            }
-
-                            return (
-                                <TouchableOpacity key={t.id} style={styles.listItem} activeOpacity={0.7} onPress={() => navigation.navigate("ResidentDetail", { tenant: t })}>
-                                    <View style={styles.listIcon}>
-                                        <View style={[styles.avatar, { backgroundColor: COLORS.warning + "20" }]}>
-                                            <Text style={[styles.avatarText, { color: COLORS.warning }]}>{t.full_name[0]}</Text>
-                                        </View>
-                                    </View>
-                                    <View style={styles.listMain}>
-                                        <Text style={styles.listTitle}>{t.full_name}</Text>
-                                        <Text style={styles.listSubTitle}>Room {t.rooms?.room_number || "N/A"} • {t.pgs?.name || "N/A"}</Text>
-                                        {balance > 0 && (
-                                            <View style={[styles.dueBadge, { marginTop: 4, alignSelf: 'flex-start' }]}>
-                                                <Text style={styles.dueBadgeText}>DUE: ₹{balance.toLocaleString()}</Text>
-                                            </View>
-                                        )}
-                                    </View>
-                                    <View style={styles.listRight}>
-                                        <Text style={styles.listPrice}>₹{rentPerDay}/d</Text>
-                                        {vacate && (
-                                            <Text style={styles.listDate}>Ends: {new Date(vacate).toLocaleDateString([], { month: 'short', day: 'numeric' })}</Text>
-                                        )}
-                                    </View>
-                                </TouchableOpacity>
-                            );
-                        })}
-                    </View>
-                ) : (
-                    <View style={styles.emptyCard}>
-                        <Feather name="clock" size={24} color={COLORS.textMuted} />
-                        <Text style={styles.emptyText}>No active daily stays</Text>
-                    </View>
-                )}
-
-                {/* Recent Residents */}
-                <SectionHeader title="Recent Residents" onSeeAll={() => navigation.navigate("Residents")} />
-                {stats?.recentResidents?.length > 0 ? (
-                    <View style={styles.listContainer}>
-                        {stats.recentResidents.map((r: any) => (
-                            <TouchableOpacity key={r.id} style={styles.listItem} activeOpacity={0.7}>
-                                <View style={styles.listIcon}>
-                                    <View style={[styles.avatar, { backgroundColor: COLORS.primary + "20" }]}>
-                                        <Text style={[styles.avatarText, { color: COLORS.primary }]}>{r.full_name[0]}</Text>
-                                    </View>
+                {/* Daily Stay Alerts (Simplified) */}
+                {dailyTenants.length > 0 && (
+                    <View style={styles.listSection}>
+                        <View style={styles.listHeader}>
+                            <Text style={styles.sectionTitle}>Daily Residents</Text>
+                            <TouchableOpacity onPress={() => navigation.navigate("Residents")}>
+                                <Text style={styles.seeAllText}>See all</Text>
+                            </TouchableOpacity>
+                        </View>
+                        {dailyTenants.map((t: any) => (
+                            <TouchableOpacity
+                                key={t.id}
+                                style={styles.summaryItem}
+                                activeOpacity={0.7}
+                                onPress={() => navigation.navigate("ResidentDetail", { tenant: t })}
+                            >
+                                <View style={[styles.avatarMini, { backgroundColor: COLORS.warning + "20" }]}>
+                                    <Text style={[styles.avatarText, { color: COLORS.warning }]}>{t.full_name[0]}</Text>
                                 </View>
-                                <View style={styles.listMain}>
-                                    <Text style={styles.listTitle}>{r.full_name}</Text>
-                                    <Text style={styles.listSubTitle}>{r.pgs?.name || "N/A"}</Text>
+                                <View style={styles.itemMain}>
+                                    <Text style={styles.itemTitle}>{t.full_name}</Text>
+                                    <Text style={styles.itemSub}>{t.pgs?.name} • Room {t.rooms?.room_number}</Text>
                                 </View>
-                                <View style={styles.listRight}>
-                                    <Text style={styles.listDate}>{new Date(r.created_at).toLocaleDateString([], { month: 'short', day: 'numeric' })}</Text>
-                                </View>
+                                <Feather name="chevron-right" size={16} color={COLORS.textMuted} />
                             </TouchableOpacity>
                         ))}
                     </View>
-                ) : (
-                    <View style={styles.emptyCard}>
-                        <Feather name="users" size={24} color={COLORS.textMuted} />
-                        <Text style={styles.emptyText}>No recent movement</Text>
-                    </View>
                 )}
 
-                {/* Recent Payments */}
-                <SectionHeader title="Recent Payments" onSeeAll={() => navigation.navigate("Finance")} />
-                {recentPayments.length > 0 ? (
-                    <View style={styles.listContainer}>
-                        {recentPayments.map((p: any) => (
-                            <TouchableOpacity key={p.id} style={styles.listItem} activeOpacity={0.7}>
-                                <View style={styles.listIcon}>
-                                    <View style={[styles.avatar, { backgroundColor: COLORS.success + "20" }]}>
-                                        <Feather name="dollar-sign" size={16} color={COLORS.success} />
-                                    </View>
-                                </View>
-                                <View style={styles.listMain}>
-                                    <Text style={styles.listTitle} numberOfLines={1}>{p.tenants?.full_name || "Unknown"}</Text>
-                                    <Text style={styles.listSubTitle}>{p.pgs?.name || "N/A"} • {p.type} • {p.payment_method}</Text>
-                                </View>
-                                <View style={styles.listRight}>
-                                    <Text style={styles.paymentAmount}>₹{p.amount?.toLocaleString()}</Text>
-                                    <Text style={styles.listDate}>{p.payment_date || "Today"}</Text>
-                                </View>
-                            </TouchableOpacity>
-                        ))}
+                {/* Recent Payments (Modern density) */}
+                <View style={styles.listSection}>
+                    <View style={styles.listHeader}>
+                        <Text style={styles.sectionTitle}>Recent Payments</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate("Finance")}>
+                            <Text style={styles.seeAllText}>See all</Text>
+                        </TouchableOpacity>
                     </View>
-                ) : (
-                    <View style={styles.emptyCard}>
-                        <Feather name="credit-card" size={24} color={COLORS.textMuted} />
-                        <Text style={styles.emptyText}>No recent payments</Text>
-                    </View>
-                )}
+                    {recentPayments.map((p: any) => (
+                        <TouchableOpacity
+                            key={p.id}
+                            style={styles.summaryItem}
+                            activeOpacity={0.7}
+                        >
+                            <View style={[styles.avatarMini, { backgroundColor: COLORS.success + "20" }]}>
+                                <Feather name="check" size={12} color={COLORS.success} />
+                            </View>
+                            <View style={styles.itemMain}>
+                                <Text style={styles.itemTitle} numberOfLines={1}>{p.tenants?.full_name}</Text>
+                                <Text style={styles.itemSub}>{p.type} • {p.payment_method}</Text>
+                            </View>
+                            <Text style={styles.itemPrice}>+₹{p.amount?.toLocaleString()}</Text>
+                        </TouchableOpacity>
+                    ))}
+                </View>
 
                 <View style={{ height: 40 }} />
             </ScrollView>
@@ -277,131 +233,101 @@ const Dashboard = ({ navigation, route }: any) => {
     );
 };
 
-type ThemePalette = ReturnType<typeof useThemePalette>;
-
-const createStyles = (COLORS: ThemePalette) =>
+const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        scrollContent: { padding: 20 },
-        welcomeSection: { marginBottom: 24, marginTop: 8 },
-        welcomeSubtitle: { fontSize: 20, fontWeight: "800", color: COLORS.text, letterSpacing: -0.5 },
-        dateText: { fontSize: 13, color: COLORS.textMuted, marginTop: 4, fontWeight: "600" },
-        kpiGrid: {
-            flexDirection: "row",
-            flexWrap: "wrap",
-            justifyContent: "space-between",
-            marginBottom: 24
+
+        // App Bar
+        appBar: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: 16,
+            height: 60,
+            backgroundColor: COLORS.card,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border,
         },
-        kpiCard: {
-            width: "48%",
+        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
+
+        scrollContent: { padding: 16 },
+
+        // Welcome Card
+        welcomeCard: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            padding: 24,
+            backgroundColor: COLORS.primary,
+            borderRadius: 24,
+            marginBottom: 20,
+        },
+        welcomeTitle: { fontSize: 22, fontWeight: '900', color: '#fff', letterSpacing: -0.5 },
+        dateLabel: { fontSize: 13, color: 'rgba(255,255,255,0.7)', marginTop: 4, fontWeight: '600' },
+        mainKPIBox: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.1)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 16 },
+        mainKPIValue: { fontSize: 18, fontWeight: '900', color: '#fff' },
+        mainKPILabel: { fontSize: 8, fontWeight: '900', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', marginTop: 2 },
+
+        // Quick Stats
+        statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
+        statBox: {
+            width: (width - 44) / 2,
             backgroundColor: COLORS.card,
             padding: 16,
             borderRadius: 20,
-            marginBottom: 16,
-            borderWidth: 1,
-            borderColor: COLORS.border
-        },
-        kpiIconBox: {
-            width: 36,
-            height: 36,
-            borderRadius: 10,
-            justifyContent: "center",
-            alignItems: "center",
-            marginBottom: 12
-        },
-        kpiValue: { fontSize: 20, fontWeight: "800", color: COLORS.text, marginBottom: 2 },
-        kpiTitle: { fontSize: 11, color: COLORS.textMuted, fontWeight: "600", textTransform: "uppercase" },
-
-        financeCard: {
-            backgroundColor: COLORS.card,
-            borderRadius: 24,
-            padding: 20,
-            marginBottom: 28,
             borderWidth: 1,
             borderColor: COLORS.border,
-            elevation: 4,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.2,
-            shadowRadius: 10
         },
-        financeHeader: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 16,
-            paddingBottom: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border
-        },
-        financeTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-        financeGrid: { flexDirection: "row", flexWrap: "wrap" },
-        financeItem: { width: "50%", marginBottom: 16 },
-        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase", marginBottom: 4 },
-        financeValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+        iconPill: { width: 28, height: 28, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginBottom: 12 },
+        statValue: { fontSize: 20, fontWeight: '800', color: COLORS.text },
+        statLabel: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted, marginTop: 2 },
 
-        sectionHeader: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginBottom: 16,
-            marginTop: 8
-        },
-        sectionTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-        seeAllBtn: { flexDirection: "row", alignItems: "center", gap: 4 },
-        seeAllText: { fontSize: 13, color: COLORS.primary, fontWeight: "700" },
-
-        listContainer: { gap: 12, marginBottom: 20 },
-        listItem: {
-            flexDirection: "row",
-            alignItems: "center",
+        // Financials
+        financialSummary: {
             backgroundColor: COLORS.card,
-            padding: 14,
-            borderRadius: 18,
+            padding: 20,
+            borderRadius: 24,
             borderWidth: 1,
-            borderColor: COLORS.border
+            borderColor: COLORS.border,
+            marginBottom: 24,
         },
-        listIcon: { marginRight: 12 },
-        avatar: {
-            width: 44,
-            height: 44,
-            borderRadius: 14,
-            justifyContent: "center",
-            alignItems: "center"
+        sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text, marginBottom: 16 },
+        financeGrid: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+        financeItem: { flex: 1 },
+        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase' },
+        financeValue: { fontSize: 15, fontWeight: '900', color: COLORS.text, marginTop: 4 },
+        detailsBtn: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: COLORS.bg,
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 12
         },
-        avatarText: { fontSize: 18, fontWeight: "800" },
-        listMain: { flex: 1 },
-        listTitle: { fontSize: 15, fontWeight: "700", color: COLORS.text },
-        listSubTitle: { fontSize: 12, color: COLORS.textMuted, marginTop: 1 },
-        listRight: { alignItems: "flex-end" },
-        listPrice: { fontSize: 14, fontWeight: "800", color: COLORS.warning },
-        listDate: { fontSize: 10, color: COLORS.textMuted, marginTop: 2 },
-        paymentAmount: { fontSize: 15, fontWeight: "900", color: COLORS.success },
-        dueBadge: {
-            backgroundColor: "rgba(255, 71, 87, 0.15)",
-            paddingHorizontal: 8,
-            paddingVertical: 4,
-            borderRadius: 6,
-        },
-        dueBadgeText: {
-            color: "#ff4757",
-            fontSize: 10,
-            fontWeight: "800",
-            letterSpacing: 0.2,
-        },
+        detailsBtnText: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted },
 
-        emptyCard: {
+        // List Sections
+        listSection: { marginBottom: 24 },
+        listHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
+        seeAllText: { fontSize: 13, color: COLORS.primary, fontWeight: '700' },
+        summaryItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
             backgroundColor: COLORS.card,
-            borderRadius: 20,
-            padding: 24,
-            alignItems: "center",
-            gap: 12,
-            borderStyle: "dashed",
+            padding: 12,
+            borderRadius: 16,
+            marginBottom: 10,
             borderWidth: 1,
-            borderColor: "rgba(255,255,255,0.1)",
-            marginBottom: 20
+            borderColor: COLORS.border,
         },
-        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" }
+        avatarMini: { width: 36, height: 36, borderRadius: 10, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
+        avatarText: { fontSize: 14, fontWeight: '900' },
+        itemMain: { flex: 1 },
+        itemTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+        itemSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+        itemPrice: { fontSize: 14, fontWeight: '800', color: COLORS.success }
     });
 
 export default Dashboard;

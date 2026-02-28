@@ -7,7 +7,6 @@ import {
     TouchableOpacity,
     FlatList,
     ActivityIndicator,
-    ScrollView,
     RefreshControl,
     Dimensions,
 } from "react-native";
@@ -16,6 +15,7 @@ import { expenseAPI, pgAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import DropdownSelector from "../components/common/DropdownSelector";
 
 const { width } = Dimensions.get("window");
 
@@ -148,11 +148,11 @@ const ExpensesScreen = () => {
     const ListHeader = () => (
         <View>
             {/* Summary Cards */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.summaryPadding}>
+            <View style={styles.summaryContainer}>
                 <SummaryCard title="TOTAL OUTFLOW" value={stats.totalOutflow} icon="cash-remove" color={COLORS.danger} />
                 <SummaryCard title="TRANSACTIONS" value={stats.transactions} icon="swap-horizontal" color={COLORS.primary} />
                 <SummaryCard title="LINKED PROPERTIES" value={stats.linkedProperties} icon="office-building" color={COLORS.success} />
-            </ScrollView>
+            </View>
 
             {/* Filters */}
             <View style={styles.stickySection}>
@@ -224,22 +224,16 @@ const ExpensesScreen = () => {
                     setFilterSheetVisible(false);
                 }}
             >
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Category</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        {CATEGORIES.map(cat => (
-                            <TouchableOpacity
-                                key={cat}
-                                style={[styles.sheetChip, pendingFilters.category === cat && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, category: cat }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.category === cat && styles.sheetChipTextActive]}>
-                                    {cat.charAt(0) + cat.slice(1).toLowerCase()}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
+                <DropdownSelector
+                    label="Category"
+                    options={CATEGORIES.map(cat => ({
+                        label: cat.charAt(0) + cat.slice(1).toLowerCase(),
+                        value: cat
+                    }))}
+                    value={pendingFilters.category}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, category: value }))}
+                    placeholder="Select category..."
+                />
             </FilterBottomSheet>
 
             <TouchableOpacity style={styles.fab}>
@@ -255,17 +249,29 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        summaryPadding: { paddingHorizontal: 20, paddingVertical: 15, gap: 12 },
-        summaryCard: {
-            width: width * 0.45,
-            backgroundColor: COLORS.card,
-            borderRadius: 20,
-            padding: 16,
-            borderWidth: 1,
+        summaryContainer: {
+            flexDirection: "row",
+            flexWrap: "wrap",
+            justifyContent: "space-between",
+            paddingHorizontal: 20,
+            paddingVertical: 10,
+            gap: 10,
         },
-        summaryIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center", marginBottom: 12 },
-        summaryLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8 },
-        summaryValue: { fontSize: 18, fontWeight: "900" },
+        summaryCard: {
+            flexBasis: "48%",
+            maxWidth: "48%",
+            backgroundColor: COLORS.card,
+            borderRadius: 18,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderWidth: 1,
+            minHeight: 90,
+            justifyContent: "space-between",
+            marginBottom: 10,
+        },
+        summaryIcon: { width: 28, height: 28, borderRadius: 8, justifyContent: "center", alignItems: "center", marginBottom: 8 },
+        summaryLabel: { fontSize: 10, fontWeight: "700", color: COLORS.textMuted, marginBottom: 4 },
+        summaryValue: { fontSize: 15, fontWeight: "800" },
 
         stickySection: { backgroundColor: COLORS.bg, paddingBottom: 10 },
         searchRow: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, gap: 10, marginBottom: 12 },

@@ -10,7 +10,7 @@ interface ThemeToggleButtonProps {
 const ThemeToggleButton = ({ style }: ThemeToggleButtonProps) => {
     const { isDark, toggleTheme, colors } = useTheme();
     const ripple = useRef(new Animated.Value(0)).current;
-    const baseStyle = {
+    const baseStyle: ViewStyle = {
         width: 36,
         height: 36,
         borderRadius: 18,

@@ -15,6 +15,7 @@ import { tenantAPI, pgAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import DropdownSelector from "../components/common/DropdownSelector";
 
 const PROFESSION_OPTIONS = [
     "ALL",
@@ -31,7 +32,8 @@ const PROFESSION_OPTIONS = [
     "Other"
 ];
 
-const STATUS_OPTIONS = ["ALL", "ACTIVE", "UPCOMING", "OVERDUE", "NOTICE", "INACTIVE", "COMPLETED"];
+// Smart Tenant Finder only has: ALL, ACTIVE, INACTIVE, DUE (matching web)
+const STATUS_OPTIONS = ["ALL", "ACTIVE", "INACTIVE", "DUE"];
 const SORT_PRESETS = [
     { label: "Newest First", sortBy: "move_in_date", sortOrder: "desc" },
     { label: "Oldest First", sortBy: "move_in_date", sortOrder: "asc" },
@@ -247,103 +249,49 @@ const SmartTenantFinder = ({ navigation }: any) => {
                     setFilterSheetVisible(false);
                 }}
             >
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Property</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetChip, pendingFilters.propertyId === "ALL" && styles.sheetChipActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: "ALL" }))}
-                        >
-                            <Text style={[styles.sheetChipText, pendingFilters.propertyId === "ALL" && styles.sheetChipTextActive]}>
-                                All Properties
-                            </Text>
-                        </TouchableOpacity>
-                        {pgs.map(pg => (
-                            <TouchableOpacity
-                                key={pg.id}
-                                style={[styles.sheetChip, pendingFilters.propertyId === pg.id && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: pg.id }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.propertyId === pg.id && styles.sheetChipTextActive]}>
-                                    {pg.name}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
+                <DropdownSelector
+                    label="Property"
+                    options={[
+                        { label: "All Properties", value: "ALL" },
+                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                    ]}
+                    value={pendingFilters.propertyId}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}
+                    placeholder="Select property..."
+                />
 
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Status</Text>
-                    <View style={styles.sheetChipsRow}>
-                        {STATUS_OPTIONS.map(stat => (
-                            <TouchableOpacity
-                                key={stat}
-                                style={[styles.sheetChip, pendingFilters.status === stat && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, status: stat }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.status === stat && styles.sheetChipTextActive]}>
-                                    {stat}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
+                <DropdownSelector
+                    label="Status"
+                    options={[
+                        { label: "All Status", value: "ALL" },
+                        ...STATUS_OPTIONS.filter(s => s !== "ALL").map(stat => ({ label: stat, value: stat }))
+                    ]}
+                    value={pendingFilters.status}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, status: value }))}
+                    placeholder="Select status..."
+                />
 
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Profession</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetChip, pendingFilters.profession === "ALL" && styles.sheetChipActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, profession: "ALL" }))}
-                        >
-                            <Text style={[styles.sheetChipText, pendingFilters.profession === "ALL" && styles.sheetChipTextActive]}>
-                                All Professions
-                            </Text>
-                        </TouchableOpacity>
-                        {PROFESSION_OPTIONS.map(prof => (
-                            <TouchableOpacity
-                                key={prof}
-                                style={[styles.sheetChip, pendingFilters.profession === prof && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, profession: prof }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.profession === prof && styles.sheetChipTextActive]}>
-                                    {prof}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
+                <DropdownSelector
+                    label="Profession"
+                    options={[
+                        { label: "All Professions", value: "ALL" },
+                        ...PROFESSION_OPTIONS.filter(p => p !== "ALL").map(prof => ({ label: prof, value: prof }))
+                    ]}
+                    value={pendingFilters.profession}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, profession: value }))}
+                    placeholder="Select profession..."
+                />
 
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Sort</Text>
-                    <View style={styles.sheetSortRow}>
-                        {SORT_PRESETS.map(preset => (
-                            <TouchableOpacity
-                                key={preset.label}
-                                style={[
-                                    styles.sheetSortButton,
-                                    pendingFilters.sortBy === preset.sortBy && pendingFilters.sortOrder === preset.sortOrder && styles.sheetSortButtonActive
-                                ]}
-                                onPress={() =>
-                                    setPendingFilters(prev => ({
-                                        ...prev,
-                                        sortBy: preset.sortBy,
-                                        sortOrder: preset.sortOrder
-                                    }))
-                                }
-                            >
-                                <Text
-                                    style={[
-                                        styles.sheetSortText,
-                                        pendingFilters.sortBy === preset.sortBy && pendingFilters.sortOrder === preset.sortOrder && styles.sheetSortTextActive
-                                    ]}
-                                >
-                                    {preset.label}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
+                <DropdownSelector
+                    label="Sort"
+                    options={SORT_PRESETS.map(preset => ({ label: preset.label, value: `${preset.sortBy}:${preset.sortOrder}` }))}
+                    value={`${pendingFilters.sortBy}:${pendingFilters.sortOrder}`}
+                    onChange={(value) => {
+                        const [sortBy, sortOrder] = value.split(':');
+                        setPendingFilters(prev => ({ ...prev, sortBy, sortOrder }));
+                    }}
+                    placeholder="Select sort..."
+                />
             </FilterBottomSheet>
         </SafeAreaView>
     );
@@ -353,94 +301,94 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    topSection: { paddingVertical: 10, paddingHorizontal: 20 },
-    searchRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-    searchBar: {
-        flex: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 25,
-        paddingHorizontal: 20,
-        height: 50,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    filterButton: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.primary,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderRadius: 14,
-        gap: 6
-    },
-    filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        topSection: { paddingVertical: 10, paddingHorizontal: 20 },
+        searchRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+        searchBar: {
+            flex: 1,
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 25,
+            paddingHorizontal: 20,
+            height: 50,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        filterButton: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.primary,
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            borderRadius: 14,
+            gap: 6
+        },
+        filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
-    listContent: { padding: 20, paddingTop: 10, paddingBottom: 40 },
-    card: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 18,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        elevation: 2
-    },
-    cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 14 },
-    avatar: { width: 48, height: 48, borderRadius: 16, justifyContent: "center", alignItems: "center", marginRight: 12 },
-    avatarText: { fontSize: 20, fontWeight: "900" },
-    headerMain: { flex: 1 },
-    nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
-    name: { fontSize: 16, fontWeight: "800", color: COLORS.text, flex: 1 },
-    badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 8 },
-    badgeText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
-    metaRow: { flexDirection: "row", alignItems: "center", gap: 10 },
-    typeBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-    typeBadgeText: { fontSize: 8, color: COLORS.textMuted, fontWeight: "900" },
-    phoneText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
+        listContent: { padding: 20, paddingTop: 10, paddingBottom: 40 },
+        card: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 18,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            elevation: 2
+        },
+        cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 14 },
+        avatar: { width: 48, height: 48, borderRadius: 16, justifyContent: "center", alignItems: "center", marginRight: 12 },
+        avatarText: { fontSize: 20, fontWeight: "900" },
+        headerMain: { flex: 1 },
+        nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 4 },
+        name: { fontSize: 16, fontWeight: "800", color: COLORS.text, flex: 1 },
+        badge: { paddingHorizontal: 8, paddingVertical: 4, borderRadius: 8, marginLeft: 8 },
+        badgeText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+        metaRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+        typeBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
+        typeBadgeText: { fontSize: 8, color: COLORS.textMuted, fontWeight: "900" },
+        phoneText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
 
-    infoRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 14 },
-    infoText: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
+        infoRow: { flexDirection: "row", alignItems: "center", gap: 6, marginBottom: 14 },
+        infoText: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
 
-    financeGrid: { flexDirection: "row", paddingVertical: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.03)" },
-    financeItem: { flex: 1, alignItems: "center" },
-    financeLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", marginBottom: 4 },
-    financeValue: { fontSize: 13, fontWeight: "900" },
+        financeGrid: { flexDirection: "row", paddingVertical: 12, borderTopWidth: 1, borderTopColor: "rgba(255,255,255,0.03)" },
+        financeItem: { flex: 1, alignItems: "center" },
+        financeLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", marginBottom: 4 },
+        financeValue: { fontSize: 13, fontWeight: "900" },
 
-    centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
-    emptyContainer: { alignItems: "center", marginTop: 80, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
+        centerContainer: { flex: 1, justifyContent: "center", alignItems: "center" },
+        emptyContainer: { alignItems: "center", marginTop: 80, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
 
-    sheetSection: { marginBottom: 18 },
-    sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
-    sheetChipsRow: { flexDirection: "row", gap: 10 },
-    sheetChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 14,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
-    sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-    sheetChipTextActive: { color: COLORS.primary },
+        sheetSection: { marginBottom: 18 },
+        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+        sheetChipsRow: { flexDirection: "row", gap: 10 },
+        sheetChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        sheetChipActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetChipTextActive: { color: COLORS.primary },
 
-    sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-    sheetSortButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        backgroundColor: COLORS.card
-    },
-    sheetSortButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
-    sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-    sheetSortTextActive: { color: COLORS.primary }
-});
+        sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+        sheetSortButton: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            backgroundColor: COLORS.card
+        },
+        sheetSortButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
+        sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetSortTextActive: { color: COLORS.primary }
+    });
 
 export default SmartTenantFinder;

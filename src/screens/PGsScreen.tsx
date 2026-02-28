@@ -206,15 +206,17 @@ const PGsScreen = ({ navigation }: any) => {
             </View>
 
             <View style={styles.searchSection}>
-                <View style={styles.searchBar}>
-                    <Feather name="search" size={20} color={COLORS.textMuted} />
-                    <TextInput
-                        placeholder="Search by name or city..."
-                        placeholderTextColor={COLORS.textMuted}
-                        style={styles.searchInput}
-                        value={searchTerm}
-                        onChangeText={setSearchTerm}
-                    />
+                <View style={styles.searchSection}>
+                    <View style={styles.searchBar}>
+                        <Feather name="search" size={20} color={COLORS.textMuted} />
+                        <TextInput
+                            placeholder="Search by name or city..."
+                            placeholderTextColor={COLORS.textMuted}
+                            style={styles.searchInput}
+                            value={searchTerm}
+                            onChangeText={setSearchTerm}
+                        />
+                    </View>
                 </View>
                 <View style={styles.totalRow}>
                     <View style={styles.totalDot} />
@@ -281,7 +283,6 @@ const createStyles = (COLORS: ThemePalette) =>
             height: 52,
             borderWidth: 1,
             borderColor: COLORS.border,
-            marginBottom: 10
         },
         searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
         totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },

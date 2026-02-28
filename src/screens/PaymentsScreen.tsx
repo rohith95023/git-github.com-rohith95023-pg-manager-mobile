@@ -18,13 +18,14 @@ import { paymentAPI, pgAPI, tenantAPI, statsAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import DropdownSelector from "../components/common/DropdownSelector";
 
 const { width } = Dimensions.get("window");
 const DEFAULT_PAYMENT_FILTERS = {
     propertyId: "ALL",
     status: ""
 };
-const PAYMENT_STATUS_OPTIONS = ["", "PAID", "PENDING", "COMPLETED", "FAILED", "PARTIAL"];
+const PAYMENT_STATUS_OPTIONS = ["", "PAID", "PENDING", "PARTIAL"];
 
 const PaymentsScreen = () => {
     const COLORS = useThemePalette();
@@ -130,8 +131,8 @@ const PaymentsScreen = () => {
         }
     };
 
-    const SummaryCard = ({ title, value, icon, color }: any) => (
-        <View style={[styles.summaryCard, { borderColor: color + "10" }]}>
+    const SummaryCard = ({ title, value, icon, color, style }: any) => (
+        <View style={[styles.summaryCard, style, { borderColor: color + "10" }]}>
             <View style={[styles.summaryIcon, { backgroundColor: color + "10" }]}>
                 <MaterialCommunityIcons name={icon} size={18} color={color} />
             </View>
@@ -203,12 +204,17 @@ const PaymentsScreen = () => {
 
     const ListHeader = () => (
         <View>
-            {/* Horizontal Stats */}
-            <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.statsPadding}>
-                <SummaryCard title="Total Received" value={stats.totalReceived} icon="cash-check" color={COLORS.success} />
-                <SummaryCard title="Outstanding Dues" value={stats.outstandingDues} icon="clock-alert-outline" color={COLORS.warning} />
-                <SummaryCard title="Total Receivable" value={stats.totalReceivable} icon="currency-usd" color={COLORS.primary} />
-            </ScrollView>
+            {/* Grid Stats */}
+            <View style={styles.summaryGrid}>
+                <View style={styles.summaryRow}>
+                    <SummaryCard title="Total Received" value={stats.totalReceived} icon="cash-check" color={COLORS.success} />
+                    <SummaryCard title="Outstanding Dues" value={stats.outstandingDues} icon="clock-alert-outline" color={COLORS.warning} style={styles.summaryCardSpacing} />
+                </View>
+                <View style={styles.summaryRow}>
+                    <SummaryCard title="Total Receivable" value={stats.totalReceivable} icon="currency-usd" color={COLORS.primary} />
+                    <View style={[styles.summaryCard, styles.summaryCardPlaceholder]} />
+                </View>
+            </View>
 
             {/* Collection Rate Inline */}
             <View style={styles.collectionRateContainer}>
@@ -302,44 +308,26 @@ const PaymentsScreen = () => {
                     setFilterSheetVisible(false);
                 }}
             >
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Property</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetChip, pendingFilters.propertyId === "ALL" && styles.sheetChipActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: "ALL" }))}
-                        >
-                            <Text style={[styles.sheetChipText, pendingFilters.propertyId === "ALL" && styles.sheetChipTextActive]}>All Properties</Text>
-                        </TouchableOpacity>
-                        {pgs.map(pg => (
-                            <TouchableOpacity
-                                key={pg.id}
-                                style={[styles.sheetChip, pendingFilters.propertyId === pg.id && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: pg.id }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.propertyId === pg.id && styles.sheetChipTextActive]}>
-                                    {pg.name}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Status</Text>
-                    <View style={styles.sheetChipsRow}>
-                        {PAYMENT_STATUS_OPTIONS.map(stat => (
-                            <TouchableOpacity
-                                key={stat}
-                                style={[styles.sheetChip, pendingFilters.status === stat && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, status: stat }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.status === stat && styles.sheetChipTextActive]}>
-                                    {stat === "" ? "All Statuses" : stat.charAt(0) + stat.slice(1).toLowerCase()}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
+                <DropdownSelector
+                    label="Property"
+                    options={[
+                        { label: "All Properties", value: "ALL" },
+                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                    ]}
+                    value={pendingFilters.propertyId}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}
+                    placeholder="Select property..."
+                />
+                <DropdownSelector
+                    label="Status"
+                    options={PAYMENT_STATUS_OPTIONS.map(stat => ({
+                        label: stat === "" ? "All Statuses" : stat.charAt(0) + stat.slice(1).toLowerCase(),
+                        value: stat
+                    }))}
+                    value={pendingFilters.status}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, status: value }))}
+                    placeholder="Select status..."
+                />
             </FilterBottomSheet>
 
             <TouchableOpacity
@@ -358,122 +346,155 @@ const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-    statsPadding: { paddingHorizontal: 20, paddingVertical: 12, gap: 10 },
-    summaryCard: {
-        width: width * 0.44,
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 16,
-        padding: 12,
-        borderWidth: 1,
-        gap: 12
-    },
-    summaryIcon: { width: 32, height: 32, borderRadius: 10, justifyContent: "center", alignItems: "center" },
-    summaryLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 2, letterSpacing: 0.5 },
-    summaryValue: { fontSize: 15, fontWeight: "900" },
+        summaryGrid: {
+            paddingHorizontal: 20,
+            paddingVertical: 8,
+            gap: 8,
+        },
+        summaryRow: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            marginBottom: 8,
+            gap: 8,
+        },
+        summaryCard: {
+            flexBasis: "48%",
+            maxWidth: "48%",
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 18,
+            paddingVertical: 10,
+            paddingHorizontal: 12,
+            borderWidth: 1,
+            minHeight: 90,
+            justifyContent: "space-between",
+            marginBottom: 8,
+        },
+        summaryCardSpacing: {
+            marginLeft: 0,
+        },
+        summaryCardText: {
+            flex: 1,
+            flexWrap: "wrap",
+        },
+        summaryLabel: {
+            fontSize: 9,
+            fontWeight: "800",
+            color: COLORS.textMuted,
+            letterSpacing: 0.5,
+        },
+        summaryValue: {
+            fontSize: 15,
+            fontWeight: "900",
+            color: COLORS.text,
+        },
+        summaryCardPlaceholder: {
+            backgroundColor: "transparent",
+            borderColor: "transparent",
+        },
+        summaryIcon: { width: 32, height: 32, borderRadius: 10, justifyContent: "center", alignItems: "center" },
+        collectionRateContainer: {
+            marginHorizontal: 20,
+            marginVertical: 24,
+        },
+        rateHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 },
+        rateLabelInline: { fontSize: 11, fontWeight: "900", color: COLORS.text, letterSpacing: 1 },
+        ratePercentInline: { fontSize: 16, fontWeight: "900", color: COLORS.success },
+        rateSubLabelInline: { fontSize: 10, fontWeight: "600", color: COLORS.textMuted },
+        progressBarBgSubtle: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
+        progressBarFillSmall: { height: "100%", borderRadius: 3 },
 
-    collectionRateContainer: {
-        marginHorizontal: 20,
-        marginVertical: 24,
-    },
-    rateHeaderRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 10 },
-    rateLabelInline: { fontSize: 11, fontWeight: "900", color: COLORS.text, letterSpacing: 1 },
-    ratePercentInline: { fontSize: 16, fontWeight: "900", color: COLORS.success },
-    rateSubLabelInline: { fontSize: 10, fontWeight: "600", color: COLORS.textMuted },
-    progressBarBgSubtle: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
-    progressBarFillSmall: { height: "100%", borderRadius: 3 },
+        filterSection: { backgroundColor: COLORS.bg, marginBottom: 24 },
+        searchRow: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, gap: 10, marginBottom: 16 },
+        searchBar: {
+            flex: 1,
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            paddingHorizontal: 16,
+            height: 50,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        filterButton: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.primary,
+            paddingHorizontal: 16,
+            paddingVertical: 12,
+            borderRadius: 14,
+            gap: 6
+        },
+        filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
 
-    filterSection: { backgroundColor: COLORS.bg, marginBottom: 24 },
-    searchRow: { flexDirection: "row", alignItems: "center", marginHorizontal: 20, gap: 10, marginBottom: 16 },
-    searchBar: {
-        flex: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 14,
-        paddingHorizontal: 16,
-        height: 50,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    filterButton: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.primary,
-        paddingHorizontal: 16,
-        paddingVertical: 12,
-        borderRadius: 14,
-        gap: 6
-    },
-    filterButtonText: { color: "#fff", fontSize: 14, fontWeight: "700" },
+        listContainer: { paddingHorizontal: 20, paddingBottom: 160 },
+        paymentCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 20,
+            padding: 16,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        paymentHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
+        headerLeft: { flex: 1, marginRight: 10 },
+        residentName: { fontSize: 17, fontWeight: "800", color: COLORS.text, marginBottom: 8 },
+        statusBadge: {
+            flexDirection: "row",
+            alignItems: "center",
+            alignSelf: "flex-start",
+            paddingHorizontal: 10,
+            paddingVertical: 4,
+            borderRadius: 10,
+            gap: 6
+        },
+        statusDot: { width: 6, height: 6, borderRadius: 3 },
+        statusText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+        amountContainer: { backgroundColor: "rgba(16, 185, 129, 0.1)", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14 },
+        paymentAmount: { fontSize: 20, fontWeight: "900", color: COLORS.success },
 
-    listContainer: { paddingHorizontal: 20, paddingBottom: 160 },
-    paymentCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 20,
-        padding: 16,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    paymentHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 18 },
-    headerLeft: { flex: 1, marginRight: 10 },
-    residentName: { fontSize: 17, fontWeight: "800", color: COLORS.text, marginBottom: 8 },
-    statusBadge: {
-        flexDirection: "row",
-        alignItems: "center",
-        alignSelf: "flex-start",
-        paddingHorizontal: 10,
-        paddingVertical: 4,
-        borderRadius: 10,
-        gap: 6
-    },
-    statusDot: { width: 6, height: 6, borderRadius: 3 },
-    statusText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
-    amountContainer: { backgroundColor: "rgba(16, 185, 129, 0.1)", paddingHorizontal: 12, paddingVertical: 8, borderRadius: 14 },
-    paymentAmount: { fontSize: 20, fontWeight: "900", color: COLORS.success },
+        paymentContent: { marginBottom: 20 },
+        infoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
+        infoText: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
 
-    paymentContent: { marginBottom: 20 },
-    infoRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-    infoText: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600", flex: 1 },
+        infoGrid: { flexDirection: "row", justifyContent: "space-between" },
+        gridItem: { flex: 1 },
+        gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8, letterSpacing: 0.5 },
+        gridValueRow: { flexDirection: "row", alignItems: "center" },
+        gridValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
 
-    infoGrid: { flexDirection: "row", justifyContent: "space-between" },
-    gridItem: { flex: 1 },
-    gridLabel: { fontSize: 9, fontWeight: "800", color: COLORS.textMuted, marginBottom: 8, letterSpacing: 0.5 },
-    gridValueRow: { flexDirection: "row", alignItems: "center" },
-    gridValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        paymentFooter: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingTop: 18,
+            borderTopWidth: 1,
+            borderTopColor: "rgba(255,255,255,0.05)"
+        },
+        editButton: { flexDirection: "row", alignItems: "center", gap: 8, padding: 4 },
+        editButtonText: { fontSize: 13, fontWeight: "700", color: COLORS.primary },
+        splitButton: { flexDirection: "row", alignItems: "center", gap: 6, padding: 4 },
+        splitButtonText: { fontSize: 12, fontWeight: "700", color: COLORS.textMuted },
 
-    paymentFooter: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingTop: 18,
-        borderTopWidth: 1,
-        borderTopColor: "rgba(255,255,255,0.05)"
-    },
-    editButton: { flexDirection: "row", alignItems: "center", gap: 8, padding: 4 },
-    editButtonText: { fontSize: 13, fontWeight: "700", color: COLORS.primary },
-    splitButton: { flexDirection: "row", alignItems: "center", gap: 6, padding: 4 },
-    splitButtonText: { fontSize: 12, fontWeight: "700", color: COLORS.textMuted },
-
-    fab: {
-        position: "absolute",
-        bottom: 30,
-        right: 20,
-        width: 48,
-        height: 48,
-        borderRadius: 16,
-        backgroundColor: COLORS.primary,
-        justifyContent: "center",
-        alignItems: "center",
-        elevation: 4,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 2 },
-        shadowOpacity: 0.3,
-        shadowRadius: 4
-    },
+        fab: {
+            position: "absolute",
+            bottom: 30,
+            right: 20,
+            width: 48,
+            height: 48,
+            borderRadius: 16,
+            backgroundColor: COLORS.primary,
+            justifyContent: "center",
+            alignItems: "center",
+            elevation: 4,
+            shadowColor: COLORS.primary,
+            shadowOffset: { width: 0, height: 2 },
+            shadowOpacity: 0.3,
+            shadowRadius: 4
+        },
         emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
         emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
         sheetSection: { marginBottom: 18, paddingHorizontal: 20 },
@@ -502,6 +523,6 @@ const createStyles = (COLORS: ThemePalette) =>
         sheetSortButtonActive: { borderColor: COLORS.primary, backgroundColor: COLORS.primary + "10" },
         sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
         sheetSortTextActive: { color: COLORS.primary }
-});
+    });
 
 export default PaymentsScreen;

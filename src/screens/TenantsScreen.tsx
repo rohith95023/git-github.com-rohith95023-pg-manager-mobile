@@ -17,11 +17,12 @@ import { tenantAPI, pgAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import DropdownSelector from "../components/common/DropdownSelector";
 import { supabase } from "../lib/supabaseClient";
 
 const { width, height } = Dimensions.get("window");
 
-const RESIDENT_STATUS_OPTIONS = ["ALL", "ACTIVE", "INACTIVE", "UPCOMING", "OVERDUE", "NOTICE", "COMPLETED"];
+const RESIDENT_STATUS_OPTIONS = ["ALL", "ACTIVE", "INACTIVE", "OVERDUE"];
 const PROFESSION_OPTIONS = [
     "Software Engineer",
     "IT Professional",
@@ -68,6 +69,7 @@ const TenantsScreen = ({ navigation }: any) => {
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
     const [sheetFloorOptions, setSheetFloorOptions] = useState<string[]>([]);
     const [sheetRoomOptions, setSheetRoomOptions] = useState<any[]>([]);
+    const [highlightProperty, setHighlightProperty] = useState(false);
 
     useEffect(() => {
         const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
@@ -77,19 +79,26 @@ const TenantsScreen = ({ navigation }: any) => {
     const loadTenants = useCallback(async () => {
         setLoading(true);
         try {
-            const { data } = await tenantAPI.search({
-                page: 1,
-                limit: 200,
-                search: debouncedSearch,
-                status: filters.status,
-                profession: filters.profession,
-                pgId: filters.propertyId,
-                floor: filters.floor,
-                roomId: filters.room,
-                sortBy: filters.sortBy,
-                sortOrder: filters.sortOrder,
-            });
-            setTenants(data || []);
+            const [tenantResponse, pgsData]: [any, any] = await Promise.all([
+                tenantAPI.search({
+                    page: 1,
+                    limit: 200,
+                    search: debouncedSearch,
+                    status: filters.status,
+                    profession: filters.profession,
+                    pgId: filters.propertyId,
+                    floor: filters.floor,
+                    roomId: filters.room,
+                    sortBy: filters.sortBy,
+                    sortOrder: filters.sortOrder,
+                }),
+                pgAPI.getAll()
+            ]);
+            const tenantList = Array.isArray(tenantResponse)
+                ? tenantResponse
+                : tenantResponse?.data || [];
+            setTenants(tenantList);
+            setPgs(Array.isArray(pgsData) ? pgsData : []);
         } catch (error) {
             console.error("Failed to fetch Resident Directory data:", error);
         } finally {
@@ -153,7 +162,7 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchData();
+        loadTenants();
     };
 
     const filteredTenants = useMemo(() => {
@@ -336,7 +345,7 @@ const TenantsScreen = ({ navigation }: any) => {
             <FilterBottomSheet
                 visible={isFilterSheetVisible}
                 title="Resident Filters"
-                description="Property, status, profession, floor, room, and sort (matches web)"
+                description=""
                 onClose={() => setFilterSheetVisible(false)}
                 onApply={() => {
                     const applied = { ...pendingFilters };
@@ -351,151 +360,85 @@ const TenantsScreen = ({ navigation }: any) => {
                     setFilterSheetVisible(false);
                 }}
             >
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Property</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetChip, pendingFilters.propertyId === "ALL" && styles.sheetChipActive]}
-                            onPress={() =>
-                                setPendingFilters(prev => ({ ...prev, propertyId: "ALL", floor: "ALL", room: "ALL" }))
-                            }
-                        >
-                            <Text style={[styles.sheetChipText, pendingFilters.propertyId === "ALL" && styles.sheetChipTextActive]}>All Properties</Text>
-                        </TouchableOpacity>
-                        {pgs.map(pg => (
-                            <TouchableOpacity
-                                key={pg.id}
-                                style={[styles.sheetChip, pendingFilters.propertyId === pg.id && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, propertyId: pg.id, floor: "ALL", room: "ALL" }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.propertyId === pg.id && styles.sheetChipTextActive]} numberOfLines={1}>
-                                    {pg.name}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
+                <DropdownSelector
+                    label="Property"
+                    options={[
+                        { label: "All Properties", value: "ALL" },
+                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                    ]}
+                    value={pendingFilters.propertyId}
+                    onChange={(value) => {
+                        setPendingFilters(prev => ({ ...prev, propertyId: value, floor: "ALL", room: "ALL" }));
+                        setHighlightProperty(false);
+                    }}
+                    placeholder="Select property..."
+                    highlight={highlightProperty}
+                />
 
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Status</Text>
-                    <View style={styles.sheetChipsRow}>
-                        {RESIDENT_STATUS_OPTIONS.map(stat => (
-                            <TouchableOpacity
-                                key={stat}
-                                style={[styles.sheetChip, pendingFilters.status === stat && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, status: stat }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.status === stat && styles.sheetChipTextActive]}>
-                                    {stat}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
+                <DropdownSelector
+                    label="Status"
+                    options={[
+                        { label: "All Status", value: "ALL" },
+                        ...RESIDENT_STATUS_OPTIONS.filter(s => s !== "ALL").map(stat => ({ label: stat, value: stat }))
+                    ]}
+                    value={pendingFilters.status}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, status: value }))}
+                    placeholder="Select status..."
+                />
 
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Profession</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetChip, pendingFilters.profession === "ALL" && styles.sheetChipActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, profession: "ALL" }))}
-                        >
-                            <Text style={[styles.sheetChipText, pendingFilters.profession === "ALL" && styles.sheetChipTextActive]}>All Professions</Text>
-                        </TouchableOpacity>
-                        {PROFESSION_OPTIONS.map(prof => (
-                            <TouchableOpacity
-                                key={prof}
-                                style={[styles.sheetChip, pendingFilters.profession === prof && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, profession: prof }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.profession === prof && styles.sheetChipTextActive]}>
-                                    {prof}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
+                <DropdownSelector
+                    label="Profession"
+                    options={[
+                        { label: "All Professions", value: "ALL" },
+                        ...PROFESSION_OPTIONS.map(prof => ({ label: prof, value: prof }))
+                    ]}
+                    value={pendingFilters.profession}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, profession: value }))}
+                    placeholder="Select profession..."
+                />
 
-                {sheetFloorOptions.length > 0 && (
-                    <View style={styles.sheetSection}>
-                        <Text style={styles.sheetLabel}>Floor</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                            <TouchableOpacity
-                                style={[styles.sheetChip, pendingFilters.floor === "ALL" && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, floor: "ALL", room: "ALL" }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.floor === "ALL" && styles.sheetChipTextActive]}>All Floors</Text>
-                            </TouchableOpacity>
-                            {sheetFloorOptions.map(floor => (
-                                <TouchableOpacity
-                                    key={floor}
-                                    style={[styles.sheetChip, pendingFilters.floor === floor && styles.sheetChipActive]}
-                                    onPress={() => setPendingFilters(prev => ({ ...prev, floor, room: "ALL" }))}
-                                >
-                                    <Text style={[styles.sheetChipText, pendingFilters.floor === floor && styles.sheetChipTextActive]}>
-                                        Floor {floor}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
-                )}
+                <DropdownSelector
+                    label="Floor"
+                    options={[
+                        { label: "All Floors", value: "ALL" },
+                        ...sheetFloorOptions.map(floor => ({ label: `Floor ${floor}`, value: floor }))
+                    ]}
+                    value={pendingFilters.floor}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, floor: value, room: "ALL" }))}
+                    placeholder="Select property first..."
+                    disabled={!pendingFilters.propertyId || pendingFilters.propertyId === "ALL"}
+                    onDisabledPress={() => {
+                        setHighlightProperty(true);
+                        setTimeout(() => setHighlightProperty(false), 2000);
+                    }}
+                />
 
-                {sheetRoomOptions.length > 0 && (
-                    <View style={styles.sheetSection}>
-                        <Text style={styles.sheetLabel}>Room</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                            <TouchableOpacity
-                                style={[styles.sheetChip, pendingFilters.room === "ALL" && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, room: "ALL" }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.room === "ALL" && styles.sheetChipTextActive]}>All Rooms</Text>
-                            </TouchableOpacity>
-                            {sheetRoomOptions.map(room => (
-                                <TouchableOpacity
-                                    key={room.id}
-                                    style={[styles.sheetChip, pendingFilters.room === room.id && styles.sheetChipActive]}
-                                    onPress={() => setPendingFilters(prev => ({ ...prev, room: room.id }))}
-                                >
-                                    <Text style={[styles.sheetChipText, pendingFilters.room === room.id && styles.sheetChipTextActive]}>
-                                        Room {room.room_number}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
-                )}
+                <DropdownSelector
+                    label="Room"
+                    options={[
+                        { label: "All Rooms", value: "ALL" },
+                        ...sheetRoomOptions.map(room => ({ label: `Room ${room.room_number}`, value: room.id }))
+                    ]}
+                    value={pendingFilters.room}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, room: value }))}
+                    placeholder="Select property first..."
+                    disabled={!pendingFilters.propertyId || pendingFilters.propertyId === "ALL"}
+                    onDisabledPress={() => {
+                        setHighlightProperty(true);
+                        setTimeout(() => setHighlightProperty(false), 2000);
+                    }}
+                />
 
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Sort By</Text>
-                    <View style={styles.sheetSortRow}>
-                        {SORT_OPTIONS.map(option => (
-                            <TouchableOpacity
-                                key={option.label}
-                                style={[
-                                    styles.sheetSortButton,
-                                    pendingFilters.sortBy === option.sortBy && pendingFilters.sortOrder === option.sortOrder && styles.sheetSortButtonActive
-                                ]}
-                                onPress={() =>
-                                    setPendingFilters(prev => ({
-                                        ...prev,
-                                        sortBy: option.sortBy,
-                                        sortOrder: option.sortOrder
-                                    }))
-                                }
-                            >
-                                <Text
-                                    style={[
-                                        styles.sheetSortText,
-                                        pendingFilters.sortBy === option.sortBy && pendingFilters.sortOrder === option.sortOrder && styles.sheetSortTextActive
-                                    ]}
-                                >
-                                    {option.label}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </View>
-                </View>
+                <DropdownSelector
+                    label="Sort By"
+                    options={SORT_OPTIONS.map(opt => ({ label: opt.label, value: `${opt.sortBy}:${opt.sortOrder}` }))}
+                    value={`${pendingFilters.sortBy}:${pendingFilters.sortOrder}`}
+                    onChange={(value) => {
+                        const [sortBy, sortOrder] = value.split(':');
+                        setPendingFilters(prev => ({ ...prev, sortBy, sortOrder }));
+                    }}
+                    placeholder="Select sort..."
+                />
             </FilterBottomSheet>
 
             {/* FAB */}
@@ -514,153 +457,153 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingBottom: 10 },
-    headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text },
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingBottom: 10 },
+        headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text },
 
-    topSection: { paddingHorizontal: 20, marginBottom: 12 },
-    searchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
-    searchBar: {
-        flex: 1,
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 14,
-        paddingHorizontal: 16,
-        height: 50,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    filterButton: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.primary,
-        borderRadius: 14,
-        paddingHorizontal: 14,
-        paddingVertical: 12,
-        gap: 6
-    },
-    filterButtonText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+        topSection: { paddingHorizontal: 20, marginBottom: 12 },
+        searchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
+        searchBar: {
+            flex: 1,
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            paddingHorizontal: 16,
+            height: 50,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        filterButton: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.primary,
+            borderRadius: 14,
+            paddingHorizontal: 14,
+            paddingVertical: 12,
+            gap: 6
+        },
+        filterButtonText: { fontSize: 14, fontWeight: "700", color: "#fff" },
 
-    listContent: { paddingBottom: 100, paddingHorizontal: 20 },
-    card: {
-        backgroundColor: COLORS.card,
-        padding: 18,
-        borderRadius: 24,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        elevation: 3,
-        shadowColor: "#000",
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.1,
-        shadowRadius: 8
-    },
-    cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-    avatar: {
-        width: 54,
-        height: 54,
-        borderRadius: 18,
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 14
-    },
-    avatarText: { fontSize: 22, fontWeight: "900" },
-    headerInfo: { flex: 1 },
-    nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-    name: { fontSize: 18, fontWeight: "800", color: COLORS.text, flex: 1 },
-    badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginLeft: 8 },
-    badgeText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
-    actionsRow: { flexDirection: "row", gap: 8 },
-    actionBtn: {
-        padding: 8,
-        borderRadius: 10,
-        backgroundColor: "rgba(255,255,255,0.03)"
-    },
+        listContent: { paddingBottom: 100, paddingHorizontal: 20 },
+        card: {
+            backgroundColor: COLORS.card,
+            padding: 18,
+            borderRadius: 24,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            elevation: 3,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8
+        },
+        cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
+        avatar: {
+            width: 54,
+            height: 54,
+            borderRadius: 18,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 14
+        },
+        avatarText: { fontSize: 22, fontWeight: "900" },
+        headerInfo: { flex: 1 },
+        nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
+        name: { fontSize: 18, fontWeight: "800", color: COLORS.text, flex: 1 },
+        badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginLeft: 8 },
+        badgeText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
+        actionsRow: { flexDirection: "row", gap: 8 },
+        actionBtn: {
+            padding: 8,
+            borderRadius: 10,
+            backgroundColor: "rgba(255,255,255,0.03)"
+        },
 
-    subHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-    phoneRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-    phoneText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
-    profBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    profText: { fontSize: 11, fontWeight: "600", color: COLORS.textMuted },
+        subHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
+        phoneRow: { flexDirection: "row", alignItems: "center", gap: 6 },
+        phoneText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
+        profBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+        profText: { fontSize: 11, fontWeight: "600", color: COLORS.textMuted },
 
-    divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
+        divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
 
-    detailsSection: { gap: 12 },
-    detailRow: { flexDirection: "row", justifyContent: "space-between" },
-    detailItem: { flex: 1 },
-    detailLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4, letterSpacing: 0.5 },
-    detailValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
+        detailsSection: { gap: 12 },
+        detailRow: { flexDirection: "row", justifyContent: "space-between" },
+        detailItem: { flex: 1 },
+        detailLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4, letterSpacing: 0.5 },
+        detailValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
 
-    footer: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        marginTop: 20,
-        paddingTop: 16,
-        borderTopWidth: 1,
-        borderTopColor: COLORS.border
-    },
-    footerLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
-    joinedText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
-    msgBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-        backgroundColor: "rgba(59, 130, 246, 0.1)",
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 12
-    },
-    msgBtnText: { color: COLORS.primary, fontSize: 13, fontWeight: "700" },
+        footer: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: 20,
+            paddingTop: 16,
+            borderTopWidth: 1,
+            borderTopColor: COLORS.border
+        },
+        footerLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
+        joinedText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
+        msgBtn: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+            backgroundColor: "rgba(59, 130, 246, 0.1)",
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 12
+        },
+        msgBtnText: { color: COLORS.primary, fontSize: 13, fontWeight: "700" },
 
-    emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+        emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
 
-    sheetSection: { marginBottom: 18 },
-    sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
-    sheetChipsRow: { flexDirection: "row", gap: 10 },
-    sheetChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 14,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
-    sheetChipTextActive: { color: "#fff" },
-    sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-    sheetSortButton: {
-        paddingHorizontal: 16,
-        paddingVertical: 10,
-        borderRadius: 14,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        backgroundColor: COLORS.card
-    },
-    sheetSortButtonActive: { backgroundColor: COLORS.primary + "10", borderColor: COLORS.primary },
-    sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-    sheetSortTextActive: { color: COLORS.primary },
+        sheetSection: { marginBottom: 18 },
+        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+        sheetChipsRow: { flexDirection: "row", gap: 10 },
+        sheetChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
+        sheetChipTextActive: { color: "#fff" },
+        sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+        sheetSortButton: {
+            paddingHorizontal: 16,
+            paddingVertical: 10,
+            borderRadius: 14,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            backgroundColor: COLORS.card
+        },
+        sheetSortButtonActive: { backgroundColor: COLORS.primary + "10", borderColor: COLORS.primary },
+        sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
+        sheetSortTextActive: { color: COLORS.primary },
 
-    fab: {
-        position: "absolute",
-        bottom: 24,
-        right: 24,
-        width: 56,
-        height: 56,
-        borderRadius: 20,
-        backgroundColor: COLORS.primary,
-        justifyContent: "center",
-        alignItems: "center",
-        elevation: 8,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 10
-    }
-});
+        fab: {
+            position: "absolute",
+            bottom: 24,
+            right: 24,
+            width: 56,
+            height: 56,
+            borderRadius: 20,
+            backgroundColor: COLORS.primary,
+            justifyContent: "center",
+            alignItems: "center",
+            elevation: 8,
+            shadowColor: COLORS.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 10
+        }
+    });
 
 export default TenantsScreen;

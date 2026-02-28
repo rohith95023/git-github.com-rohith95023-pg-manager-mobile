@@ -17,6 +17,7 @@ import { roomAPI, bedAPI, pgAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import DropdownSelector from "../components/common/DropdownSelector";
 
 const { width } = Dimensions.get("window");
 
@@ -56,9 +57,9 @@ const RoomsScreen = ({ navigation }: any) => {
                 bedAPI.getAll(),
                 pgAPI.getAll()
             ]);
-            setRooms(roomsData || []);
-            setBeds(bedsData || []);
-            setPgs(pgsData || []);
+            setRooms(Array.isArray(roomsData) ? roomsData : []);
+            setBeds(Array.isArray(bedsData) ? bedsData : []);
+            setPgs(Array.isArray(pgsData) ? pgsData : []);
         } catch (error) {
             console.error("Failed to fetch Rooms/Beds data:", error);
         } finally {
@@ -92,9 +93,9 @@ const RoomsScreen = ({ navigation }: any) => {
                 return matchesSearch && matchesPg && matchesStatus;
             });
         } else {
-        return beds.filter(b => {
-            const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+            return beds.filter(b => {
+                const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
                 const matchesPg = !propertyId || b.rooms?.pg_id === propertyId;
                 const matchesStatus = matchesArchive(b.status);
@@ -271,33 +272,31 @@ const RoomsScreen = ({ navigation }: any) => {
 
                         {/* Search Row with Filter button */}
                         <View style={styles.filterSection}>
-                            <View style={styles.searchFilterRow}>
-                                <View style={styles.searchBar}>
-                                    <Feather name="search" size={18} color={COLORS.textMuted} />
-                                    <TextInput
-                                        placeholder={viewMode === "ROOMS" ? "Search room or property..." : "Search bed, room or tenant..."}
-                                        placeholderTextColor={COLORS.textMuted}
-                                        style={styles.searchInput}
-                                        value={searchTerm}
-                                        onChangeText={setSearchTerm}
-                                    />
-                                    {searchTerm !== "" && (
-                                        <TouchableOpacity onPress={() => setSearchTerm("")}>
-                                            <Feather name="x-circle" size={18} color={COLORS.textMuted} />
-                                        </TouchableOpacity>
-                                    )}
-                                </View>
-                                <TouchableOpacity
-                                    style={styles.filterButton}
-                                    onPress={() => {
-                                        setPendingFilters({ ...filters });
-                                        setFilterSheetVisible(true);
-                                    }}
-                                >
-                                    <Feather name="sliders" size={18} color="#fff" />
-                                    <Text style={styles.filterButtonText}>Filter</Text>
-                                </TouchableOpacity>
+                            <View style={styles.searchBar}>
+                                <Feather name="search" size={18} color={COLORS.textMuted} />
+                                <TextInput
+                                    placeholder={viewMode === "ROOMS" ? "Search room or property..." : "Search bed, room or tenant..."}
+                                    placeholderTextColor={COLORS.textMuted}
+                                    style={styles.searchInput}
+                                    value={searchTerm}
+                                    onChangeText={setSearchTerm}
+                                />
+                                {searchTerm !== "" && (
+                                    <TouchableOpacity onPress={() => setSearchTerm("")}>
+                                        <Feather name="x-circle" size={18} color={COLORS.textMuted} />
+                                    </TouchableOpacity>
+                                )}
                             </View>
+                            <TouchableOpacity
+                                style={styles.filterButton}
+                                onPress={() => {
+                                    setPendingFilters({ ...filters });
+                                    setFilterSheetVisible(true);
+                                }}
+                            >
+                                <Feather name="sliders" size={18} color="#fff" />
+                                <Text style={styles.filterButtonText}>Filter</Text>
+                            </TouchableOpacity>
                         </View>
                     </>
                 }
@@ -317,8 +316,8 @@ const RoomsScreen = ({ navigation }: any) => {
 
             <FilterBottomSheet
                 visible={isFilterSheetVisible}
-                title="Room & Bed Filters"
-                description="Property, inventory status, and archive controls copied from web"
+                title={`${viewMode} Filters`}
+                description={viewMode === "ROOMS" ? "Filter by property" : "Filter by property and status"}
                 onClose={() => setFilterSheetVisible(false)}
                 onApply={() => {
                     const applied = { ...pendingFilters };
@@ -335,63 +334,30 @@ const RoomsScreen = ({ navigation }: any) => {
                 applyLabel="Apply"
                 resetLabel="Reset"
             >
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Property</Text>
-                    <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetChip, !pendingFilters.property && styles.sheetChipActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, property: null }))}
-                        >
-                            <Text style={[styles.sheetChipText, !pendingFilters.property && styles.sheetChipTextActive]}>All Properties</Text>
-                        </TouchableOpacity>
-                        {pgs.map(pg => (
-                            <TouchableOpacity
-                                key={pg.id}
-                                style={[styles.sheetChip, pendingFilters.property === pg.id && styles.sheetChipActive]}
-                                onPress={() => setPendingFilters(prev => ({ ...prev, property: pg.id }))}
-                            >
-                                <Text style={[styles.sheetChipText, pendingFilters.property === pg.id && styles.sheetChipTextActive]} numberOfLines={1}>
-                                    {pg.name}
-                                </Text>
-                            </TouchableOpacity>
-                        ))}
-                    </ScrollView>
-                </View>
+                <DropdownSelector
+                    label="Property"
+                    options={[
+                        { label: "All Properties", value: "" },
+                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                    ]}
+                    value={pendingFilters.property || ""}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, property: value || null }))}
+                    placeholder="Select property..."
+                />
                 {viewMode === "BEDS" && (
-                    <View style={styles.sheetSection}>
-                        <Text style={styles.sheetLabel}>Bed Status</Text>
-                        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.sheetChipsRow}>
-                            {BED_STATUS_OPTIONS.map(status => (
-                                <TouchableOpacity
-                                    key={status}
-                                    style={[styles.sheetChip, pendingFilters.bedStatus === status && styles.sheetChipActive]}
-                                    onPress={() => setPendingFilters(prev => ({ ...prev, bedStatus: status }))}
-                                >
-                                    <Text style={[styles.sheetChipText, pendingFilters.bedStatus === status && styles.sheetChipTextActive]}>
-                                        {status === "ALL" ? "All Beds" : status.charAt(0) + status.slice(1).toLowerCase()}
-                                    </Text>
-                                </TouchableOpacity>
-                            ))}
-                        </ScrollView>
-                    </View>
+                    <DropdownSelector
+                        label="Status"
+                        options={[
+                            { label: "All Status", value: "ALL" },
+                            { label: "Available", value: "AVAILABLE" },
+                            { label: "Occupied", value: "OCCUPIED" },
+                            { label: "Maintenance", value: "MAINTENANCE" }
+                        ]}
+                        value={pendingFilters.bedStatus}
+                        onChange={(value) => setPendingFilters(prev => ({ ...prev, bedStatus: value }))}
+                        placeholder="Select status..."
+                    />
                 )}
-                <View style={styles.sheetSection}>
-                    <Text style={styles.sheetLabel}>Inventory Status</Text>
-                    <View style={styles.sheetStatusRow}>
-                        <TouchableOpacity
-                            style={[styles.sheetStatusOption, !pendingFilters.showArchived && styles.sheetStatusOptionActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, showArchived: false }))}
-                        >
-                            <Text style={[styles.sheetStatusText, !pendingFilters.showArchived && styles.sheetStatusTextActive]}>Active</Text>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                            style={[styles.sheetStatusOption, pendingFilters.showArchived && styles.sheetStatusOptionActive]}
-                            onPress={() => setPendingFilters(prev => ({ ...prev, showArchived: true }))}
-                        >
-                            <Text style={[styles.sheetStatusText, pendingFilters.showArchived && styles.sheetStatusTextActive]}>Archived</Text>
-                        </TouchableOpacity>
-                    </View>
-                </View>
             </FilterBottomSheet>
 
             {/* FAB */}
@@ -410,188 +376,190 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    header: { padding: 20, paddingBottom: 10 },
-    headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 20 },
-    toggleContainer: { gap: 12 },
-    segmentedControl: {
-        flexDirection: "row",
-        backgroundColor: "rgba(255,255,255,0.05)",
-        borderRadius: 14,
-        padding: 4
-    },
-    segment: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 10 },
-    segmentActive: { backgroundColor: COLORS.primary },
-    segmentText: { fontSize: 14, fontWeight: "700", color: COLORS.textMuted },
-    segmentTextActive: { color: "#fff" },
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        header: { padding: 20, paddingBottom: 10 },
+        headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 20 },
+        toggleContainer: { gap: 12 },
+        segmentedControl: {
+            flexDirection: "row",
+            backgroundColor: "rgba(255,255,255,0.05)",
+            borderRadius: 14,
+            padding: 4
+        },
+        segment: { flex: 1, paddingVertical: 10, alignItems: "center", borderRadius: 10 },
+        segmentActive: { backgroundColor: COLORS.primary },
+        segmentText: { fontSize: 14, fontWeight: "700", color: COLORS.textMuted },
+        segmentTextActive: { color: "#fff" },
 
-    subSegmentedControl: { flexDirection: "row", gap: 8 },
-    subSegment: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 20,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    subSegmentActive: { backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: COLORS.primary },
-    subSegmentText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
-    subSegmentTextActive: { color: COLORS.primary },
+        subSegmentedControl: { flexDirection: "row", gap: 8 },
+        subSegment: {
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        subSegmentActive: { backgroundColor: "rgba(59, 130, 246, 0.1)", borderColor: COLORS.primary },
+        subSegmentText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
+        subSegmentTextActive: { color: COLORS.primary },
 
-    statsScroll: { marginVertical: 20, paddingLeft: 20 },
-    statsContent: { paddingRight: 40 },
-    statCard: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        padding: 16,
-        borderRadius: 20,
-        marginRight: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        minWidth: 140
-    },
-    statIcon: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 12
-    },
-    statValue: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    statLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase" },
+        statsScroll: { marginVertical: 20, paddingLeft: 20 },
+        statsContent: { paddingRight: 40 },
+        statCard: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            padding: 16,
+            borderRadius: 20,
+            marginRight: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            minWidth: 140
+        },
+        statIcon: {
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 12
+        },
+        statValue: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        statLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "700", textTransform: "uppercase" },
 
-    filterSection: { paddingHorizontal: 20, marginBottom: 12 },
-    searchFilterRow: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 10,
-    },
-    filterButton: {
-        paddingVertical: 12,
-        paddingHorizontal: 16,
-        borderRadius: 14,
-        backgroundColor: "#2563eb",
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 6,
-    },
-    filterButtonText: {
-        color: "#fff",
-        fontWeight: "700",
-        fontSize: 14,
-    },
-    searchBar: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-        borderRadius: 14,
-        paddingHorizontal: 16,
-        height: 48,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-    sheetSection: { marginBottom: 18 },
-    sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
-    sheetChipsRow: { gap: 8 },
-    sheetChip: {
-        paddingHorizontal: 16,
-        paddingVertical: 8,
-        borderRadius: 14,
-        backgroundColor: COLORS.card,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        marginRight: 10,
-        minWidth: 100,
-    },
-    sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-    sheetChipText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
-    sheetChipTextActive: { color: "#fff" },
-    sheetStatusRow: { flexDirection: "row", gap: 10 },
-    sheetStatusOption: {
-        flex: 1,
-        paddingVertical: 12,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: COLORS.border,
-        alignItems: "center",
-        backgroundColor: COLORS.card,
-    },
-    sheetStatusOptionActive: {
-        borderColor: COLORS.primary,
-        backgroundColor: COLORS.primary + "15",
-    },
-    sheetStatusText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
-    sheetStatusTextActive: { color: COLORS.primary },
+        filterSection: {
+            paddingHorizontal: 20,
+            marginBottom: 12,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 10
+        },
+        searchBar: {
+            flex: 1,
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            paddingHorizontal: 16,
+            height: 48,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
+        filterButton: {
+            paddingVertical: 12,
+            paddingHorizontal: 16,
+            borderRadius: 14,
+            backgroundColor: COLORS.primary,
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 6,
+        },
+        filterButtonText: {
+            color: "#fff",
+            fontWeight: "700",
+            fontSize: 14,
+        },
+        sheetSection: { marginBottom: 18 },
+        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
+        sheetChipsRow: { gap: 8 },
+        sheetChip: {
+            paddingHorizontal: 16,
+            paddingVertical: 8,
+            borderRadius: 14,
+            backgroundColor: COLORS.card,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            marginRight: 10,
+            minWidth: 100,
+        },
+        sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
+        sheetChipText: { fontSize: 12, fontWeight: "600", color: COLORS.textMuted },
+        sheetChipTextActive: { color: "#fff" },
+        sheetStatusRow: { flexDirection: "row", gap: 10 },
+        sheetStatusOption: {
+            flex: 1,
+            paddingVertical: 12,
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            alignItems: "center",
+            backgroundColor: COLORS.card,
+        },
+        sheetStatusOptionActive: {
+            borderColor: COLORS.primary,
+            backgroundColor: COLORS.primary + "15",
+        },
+        sheetStatusText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
+        sheetStatusTextActive: { color: COLORS.primary },
 
-    listContent: { paddingBottom: 100 },
-    card: {
-        backgroundColor: COLORS.card,
-        marginHorizontal: 20,
-        padding: 18,
-        borderRadius: 22,
-        marginBottom: 16,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
-    cardInfo: { flex: 1 },
-    cardTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    cardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: "600" },
-    badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-    badgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
+        listContent: { paddingBottom: 100 },
+        card: {
+            backgroundColor: COLORS.card,
+            marginHorizontal: 20,
+            padding: 18,
+            borderRadius: 22,
+            marginBottom: 16,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        cardHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 },
+        cardInfo: { flex: 1 },
+        cardTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        cardSub: { fontSize: 12, color: COLORS.textMuted, marginTop: 2, fontWeight: "600" },
+        badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+        badgeText: { fontSize: 10, fontWeight: "800", textTransform: "uppercase" },
 
-    divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 8 },
+        divider: { height: 1, backgroundColor: COLORS.border, marginVertical: 8 },
 
-    cardFooter: { flexDirection: "row", alignItems: "center", marginTop: 8 },
-    footerItem: { flex: 1 },
-    footerLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4 },
-    footerValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
-    actions: { flexDirection: "row", gap: 8 },
-    actionBtn: {
-        width: 32,
-        height: 32,
-        borderRadius: 10,
-        backgroundColor: "rgba(255,255,255,0.03)",
-        justifyContent: "center",
-        alignItems: "center"
-    },
+        cardFooter: { flexDirection: "row", alignItems: "center", marginTop: 8 },
+        footerItem: { flex: 1 },
+        footerLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4 },
+        footerValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
+        actions: { flexDirection: "row", gap: 8 },
+        actionBtn: {
+            width: 32,
+            height: 32,
+            borderRadius: 10,
+            backgroundColor: "rgba(255,255,255,0.03)",
+            justifyContent: "center",
+            alignItems: "center"
+        },
 
-    residentRow: { flexDirection: "row", alignItems: "center", marginTop: 8 },
-    avatar: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-    residentName: { fontSize: 14, fontWeight: "700" },
-    residentLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600" },
-    maintenanceBtn: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-        backgroundColor: "rgba(245, 158, 11, 0.1)",
-        paddingHorizontal: 10,
-        paddingVertical: 6,
-        borderRadius: 10
-    },
-    maintenanceText: { color: COLORS.warning, fontSize: 11, fontWeight: "800" },
+        residentRow: { flexDirection: "row", alignItems: "center", marginTop: 8 },
+        avatar: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+        residentName: { fontSize: 14, fontWeight: "700" },
+        residentLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: "600" },
+        maintenanceBtn: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            backgroundColor: "rgba(245, 158, 11, 0.1)",
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 10
+        },
+        maintenanceText: { color: COLORS.warning, fontSize: 11, fontWeight: "800" },
 
-    emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
-    emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
+        emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
+        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
 
-    fab: {
-        position: "absolute",
-        bottom: 24,
-        right: 24,
-        width: 56,
-        height: 56,
-        borderRadius: 20,
-        backgroundColor: COLORS.primary,
-        justifyContent: "center",
-        alignItems: "center",
-        elevation: 8,
-        shadowColor: COLORS.primary,
-        shadowOffset: { width: 0, height: 4 },
-        shadowOpacity: 0.3,
-        shadowRadius: 10
-    }
-});
+        fab: {
+            position: "absolute",
+            bottom: 24,
+            right: 24,
+            width: 56,
+            height: 56,
+            borderRadius: 20,
+            backgroundColor: COLORS.primary,
+            justifyContent: "center",
+            alignItems: "center",
+            elevation: 8,
+            shadowColor: COLORS.primary,
+            shadowOffset: { width: 0, height: 4 },
+            shadowOpacity: 0.3,
+            shadowRadius: 10
+        }
+    });
 
 export default RoomsScreen;

@@ -109,7 +109,7 @@ const MainNavigator = () => {
         <Drawer.Navigator
             drawerContent={(props) => <CustomDrawerContent {...props} />}
             screenOptions={({ navigation }) => ({
-                headerShown: true,
+                headerShown: false,
                 headerLeft: () => (
                     <View style={{ marginLeft: 20 }}>
                         <ThemeToggleButton />

@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useIsFocused } from "@react-navigation/native";
 import {
     View,
     Text,
@@ -6,7 +7,6 @@ import {
     TouchableOpacity,
     FlatList,
     TextInput,
-    ScrollView,
     RefreshControl,
     ActivityIndicator,
     Dimensions,
@@ -15,15 +15,16 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { tenantAPI, pgAPI, roomAPI } from "../services/api";
 import ConfirmationModal from "../components/common/ConfirmationModal";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import { supabase } from "../lib/supabaseClient";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
 import { generateDeleteCode } from "../utils/security";
 
-const { width, height } = Dimensions.get("window");
+const { width } = Dimensions.get("window");
 
 const RESIDENT_STATUS_OPTIONS = ["ALL", "ACTIVE", "INACTIVE", "OVERDUE"];
 const PROFESSION_OPTIONS = [
@@ -58,6 +59,7 @@ const createDefaultTenantFilters = () => ({
 
 const TenantsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
+    const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
@@ -118,7 +120,6 @@ const TenantsScreen = ({ navigation }: any) => {
     };
 
     const handleDeleteTenant = async (tenant: any) => {
-        // 100% Logic Parity: Block if balance > 0
         const balance = Number(tenant.balance || 0);
 
         if (balance > 0) {
@@ -154,13 +155,10 @@ const TenantsScreen = ({ navigation }: any) => {
             onConfirm: async () => {
                 try {
                     setConfirmState(prev => ({ ...prev, loading: true }));
-                    // 1. Free the bed
                     if (tenant.bed_id) {
                         await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
                     }
-                    // 2. Perform soft delete
                     await tenantAPI.update(tenant.id, { status: "DELETED" });
-                    // 3. Recalculate room occupancy
                     if (tenant.room_id) {
                         await roomAPI.recalculateOccupancy(tenant.room_id);
                     }
@@ -200,7 +198,6 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const loadTenants = useCallback(async (pageNum = 1, shouldAppend = false) => {
         if (loading || loadingMore) return;
-
         if (pageNum === 1) setLoading(true);
         else setLoadingMore(true);
 
@@ -231,7 +228,6 @@ const TenantsScreen = ({ navigation }: any) => {
             }
 
             setTotalCount(count);
-            // Scalable check: stop when current count reaches total
             setHasMore(shouldAppend ? (tenants.length + tenantList.length < count) : (tenantList.length < count));
             if (pageNum === 1) setPgs(Array.isArray(pgsData) ? pgsData : []);
             setPage(pageNum);
@@ -242,14 +238,17 @@ const TenantsScreen = ({ navigation }: any) => {
             setLoadingMore(false);
             setRefreshing(false);
         }
-    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore, tenantAPI, pgAPI]);
+    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore]);
 
-    // Reset pagination when search or filters change
     useEffect(() => {
-        setPage(1);
-        setHasMore(true);
-        loadTenants(1, false);
-    }, [debouncedSearch, filters]);
+        if (isFocused) {
+            setPage(1);
+            setHasMore(true);
+            loadTenants(1, false);
+        }
+    }, [debouncedSearch, filters, isFocused]);
+
+    useRefreshOnForeground(() => loadTenants(1, false), isFocused);
 
     const handleLoadMore = () => {
         if (!loadingMore && hasMore && !loading) {
@@ -260,19 +259,11 @@ const TenantsScreen = ({ navigation }: any) => {
     const fetchFloors = useCallback(async (pgId: string) => {
         if (!pgId || pgId === "ALL") return [];
         try {
-            const { data, error } = await supabase
-                .from("rooms")
-                .select("floor")
-                .eq("pg_id", pgId);
+            const { data, error } = await supabase.from("rooms").select("floor").eq("pg_id", pgId);
             if (error) throw error;
             const uniqueFloors = [...new Set(data.map((room: any) => room.floor))]
-                .filter((floor) => floor !== null && floor !== undefined && floor !== "")
-                .sort((a: any, b: any) => {
-                    const numA = Number(a);
-                    const numB = Number(b);
-                    if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
-                    return String(a).localeCompare(String(b));
-                })
+                .filter((f) => f !== null && f !== undefined && f !== "")
+                .sort((a: any, b: any) => Number(a) - Number(b))
                 .map((f) => ({
                     label: f === 0 || f === "0" ? "Ground Floor" : `Floor ${f}`,
                     value: String(f),
@@ -288,9 +279,7 @@ const TenantsScreen = ({ navigation }: any) => {
         if (!pgId || pgId === "ALL") return [];
         try {
             let query = supabase.from("rooms").select("*").eq("pg_id", pgId);
-            if (floor && floor !== "ALL") {
-                query = query.eq("floor", floor);
-            }
+            if (floor && floor !== "ALL") query = query.eq("floor", floor);
             const { data, error } = await query.order("floor").order("room_number");
             if (error) throw error;
             return data || [];
@@ -299,8 +288,6 @@ const TenantsScreen = ({ navigation }: any) => {
             return [];
         }
     }, []);
-
-    // Unified effect for search/filters handled above
 
     useEffect(() => {
         if (!isFilterSheetVisible) return;
@@ -319,7 +306,7 @@ const TenantsScreen = ({ navigation }: any) => {
         loadTenants(1, false);
     };
 
-    const filteredTenants = tenants; // Rely 100% on server-side filtered data for pagination integrity
+    const filteredTenants = tenants;
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -356,28 +343,6 @@ const TenantsScreen = ({ navigation }: any) => {
         return Number(tenant.balance || 0);
     };
 
-    const getTenantTotalRent = (tenant: any) => {
-        if (tenant.stay_type === 'DAILY') {
-            const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details?.[0] : tenant.daily_stay_details;
-            const moveIn = tenant.move_in_date || daily?.move_in_date;
-            const vacate = tenant.vacate_date || daily?.vacate_date;
-            const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
-            const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
-
-            if (moveIn && vacate) {
-                const start = new Date(moveIn);
-                const end = new Date(vacate);
-                let diffDays = 1;
-                if (end > start) {
-                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                }
-                return (diffDays * Number(rentPerDay)) + Number(maintenance);
-            }
-            return Number(tenant.total_rent || daily?.total_rent || 0);
-        }
-        return Number(tenant.custom_rent || tenant.rent_per_month || tenant.rooms?.rent || 0);
-    };
-
     const getDailyStayInfo = (tenant: any) => {
         if (tenant.stay_type !== 'DAILY') return null;
         const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
@@ -399,42 +364,34 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const handleBulkDelete = () => {
         if (selectedTenantIds.length === 0) return;
-
         const deleteCode = Math.floor(1000 + Math.random() * 9000).toString();
         setConfirmTargetCode(deleteCode);
         setConfirmInput("");
 
         setConfirmState({
             visible: true,
-            title: "Bulk Delete Residents?",
-            message: `You are about to PERMANENTLY delete ${selectedTenantIds.length} residents and free their beds. This action is irreversible.\nNote: Only residents with no dues can be bulk deleted.`,
+            title: "Bulk Delete?",
+            message: `Delete ${selectedTenantIds.length} residents? This action is irreversible.`,
             type: "danger",
-            confirmText: "Yes, Delete Selected",
+            confirmText: "Delete Selected",
             cancelText: "Cancel",
             needsInput: true,
-            inputPlaceholder: `Type "${deleteCode}" to confirm`,
+            inputPlaceholder: `Type "${deleteCode}"`,
             onConfirm: async () => {
                 try {
                     setConfirmState(prev => ({ ...prev, loading: true }));
-
-                    const deletePromises = selectedTenantIds.map(async (tenantId) => {
-                        const tenant = tenants.find(t => t.id === tenantId);
+                    const promises = selectedTenantIds.map(async (id) => {
+                        const tenant = tenants.find(t => t.id === id);
                         if (!tenant) return;
-                        if (tenant.bed_id) {
-                            await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
-                        }
+                        if (tenant.bed_id) await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
                         await tenantAPI.update(tenant.id, { status: "DELETED" });
-                        if (tenant.room_id) {
-                            await roomAPI.recalculateOccupancy(tenant.room_id);
-                        }
+                        if (tenant.room_id) await roomAPI.recalculateOccupancy(tenant.room_id);
                     });
-
-                    await Promise.all(deletePromises);
-
+                    await Promise.all(promises);
                     setConfirmState({
                         visible: true,
                         title: "Success",
-                        message: "Selected residents deleted successfully.",
+                        message: "Bulk delete successful.",
                         type: "success",
                         singleButton: true,
                         cancelText: "Done",
@@ -444,17 +401,8 @@ const TenantsScreen = ({ navigation }: any) => {
                             onRefresh();
                         }
                     });
-                } catch (err: any) {
+                } catch (err) {
                     console.error("Bulk delete error:", err);
-                    setConfirmState({
-                        visible: true,
-                        title: "Error",
-                        message: "Failed to delete selected residents. Please try again.",
-                        type: "danger",
-                        singleButton: true,
-                        cancelText: "Review",
-                        onClose: () => setConfirmState(prev => ({ ...prev, visible: false }))
-                    });
                 }
             }
         });
@@ -467,16 +415,16 @@ const TenantsScreen = ({ navigation }: any) => {
         if (allEligibleSelected) {
             setSelectedTenantIds(prev => prev.filter(id => !eligibleTenants.some(t => t.id === id)));
         } else {
-            const newSelections = new Set([...selectedTenantIds, ...eligibleTenants.map(t => t.id)]);
-            setSelectedTenantIds(Array.from(newSelections));
+            setSelectedTenantIds(prev => {
+                const combined = [...prev, ...eligibleTenants.map(t => t.id)];
+                return Array.from(new Set(combined));
+            });
         }
     };
 
     const toggleTenantSelection = (id: string, balance: number) => {
-        if (balance > 0) return; // Cannot select tenants with dues
-        setSelectedTenantIds(prev =>
-            prev.includes(id) ? prev.filter(tid => tid !== id) : [...prev, id]
-        );
+        if (balance > 0) return;
+        setSelectedTenantIds(prev => prev.includes(id) ? prev.filter(tid => tid !== id) : [...prev, id]);
     };
 
     const ResidentCard = ({ item }: { item: any }) => {
@@ -491,141 +439,98 @@ const TenantsScreen = ({ navigation }: any) => {
                 activeOpacity={0.7}
                 onPress={() => navigation.navigate("ResidentDetail", { tenant: item })}
             >
-                {/* Top Row: Avatar, Name, Status, Actions */}
-                <View style={[styles.cardHeader, { alignItems: 'center' }]}>
-                    {balance <= 0 ? (
-                        <TouchableOpacity
-                            style={{ marginRight: 12, padding: 4 }}
-                            onPress={(e) => { e.stopPropagation(); toggleTenantSelection(item.id, balance); }}
-                        >
-                            <Feather name={selectedTenantIds.includes(item.id) ? "check-square" : "square"} size={22} color={selectedTenantIds.includes(item.id) ? COLORS.primary : COLORS.border} />
-                        </TouchableOpacity>
-                    ) : (
-                        <View style={{ marginRight: 12, padding: 4, opacity: 0.3 }}>
-                            <Feather name="square" size={22} color={COLORS.border} />
-                        </View>
-                    )}
-                    <View style={[styles.avatar, { backgroundColor: COLORS.primary + "10" }]}>
-                        {isDaily ? (
-                            <MaterialCommunityIcons name="clock-outline" size={24} color={COLORS.warning} />
-                        ) : (
-                            <Text style={[styles.avatarText, { color: COLORS.primary }]}>{initials}</Text>
-                        )}
-                    </View>
-                    <View style={styles.headerInfo}>
-                        <View style={styles.nameRow}>
-                            <View style={{ flex: 1 }}>
-                                <Text style={styles.name} numberOfLines={1}>{item.full_name}</Text>
-                                {isDaily && balance > 0 && (
-                                    <View style={styles.dueBadge}>
-                                        <Text style={styles.dueBadgeText}>DUE: ₹{balance.toLocaleString()}</Text>
-                                    </View>
-                                )}
-                            </View>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                                {isDaily && (
-                                    <View style={[styles.stayBadge, { marginLeft: 0 }]}>
-                                        <Text style={styles.stayBadgeText}>DAILY</Text>
-                                    </View>
-                                )}
-                                <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
-                                    <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
-                                </View>
-                            </View>
-                        </View>
-                    </View>
-                </View>
-
-                {/* Sub-Header: Phone, Profession, Actions */}
-                <View style={styles.subHeader}>
-                    <View style={{ flex: 1, gap: 8 }}>
-                        <TouchableOpacity style={styles.phoneRow} onPress={() => Linking.openURL(`tel:${item.phone}`)}>
-                            <Feather name="phone" size={12} color={COLORS.primary} />
-                            <Text style={styles.phoneText}>{item.phone || "No Phone"}</Text>
-                        </TouchableOpacity>
-                        <View style={[styles.profBadge, { backgroundColor: "rgba(255,255,255,0.05)", alignSelf: 'flex-start' }]}>
-                            <Text style={styles.profText}>{item.profession || "No Profession"}</Text>
-                        </View>
-                    </View>
-                    <View style={styles.actionsRow}>
-                        {balance > 0 && (
-                            <TouchableOpacity style={[styles.actionBtn, { backgroundColor: COLORS.success + "15" }]} onPress={() => navigation.navigate("Finance", { tenantId: item.id })}>
-                                <MaterialCommunityIcons name="currency-inr" size={14} color={COLORS.success} />
-                            </TouchableOpacity>
-                        )}
-                        <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditTenant(item)}>
-                            <Feather name="edit-2" size={14} color={COLORS.primary} />
-                        </TouchableOpacity>
-                        <TouchableOpacity style={styles.actionBtn} onPress={() => handleDeleteTenant(item)}>
-                            <Feather name="trash-2" size={14} color={COLORS.danger} />
-                        </TouchableOpacity>
-                    </View>
-                </View>
-
-                <View style={styles.divider} />
-
-                {/* Assignment & Financial Details */}
-                <View style={styles.detailsSection}>
-                    <View style={styles.assignmentColumn}>
-                        <Text style={styles.pgNameText}>{item.pgs?.name || "N/A"}</Text>
-                        <Text style={styles.roomBedText}>
-                            Room {item.rooms?.room_number || "N/A"}{item.beds?.bed_number ? ` - ${item.beds.bed_number}` : ""}
-                        </Text>
-                    </View>
-
-                    <View style={styles.financialList}>
-                        <View style={styles.finDetailRow}>
-                            <Text style={styles.finDetailLabel}>
-                                {isDaily ? 'RENT (TOTAL) : ' : 'RENT : '}
-                                <Text style={[styles.finDetailValue, isDaily && { color: COLORS.success }]}>
-                                    ₹{getTenantTotalRent(item).toLocaleString()}
-                                </Text>
-                            </Text>
-                            {!isDaily && item.custom_rent && (
-                                <View style={styles.customBadge}>
-                                    <Text style={styles.customBadgeText}>CUSTOM</Text>
-                                </View>
+                {/* Card Top: Avatar, Name, Status */}
+                <View style={styles.cardHeader}>
+                    <View style={styles.avatarContainer}>
+                        <View style={[styles.avatar, { backgroundColor: COLORS.primary + "10" }]}>
+                            {isDaily ? (
+                                <MaterialCommunityIcons name="clock-outline" size={24} color={COLORS.warning} />
+                            ) : (
+                                <Text style={[styles.avatarText, { color: COLORS.primary }]}>{initials}</Text>
                             )}
                         </View>
-
-                        {stayInfo && (
-                            <View style={styles.finDetailRow}>
-                                <Text style={styles.finDetailLabel}>
-                                    Checkout : <Text style={styles.finDetailValue}>{stayInfo.dateStr}</Text>
-                                    <Text style={[styles.finDetailSubText, { color: stayInfo.daysLeft <= 1 ? COLORS.danger : COLORS.warning }]}>
-                                        {stayInfo.daysLeft > 0 ? ` (${stayInfo.daysLeft} days left)` : (stayInfo.daysLeft === 0 ? " (Today)" : " (Passed)")}
-                                    </Text>
-                                </Text>
-                            </View>
-                        )}
-
-                        {Number(item.maintenance_amount || 0) > 0 && (
-                            <View style={styles.finDetailRow}>
-                                <Text style={styles.finDetailLabel}>
-                                    + ₹{Number(item.maintenance_amount).toLocaleString()} MAINT
-                                    <Text style={styles.finDetailSubText}> ({item.maintenance_type || "ONE_TIME"})</Text>
-                                </Text>
-                                <View style={[styles.maintStatusBadge, item.maintenance_paid ? styles.maintPaidBadge : styles.maintUnpaidBadge]}>
-                                    <Text style={[styles.maintStatusText, { color: item.maintenance_paid ? COLORS.success : COLORS.danger }]}>
-                                        {item.maintenance_paid ? 'PAID' : 'PENDING'}
-                                    </Text>
+                        {balance <= 0 && (
+                            <TouchableOpacity
+                                style={styles.selectionOverlay}
+                                hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+                                onPress={(e) => { e.stopPropagation(); toggleTenantSelection(item.id, balance); }}
+                            >
+                                <View style={[styles.checkbox, selectedTenantIds.includes(item.id) && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}>
+                                    {selectedTenantIds.includes(item.id) && <Feather name="check" size={12} color="#fff" />}
                                 </View>
+                            </TouchableOpacity>
+                        )}
+                    </View>
+
+                    <View style={styles.headerMain}>
+                        <View style={styles.titleRow}>
+                            <Text style={styles.name} numberOfLines={1}>{item.full_name}</Text>
+                            <View style={[styles.statusBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
+                                <Text style={[styles.statusBadgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
+                            </View>
+                        </View>
+
+                        {balance > 0 && (
+                            <View style={styles.dueAmountRow}>
+                                <Text style={styles.dueAmountValue}>₹{balance.toLocaleString()} PENDING</Text>
                             </View>
                         )}
+
+                        <View style={styles.assignmentRow}>
+                            <Feather name="home" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.assignmentText} numberOfLines={1}>
+                                {item.pgs?.name || "N/A"} • {item.rooms?.room_number || "N/A"}{item.beds?.bed_number ? ` (${item.beds.bed_number})` : ""}
+                            </Text>
+                        </View>
                     </View>
                 </View>
 
-                <View style={styles.footer}>
-                    <View style={styles.footerLeft}>
-                        <Feather name="calendar" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.joinedText}>Joined: {new Date(item.move_in_date || item.created_at).toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })}</Text>
+                {/* Grouped Attributes */}
+                <View style={styles.attributeGrid}>
+                    <View style={styles.attributeItem}>
+                        <Feather name="phone" size={11} color={COLORS.textMuted} />
+                        <Text style={styles.attributeValue}>{item.phone || "No Phone"}</Text>
                     </View>
-                    <TouchableOpacity
-                        style={styles.msgBtn}
-                        onPress={() => Linking.openURL(`sms:${item.phone}`)}
-                    >
-                        <Feather name="message-square" size={14} color={COLORS.primary} />
-                        <Text style={styles.msgBtnText}>Message</Text>
+                    {isDaily && stayInfo && (
+                        <View style={styles.attributeItem}>
+                            <Feather name="log-out" size={11} color={COLORS.textMuted} />
+                            <Text style={styles.attributeValue}>
+                                {stayInfo.dateStr}
+                                <Text style={{ color: stayInfo.daysLeft <= 1 ? COLORS.danger : COLORS.warning, fontWeight: '800' }}>
+                                    {stayInfo.daysLeft > 0 ? ` (${stayInfo.daysLeft}d)` : " (Today)"}
+                                </Text>
+                            </Text>
+                        </View>
+                    )}
+                </View>
+
+                {/* Card Action Bar */}
+                <View style={styles.actionRowContainer}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); Linking.openURL(`tel:${item.phone}`); }}>
+                        <Feather name="phone" size={16} color={COLORS.primary} />
+                        <Text style={[styles.actionBtnText, { color: COLORS.primary }]}>Call</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); Linking.openURL(`sms:${item.phone}`); }}>
+                        <Feather name="message-square" size={16} color={COLORS.primary} />
+                        <Text style={[styles.actionBtnText, { color: COLORS.primary }]}>SMS</Text>
+                    </TouchableOpacity>
+
+                    {balance > 0 && (
+                        <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); navigation.navigate("Finance", { tenantId: item.id }); }}>
+                            <MaterialCommunityIcons name="currency-inr" size={18} color={COLORS.success} />
+                            <Text style={[styles.actionBtnText, { color: COLORS.success }]}>Pay</Text>
+                        </TouchableOpacity>
+                    )}
+
+                    <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleEditTenant(item); }}>
+                        <Feather name="edit-2" size={16} color={COLORS.textMuted} />
+                        <Text style={styles.actionBtnText}>Edit</Text>
+                    </TouchableOpacity>
+
+                    <TouchableOpacity style={styles.actionBtn} onPress={(e) => { e.stopPropagation(); handleDeleteTenant(item); }}>
+                        <Feather name="trash-2" size={16} color={COLORS.danger} />
+                        <Text style={[styles.actionBtnText, { color: COLORS.danger }]}>Delete</Text>
                     </TouchableOpacity>
                 </View>
             </TouchableOpacity>
@@ -634,8 +539,14 @@ const TenantsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.header}>
-                <Text style={styles.headerTitle}>Resident Directory</Text>
+            <View style={styles.appBar}>
+                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarIconButton}>
+                    <Feather name="menu" size={22} color={COLORS.text} />
+                </TouchableOpacity>
+                <Text style={styles.appBarTitle}>Resident Directory</Text>
+                <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
+                    <Feather name="refresh-cw" size={20} color={COLORS.text} />
+                </TouchableOpacity>
             </View>
 
             <FlatList
@@ -646,81 +557,50 @@ const TenantsScreen = ({ navigation }: any) => {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
                 onEndReached={handleLoadMore}
                 onEndReachedThreshold={0.5}
-                ListFooterComponent={
-                    loadingMore ? (
-                        <View style={{ paddingVertical: 20 }}>
-                            <ActivityIndicator color={COLORS.primary} />
-                        </View>
-                    ) : null
-                }
+                ListFooterComponent={loadingMore ? (<View style={{ paddingVertical: 20 }}><ActivityIndicator color={COLORS.primary} /></View>) : null}
                 ListHeaderComponent={
-                    <View style={styles.topSection}>
-                        <View style={styles.searchRow}>
-                            <View style={styles.searchBar}>
-                                <Feather name="search" size={18} color={COLORS.textMuted} />
-                                <TextInput
-                                    placeholder="Search name, phone..."
-                                    placeholderTextColor={COLORS.textMuted}
-                                    style={styles.searchInput}
-                                    value={searchTerm}
-                                    onChangeText={setSearchTerm}
-                                />
-                                {searchTerm !== "" && (
-                                    <TouchableOpacity onPress={() => setSearchTerm("")}>
-                                        <Feather name="x-circle" size={16} color={COLORS.textMuted} />
-                                    </TouchableOpacity>
-                                )}
-                            </View>
+                    <View style={styles.searchSection}>
+                        <View style={styles.searchBox}>
+                            <Feather name="search" size={18} color={COLORS.textMuted} />
+                            <TextInput
+                                placeholder="Search residents..."
+                                placeholderTextColor={COLORS.textMuted}
+                                style={styles.searchInput}
+                                value={searchTerm}
+                                onChangeText={setSearchTerm}
+                            />
+                            {searchTerm !== "" && (
+                                <TouchableOpacity onPress={() => setSearchTerm("")} style={{ marginRight: 8 }}>
+                                    <View style={styles.clearBadge}><Feather name="x" size={10} color={COLORS.bg} /></View>
+                                </TouchableOpacity>
+                            )}
+                            <View style={styles.searchDivider} />
                             <TouchableOpacity
-                                style={[
-                                    styles.filterButton,
-                                    (filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && { backgroundColor: COLORS.success }
-                                ]}
-                                onPress={() => {
-                                    setPendingFilters(filters);
-                                    setFilterSheetVisible(true);
-                                }}
+                                style={styles.filterTrigger}
+                                onPress={() => { setPendingFilters(filters); setFilterSheetVisible(true); }}
                             >
-                                <Feather name="sliders" size={18} color="#fff" />
-                                <Text style={styles.filterButtonText}>Filter</Text>
+                                <Feather name="sliders" size={18} color={(filters.propertyId || filters.status !== "ALL") ? COLORS.primary : COLORS.textMuted} />
                             </TouchableOpacity>
                         </View>
 
-                        <View style={styles.filterStatusRow}>
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
-                                <TouchableOpacity style={{ padding: 4 }} onPress={toggleSelectAll}>
-                                    <Feather
-                                        name={allEligibleSelected ? "check-square" : "square"}
-                                        size={22}
-                                        color={allEligibleSelected ? COLORS.primary : COLORS.border}
-                                    />
+                        <View style={styles.metaRow}>
+                            <View style={styles.selectionGroup}>
+                                <TouchableOpacity
+                                    onPress={toggleSelectAll}
+                                    style={styles.selectionCheck}
+                                    hitSlop={{ top: 15, bottom: 15, left: 15, right: 15 }}
+                                >
+                                    <View style={[styles.checkbox, allEligibleSelected && { backgroundColor: COLORS.primary, borderColor: COLORS.primary }]}>
+                                        {allEligibleSelected && <Feather name="check" size={12} color="#fff" />}
+                                    </View>
                                 </TouchableOpacity>
-                                <Text style={styles.countText}>
-                                    {loading && page === 1 ? "Finding residents..." : `Found ${totalCount} residents`}
-                                </Text>
+                                <Text style={styles.resultCountText}>{loading && page === 1 ? "SEARCHING..." : `${totalCount} RESIDENTS`}</Text>
                             </View>
-
-                            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+                            <View style={styles.metaActions}>
                                 {selectedTenantIds.length > 0 && (
-                                    <TouchableOpacity
-                                        onPress={handleBulkDelete}
-                                        style={[styles.clearFiltersBtn, { backgroundColor: COLORS.danger + '15', borderColor: 'transparent' }]}
-                                    >
-                                        <Text style={[styles.clearFiltersText, { color: COLORS.danger, fontWeight: '700' }]}>Delete ({selectedTenantIds.length})</Text>
-                                        <Feather name="trash-2" size={14} color={COLORS.danger} />
-                                    </TouchableOpacity>
-                                )}
-                                {(filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && (
-                                    <TouchableOpacity
-                                        onPress={() => {
-                                            const defaults = createDefaultTenantFilters();
-                                            setFilters(defaults);
-                                            setPendingFilters(defaults);
-                                        }}
-                                        style={styles.clearFiltersBtn}
-                                    >
-                                        <Text style={styles.clearFiltersText}>Clear All</Text>
-                                        <Feather name="x" size={12} color={COLORS.danger} />
+                                    <TouchableOpacity onPress={handleBulkDelete} style={styles.bulkDeleteBtn}>
+                                        <Text style={styles.bulkDeleteText}>Delete {selectedTenantIds.length}</Text>
+                                        <Feather name="trash-2" size={12} color={COLORS.danger} />
                                     </TouchableOpacity>
                                 )}
                             </View>
@@ -728,146 +608,52 @@ const TenantsScreen = ({ navigation }: any) => {
                     </View>
                 }
                 ListEmptyComponent={
-                    <View style={styles.emptyContainer}>
-                        {loading ? (
-                            <ActivityIndicator color={COLORS.primary} size="large" />
-                        ) : (
+                    <View style={styles.emptyView}>
+                        {loading ? (<ActivityIndicator color={COLORS.primary} size="large" />) : (
                             <>
-                                <Feather name="users" size={48} color={COLORS.textMuted} />
-                                <Text style={styles.emptyText}>No residents found</Text>
+                                <View style={styles.emptyIconCircle}><Feather name="users" size={40} color={COLORS.textMuted} /></View>
+                                <Text style={styles.emptyTitle}>No residents found</Text>
                             </>
                         )}
                     </View>
                 }
             />
 
+            <TouchableOpacity style={styles.fab} onPress={handleAddTenant} activeOpacity={0.9}>
+                <Feather name="user-plus" size={24} color="#fff" />
+            </TouchableOpacity>
+
             <FilterBottomSheet
                 visible={isFilterSheetVisible}
                 title="Resident Filters"
-                description=""
                 onClose={() => setFilterSheetVisible(false)}
-                onApply={() => {
-                    const applied = { ...pendingFilters };
-                    setFilters(applied);
-                    setPendingFilters(applied);
-                    setFilterSheetVisible(false);
-                }}
-                onReset={() => {
-                    const defaults = createDefaultTenantFilters();
-                    setFilters(defaults);
-                    setPendingFilters(defaults);
-                    setFilterSheetVisible(false);
-                }}
+                onApply={() => { setFilters(pendingFilters); setFilterSheetVisible(false); }}
+                onReset={() => { const d = createDefaultTenantFilters(); setFilters(d); setPendingFilters(d); setFilterSheetVisible(false); }}
             >
                 <DropdownSelector
                     label="Property"
-                    options={[
-                        { label: "All Properties", value: "ALL" },
-                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
-                    ]}
+                    options={[{ label: "All Properties", value: "ALL" }, ...pgs.map(pg => ({ label: pg.name, value: pg.id }))]}
                     value={pendingFilters.propertyId}
-                    onChange={(value) => {
-                        setPendingFilters(prev => ({ ...prev, propertyId: value, floor: "ALL", room: "ALL" }));
-                        setHighlightProperty(false);
-                    }}
-                    placeholder="Select property..."
-                    highlight={highlightProperty}
+                    onChange={(v) => setPendingFilters(p => ({ ...p, propertyId: v, floor: "ALL", room: "ALL" }))}
                 />
-
                 <DropdownSelector
                     label="Status"
-                    options={[
-                        { label: "All Status", value: "ALL" },
-                        ...RESIDENT_STATUS_OPTIONS.filter(s => s !== "ALL").map(stat => ({ label: stat, value: stat }))
-                    ]}
+                    options={[{ label: "All Status", value: "ALL" }, ...RESIDENT_STATUS_OPTIONS.filter(s => s !== "ALL").map(s => ({ label: s, value: s }))]}
                     value={pendingFilters.status}
-                    onChange={(value) => setPendingFilters(prev => ({ ...prev, status: value }))}
-                    placeholder="Select status..."
-                />
-
-                <DropdownSelector
-                    label="Profession"
-                    options={[
-                        { label: "All Professions", value: "ALL" },
-                        ...PROFESSION_OPTIONS.map(prof => ({ label: prof, value: prof }))
-                    ]}
-                    value={pendingFilters.profession}
-                    onChange={(value) => setPendingFilters(prev => ({ ...prev, profession: value }))}
-                    placeholder="Select profession..."
-                />
-
-                <DropdownSelector
-                    label="Floor"
-                    options={[
-                        { label: "All Floors", value: "ALL" },
-                        ...sheetFloorOptions.map((floor: any) => ({ label: floor.label, value: floor.value }))
-                    ]}
-                    value={pendingFilters.floor}
-                    onChange={(value) => setPendingFilters(prev => ({ ...prev, floor: value, room: "ALL" }))}
-                    placeholder="Select property first..."
-                    disabled={!pendingFilters.propertyId || pendingFilters.propertyId === "ALL"}
-                    onDisabledPress={() => {
-                        setHighlightProperty(true);
-                        setTimeout(() => setHighlightProperty(false), 2000);
-                    }}
-                />
-
-                <DropdownSelector
-                    label="Room"
-                    options={[
-                        { label: "All Rooms", value: "ALL" },
-                        ...sheetRoomOptions.map(room => ({ label: `Room ${room.room_number}`, value: room.id }))
-                    ]}
-                    value={pendingFilters.room}
-                    onChange={(value) => setPendingFilters(prev => ({ ...prev, room: value }))}
-                    placeholder="Select property first..."
-                    disabled={!pendingFilters.propertyId || pendingFilters.propertyId === "ALL"}
-                    onDisabledPress={() => {
-                        setHighlightProperty(true);
-                        setTimeout(() => setHighlightProperty(false), 2000);
-                    }}
-                />
-
-                <DropdownSelector
-                    label="Sort By"
-                    options={SORT_OPTIONS.map(opt => ({ label: opt.label, value: `${opt.sortBy}:${opt.sortOrder}` }))}
-                    value={`${pendingFilters.sortBy}:${pendingFilters.sortOrder}`}
-                    onChange={(value) => {
-                        const [sortBy, sortOrder] = value.split(':');
-                        setPendingFilters(prev => ({ ...prev, sortBy, sortOrder }));
-                    }}
-                    placeholder="Select sort..."
+                    onChange={(v) => setPendingFilters(p => ({ ...p, status: v }))}
                 />
             </FilterBottomSheet>
-
-            <TouchableOpacity
-                style={styles.fab}
-                activeOpacity={0.8}
-                onPress={handleAddTenant}
-            >
-                <Feather name="plus" size={24} color="#fff" />
-                <Text style={styles.fabText}>Add Resident</Text>
-            </TouchableOpacity>
 
             <UnifiedStayManager
                 visible={isOnboardingVisible}
                 onClose={() => setOnboardingVisible(false)}
-                onSuccess={() => {
-                    loadTenants();
-                    setOnboardingVisible(false);
-                }}
+                onSuccess={() => { loadTenants(); setOnboardingVisible(false); }}
                 editingTenant={editingTenant}
             />
 
             <ConfirmationModal
                 visible={confirmState.visible}
-                onClose={() => {
-                    const callback = (confirmState as any).onClose;
-                    setConfirmState(prev => ({ ...prev, visible: false }));
-                    if (callback) callback();
-                    setConfirmInput("");
-                    setConfirmTargetCode("");
-                }}
+                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
                 onConfirm={confirmState.onConfirm}
                 title={confirmState.title}
                 message={confirmState.message}
@@ -877,226 +663,86 @@ const TenantsScreen = ({ navigation }: any) => {
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
                 needsInput={confirmState.needsInput}
-                inputPlaceholder={confirmState.inputPlaceholder}
                 inputValue={confirmInput}
-                onInputChange={(val) => setConfirmInput(val)}
+                onInputChange={setConfirmInput}
                 confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}
-                disableOutsideTap={confirmState.type === "danger"}
-                secondaryText={confirmState.secondaryText}
-                onSecondary={confirmState.onSecondary}
             />
         </SafeAreaView>
     );
 };
 
-type ThemePalette = ReturnType<typeof useThemePalette>;
-
-const createStyles = (COLORS: ThemePalette) =>
-    StyleSheet.create({
-        container: { flex: 1, backgroundColor: COLORS.bg },
-        header: { padding: 20, paddingBottom: 10 },
-        headerTitle: { fontSize: 24, fontWeight: "900", color: COLORS.text },
-
-        topSection: { paddingHorizontal: 20, marginBottom: 12 },
-        searchRow: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 12 },
-        searchBar: {
-            flex: 1,
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: COLORS.card,
-            borderRadius: 14,
-            paddingHorizontal: 16,
-            height: 50,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-        },
-        searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-        filterButton: {
-            flexDirection: "row",
-            alignItems: "center",
-            backgroundColor: COLORS.primary,
-            borderRadius: 14,
-            paddingHorizontal: 14,
-            paddingVertical: 12,
-            gap: 6
-        },
-        filterButtonText: { fontSize: 14, fontWeight: "700", color: "#fff" },
-
-        filterStatusRow: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginTop: 4,
-            paddingHorizontal: 4
-        },
-        countText: {
-            fontSize: 12,
-            fontWeight: "700",
-            color: COLORS.textMuted,
-            textTransform: "uppercase",
-            letterSpacing: 0.5
-        },
-        clearFiltersBtn: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 4,
-            paddingVertical: 4,
-            paddingHorizontal: 8,
-            borderRadius: 8,
-            backgroundColor: COLORS.danger + "10",
-        },
-        clearFiltersText: {
-            fontSize: 11,
-            fontWeight: "800",
-            color: COLORS.danger,
-            textTransform: "uppercase"
-        },
-
-        listContent: { paddingBottom: 100, paddingHorizontal: 20 },
-        card: {
-            backgroundColor: COLORS.card,
-            padding: 18,
-            borderRadius: 24,
-            marginBottom: 16,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-            elevation: 3,
-            shadowColor: "#000",
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.1,
-            shadowRadius: 8
-        },
-        cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 16 },
-        avatar: {
-            width: 54,
-            height: 54,
-            borderRadius: 18,
-            justifyContent: "center",
-            alignItems: "center",
-            marginRight: 14
-        },
-        avatarText: { fontSize: 22, fontWeight: "900" },
-        headerInfo: { flex: 1 },
-        nameRow: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 6 },
-        name: { fontSize: 18, fontWeight: "800", color: COLORS.text, flex: 1 },
-        badge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8, marginLeft: 8 },
-        badgeText: { fontSize: 9, fontWeight: "900", textTransform: "uppercase" },
-        actionsRow: { flexDirection: "row", gap: 8 },
-        actionBtn: {
-            padding: 8,
-            borderRadius: 10,
-            backgroundColor: "rgba(255,255,255,0.03)"
-        },
-
-        subHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", marginBottom: 16 },
-        phoneRow: { flexDirection: "row", alignItems: "center", gap: 6 },
-        phoneText: { fontSize: 14, fontWeight: "600", color: COLORS.primary },
-        profBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-        profText: { fontSize: 11, fontWeight: "600", color: COLORS.textMuted },
-
-        divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
-
-        detailsSection: { gap: 16 },
-        assignmentColumn: { gap: 4 },
-        pgNameText: { fontSize: 13, fontWeight: "700", color: COLORS.primary, letterSpacing: 0.5 },
-        roomBedText: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-
-        financialList: { gap: 8 },
-        finDetailRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-        finDetailLabel: { fontSize: 13, fontWeight: "700", color: COLORS.textMuted },
-        finDetailValue: { color: COLORS.text, fontWeight: '800' },
-        finDetailSubText: { fontSize: 10, fontWeight: '600', color: COLORS.textMuted },
-
-        stayBadge: { backgroundColor: COLORS.warning + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, marginLeft: 8 },
-        stayBadgeText: { fontSize: 9, fontWeight: "900", color: COLORS.warning },
-
-        dueBadge: { backgroundColor: COLORS.danger + "20", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 6, marginTop: 4, alignSelf: 'flex-start' },
-        dueBadgeText: { fontSize: 9, fontWeight: "900", color: COLORS.danger },
-
-        customBadge: { backgroundColor: COLORS.success + "15", paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-        customBadgeText: { fontSize: 8, fontWeight: "900", color: COLORS.success },
-
-        maintStatusBadge: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4 },
-        maintPaidBadge: { backgroundColor: COLORS.success + "15" },
-        maintUnpaidBadge: { backgroundColor: COLORS.danger + "15" },
-        maintStatusText: { fontSize: 8, fontWeight: "900" },
-
-        detailRow: { flexDirection: "row", justifyContent: "space-between" },
-        detailItem: { flex: 1 },
-        detailLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "700", marginBottom: 4, letterSpacing: 0.5 },
-        detailValue: { fontSize: 14, fontWeight: "800", color: COLORS.text },
-
-        footer: {
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-            marginTop: 20,
-            paddingTop: 16,
-            borderTopWidth: 1,
-            borderTopColor: COLORS.border
-        },
-        footerLeft: { flexDirection: "row", alignItems: "center", gap: 6 },
-        joinedText: { fontSize: 12, color: COLORS.textMuted, fontWeight: "600" },
-        msgBtn: {
-            flexDirection: "row",
-            alignItems: "center",
-            gap: 6,
-            backgroundColor: "rgba(59, 130, 246, 0.1)",
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 12
-        },
-        msgBtnText: { color: COLORS.primary, fontSize: 13, fontWeight: "700" },
-
-        emptyContainer: { alignItems: "center", marginTop: 40, gap: 16 },
-        emptyText: { color: COLORS.textMuted, fontSize: 14, fontWeight: "600" },
-
-        sheetSection: { marginBottom: 18 },
-        sheetLabel: { fontSize: 13, fontWeight: "700", color: COLORS.text, marginBottom: 8 },
-        sheetChipsRow: { flexDirection: "row", gap: 10 },
-        sheetChip: {
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderRadius: 14,
-            backgroundColor: COLORS.card,
-            borderWidth: 1,
-            borderColor: COLORS.border
-        },
-        sheetChipActive: { backgroundColor: COLORS.primary, borderColor: COLORS.primary },
-        sheetChipText: { fontSize: 13, fontWeight: "600", color: COLORS.textMuted },
-        sheetChipTextActive: { color: "#fff" },
-        sheetSortRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-        sheetSortButton: {
-            paddingHorizontal: 16,
-            paddingVertical: 10,
-            borderRadius: 14,
-            borderWidth: 1,
-            borderColor: COLORS.border,
-            backgroundColor: COLORS.card
-        },
-        sheetSortButtonActive: { backgroundColor: COLORS.primary + "10", borderColor: COLORS.primary },
-        sheetSortText: { fontSize: 13, fontWeight: "600", color: COLORS.text },
-        sheetSortTextActive: { color: COLORS.primary },
-
-        fab: {
-            position: "absolute",
-            bottom: 30,
-            right: 20,
-            flexDirection: "row",
-            paddingHorizontal: 20,
-            height: 56,
-            borderRadius: 28,
-            backgroundColor: COLORS.primary,
-            justifyContent: "center",
-            alignItems: "center",
-            elevation: 8,
-            shadowColor: COLORS.primary,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 6,
-            gap: 10
-        },
-        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
-    });
+const createStyles = (COLORS: any) => StyleSheet.create({
+    container: { flex: 1, backgroundColor: COLORS.bg },
+    appBar: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        paddingHorizontal: 16,
+        height: 60,
+        backgroundColor: COLORS.card,
+        borderBottomWidth: 1,
+        borderBottomColor: COLORS.border,
+    },
+    appBarIconButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
+    appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
+    searchSection: { padding: 16, paddingBottom: 8 },
+    searchBox: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        backgroundColor: COLORS.card,
+        paddingHorizontal: 16,
+        height: 52,
+        borderRadius: 14,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        elevation: 2,
+    },
+    searchInput: { flex: 1, marginLeft: 12, fontSize: 15, fontWeight: '600', color: COLORS.text },
+    clearBadge: { width: 16, height: 16, borderRadius: 8, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center' },
+    searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
+    filterTrigger: { padding: 4 },
+    metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 4, paddingHorizontal: 4 },
+    selectionGroup: { flexDirection: 'row', alignItems: 'center' },
+    selectionCheck: { marginRight: 10 },
+    resultCountText: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 1 },
+    metaActions: { flexDirection: 'row', gap: 12 },
+    bulkDeleteBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.danger + '12', paddingVertical: 5, paddingHorizontal: 10, borderRadius: 8 },
+    bulkDeleteText: { fontSize: 11, fontWeight: '800', color: COLORS.danger },
+    listContent: { paddingBottom: 100, paddingHorizontal: 16 },
+    card: {
+        backgroundColor: COLORS.card,
+        borderRadius: 20,
+        marginBottom: 16,
+        padding: 16,
+        borderWidth: 1,
+        borderColor: COLORS.border,
+        elevation: 2,
+    },
+    cardHeader: { flexDirection: 'row', marginBottom: 16 },
+    avatarContainer: { position: 'relative', marginRight: 16 },
+    avatar: { width: 52, height: 52, borderRadius: 14, justifyContent: 'center', alignItems: 'center' },
+    avatarText: { fontSize: 20, fontWeight: '900' },
+    selectionOverlay: { position: 'absolute', top: -4, left: -4, padding: 4 },
+    checkbox: { width: 18, height: 18, borderRadius: 6, borderWidth: 2, borderColor: COLORS.border, backgroundColor: COLORS.card, justifyContent: 'center', alignItems: 'center' },
+    headerMain: { flex: 1, justifyContent: 'center' },
+    titleRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
+    name: { fontSize: 18, fontWeight: '800', color: COLORS.text, flex: 1 },
+    statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6 },
+    statusBadgeText: { fontSize: 10, fontWeight: '900', textTransform: 'uppercase' },
+    dueAmountRow: { marginBottom: 6 },
+    dueAmountValue: { fontSize: 12, fontWeight: '800', color: COLORS.danger },
+    assignmentRow: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+    assignmentText: { fontSize: 13, fontWeight: '600', color: COLORS.textMuted },
+    attributeGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, paddingVertical: 12, borderTopWidth: 1, borderTopColor: COLORS.border + '40' },
+    attributeItem: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: COLORS.bg, paddingHorizontal: 10, paddingVertical: 5, borderRadius: 8 },
+    attributeValue: { fontSize: 12, fontWeight: '700', color: COLORS.text },
+    actionRowContainer: { flexDirection: 'row', marginTop: 12, paddingTop: 12, borderTopWidth: 1, borderTopColor: COLORS.border + '40', justifyContent: 'space-between' },
+    actionBtn: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6, paddingHorizontal: 8, borderRadius: 10 },
+    actionBtnText: { fontSize: 12, fontWeight: '700', color: COLORS.textMuted },
+    fab: { position: 'absolute', bottom: 30, right: 24, width: 60, height: 60, borderRadius: 30, backgroundColor: COLORS.primary, justifyContent: 'center', alignItems: 'center', elevation: 10 },
+    emptyView: { marginTop: 60, alignItems: 'center', paddingHorizontal: 40 },
+    emptyIconCircle: { width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.card, justifyContent: 'center', alignItems: 'center', marginBottom: 20, borderWidth: 1, borderColor: COLORS.border },
+    emptyTitle: { fontSize: 18, fontWeight: '800', color: COLORS.text, marginBottom: 8 },
+});
 
 export default TenantsScreen;

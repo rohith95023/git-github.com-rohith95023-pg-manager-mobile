@@ -41,9 +41,9 @@ const normalizeResponse = <T>(response: PostgrestResponse<T> | PostgrestSingleRe
     if (error) {
         const errorCode = error.code || 'UNKNOWN_ERROR';
         const errorMessage = error.message || 'An unknown error occurred';
-        const errorDetails = error.details || error.hint;
+        const errorDetails = typeof error.details === 'object' ? JSON.stringify(error.details) : (error.details || error.hint);
 
-        console.error(`[${label}] Error:`, errorMessage, errorDetails || '');
+        console.error(`[${label}] Error:`, errorMessage, '| Code:', errorCode, '| Details:', errorDetails || 'None');
 
         throw new APIError(
             errorMessage,
@@ -64,7 +64,10 @@ const normalizeResponse = <T>(response: PostgrestResponse<T> | PostgrestSingleRe
  * Handle network errors
  */
 const handleNetworkError = (error: any, label: string) => {
-    console.error(`[${label}] Network Error:`, error.message);
+    const errorMsg = typeof error.message === 'object' ? JSON.stringify(error.message) : (error.message || 'Unknown Network Error');
+    const fullError = typeof error === 'object' ? JSON.stringify(error) : error;
+
+    console.error(`[${label}] Network Error:`, errorMsg, '| Full:', fullError);
 
     if (error.message.includes('fetch')) {
         throw new APIError(

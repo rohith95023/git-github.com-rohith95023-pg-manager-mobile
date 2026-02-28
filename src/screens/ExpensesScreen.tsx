@@ -16,6 +16,7 @@ import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
+import ExpenseFormModal from "../components/modals/ExpenseFormModal";
 
 const { width } = Dimensions.get("window");
 
@@ -34,6 +35,20 @@ const ExpensesScreen = () => {
     const [filters, setFilters] = useState(DEFAULT_EXPENSE_FILTERS);
     const [pendingFilters, setPendingFilters] = useState(DEFAULT_EXPENSE_FILTERS);
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
+
+    // Modal State
+    const [isModalVisible, setModalVisible] = useState(false);
+    const [editingExpense, setEditingExpense] = useState<any>(null);
+
+    const handleAddExpense = () => {
+        setEditingExpense(null);
+        setModalVisible(true);
+    };
+
+    const handleEditExpense = (expense: any) => {
+        setEditingExpense(expense);
+        setModalVisible(true);
+    };
 
     const fetchExpenses = useCallback(async () => {
         try {
@@ -133,7 +148,7 @@ const ExpensesScreen = () => {
             </View>
 
             <View style={styles.expenseFooter}>
-                <TouchableOpacity style={styles.actionButton}>
+                <TouchableOpacity style={styles.actionButton} onPress={() => handleEditExpense(item)}>
                     <Feather name="edit-2" size={14} color={COLORS.primary} />
                     <Text style={styles.actionButtonText}>Edit</Text>
                 </TouchableOpacity>
@@ -236,10 +251,20 @@ const ExpensesScreen = () => {
                 />
             </FilterBottomSheet>
 
-            <TouchableOpacity style={styles.fab}>
+            <TouchableOpacity style={styles.fab} onPress={handleAddExpense}>
                 <Feather name="plus" size={24} color="#fff" />
                 <Text style={styles.fabText}>Log Expense</Text>
             </TouchableOpacity>
+
+            <ExpenseFormModal
+                visible={isModalVisible}
+                onClose={() => setModalVisible(false)}
+                onSuccess={() => {
+                    fetchExpenses();
+                    setModalVisible(false);
+                }}
+                editingExpense={editingExpense}
+            />
         </SafeAreaView>
     );
 };

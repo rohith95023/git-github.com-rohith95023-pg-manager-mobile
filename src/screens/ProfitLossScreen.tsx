@@ -52,11 +52,11 @@ const ProfitLossScreen = () => {
                 pnlAPI.getCategoryStats()
             ]);
 
-            setSummary(summaryRes.data || []);
-            setCategoryStats(categoryRes.data || []);
+            setSummary(summaryRes || []);
+            setCategoryStats(categoryRes || []);
 
             // Extract available months from summary data
-            const months = (summaryRes.data || []).map((item: any) => item.month).filter(Boolean) as string[];
+            const months = (summaryRes || []).map((item: any) => item.month).filter(Boolean) as string[];
             const uniqueMonths = [...new Set(months)].sort((a, b) =>
                 new Date(b).getTime() - new Date(a).getTime()
             );

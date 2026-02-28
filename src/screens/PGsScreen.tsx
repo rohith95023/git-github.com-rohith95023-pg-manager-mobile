@@ -13,8 +13,11 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { pgAPI } from "../services/api";
+import { supabase } from "../lib/supabaseClient";
 import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+
+import PGFormModal from "../components/modals/PGFormModal";
 
 const { width } = Dimensions.get("window");
 
@@ -27,20 +30,15 @@ const PGsScreen = ({ navigation }: any) => {
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
 
+    // Modal State
+    const [modalVisible, setModalVisible] = useState(false);
+    const [editingPg, setEditingPg] = useState<any>(null);
+
     const fetchPGs = useCallback(async () => {
         try {
             setLoading(true);
-            // Fetch both or just the current tab based on API structure
-            // Using a single fetch and local filtering for better UX if data is small
-            // but the instructions say to use business logic.
-            // Let's fetch based on tab.
-            let data: any;
-            if (activeTab === "Active") {
-                data = await pgAPI.getActive();
-            } else {
-                data = await pgAPI.getArchived();
-            }
-            setPgs(data || []);
+            const data: any = await pgAPI.getAllWithStats(activeTab === "Active" ? "ACTIVE" : "INACTIVE");
+            setPgs(Array.isArray(data) ? data : []);
         } catch (error) {
             console.error("Failed to fetch properties:", error);
             Alert.alert("Error", "Failed to fetch properties");
@@ -59,6 +57,16 @@ const PGsScreen = ({ navigation }: any) => {
         fetchPGs();
     };
 
+    const handleAdd = () => {
+        setEditingPg(null);
+        setModalVisible(true);
+    };
+
+    const handleEdit = (pg: any) => {
+        setEditingPg(pg);
+        setModalVisible(true);
+    };
+
     const filteredPgs = useMemo(() => {
         return pgs.filter(pg =>
         (pg.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -67,21 +75,117 @@ const PGsScreen = ({ navigation }: any) => {
         );
     }, [pgs, searchTerm]);
 
-    const handleDelete = (id: string) => {
+    const handleArchive = async (id: string, name: string) => {
+        try {
+            setLoading(true);
+            const { count, error } = await supabase
+                .from("tenants")
+                .select("id", { count: "exact", head: true })
+                .eq("pg_id", id)
+                .eq("status", "ACTIVE");
+
+            setLoading(false);
+
+            if (error) throw error;
+
+            if (count && count > 0) {
+                Alert.alert(
+                    "Archive Blocked",
+                    `Cannot archive PG while ${count} active tenant(s) are assigned. Please move them out first.`
+                );
+                return;
+            }
+
+            Alert.alert(
+                "Archive Property",
+                `Are you sure you want to archive "${name}"? This will also archive all its rooms and beds.`,
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Archive",
+                        style: "default",
+                        onPress: async () => {
+                            try {
+                                const date = new Date().toLocaleDateString();
+                                await pgAPI.archive(id, date);
+                                fetchPGs();
+                                Alert.alert("Success", "Property archived successfully");
+                            } catch (error: any) {
+                                Alert.alert("Error", error.message || "Failed to archive property");
+                            }
+                        }
+                    }
+                ]
+            );
+        } catch (error: any) {
+            setLoading(false);
+            console.error("Archive check error:", error);
+            Alert.alert("Error", "Error checking tenants: " + error.message);
+        }
+    };
+
+    const handleRestore = async (id: string, name: string) => {
+        try {
+            const restoredNameCandidate = name.split(" (Archived - ")[0];
+            const conflict = pgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
+
+            if (conflict) {
+                Alert.alert(
+                    "Restore Blocked",
+                    `Cannot restore: An active property named "${restoredNameCandidate}" already exists.`
+                );
+                return;
+            }
+
+            Alert.alert(
+                "Restore Property",
+                `Are you sure you want to restore "${restoredNameCandidate}"?`,
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Restore",
+                        style: "default",
+                        onPress: async () => {
+                            try {
+                                await pgAPI.restore(id);
+                                fetchPGs();
+                                Alert.alert("Success", "Property restored successfully");
+                            } catch (error: any) {
+                                Alert.alert("Error", error.message || "Failed to restore property");
+                            }
+                        }
+                    }
+                ]
+            );
+        } catch (error: any) {
+            Alert.alert("Error", "Failed to initiate restore: " + error.message);
+        }
+    };
+
+    const handleDelete = (id: string, name: string) => {
+        if (activeTab === "Active") {
+            handleArchive(id, name);
+            return;
+        }
+
         Alert.alert(
             "Delete Property",
-            "Are you sure you want to delete this property? This action cannot be undone.",
+            "This will PERMANENTLY delete this property and all its related data (Rooms, Beds, Payments). This cannot be undone.",
             [
                 { text: "Cancel", style: "cancel" },
                 {
-                    text: "Delete",
+                    text: "Hard Delete",
                     style: "destructive",
                     onPress: async () => {
                         try {
-                            await pgAPI.update(id, { status: "DELETED" });
+                            const cleanName = name.split(" (Archived")[0];
+                            // Using a simple code for prompt instead of custom modal in RN for now
+                            // but proceeding with API call
+                            await pgAPI.hardDelete(id);
                             fetchPGs();
-                        } catch (error) {
-                            Alert.alert("Error", "Failed to delete property");
+                            Alert.alert("Success", "Property deleted permanently");
+                        } catch (error: any) {
+                            Alert.alert("Error", error.message || "Failed to delete property");
                         }
                     }
                 }
@@ -90,12 +194,11 @@ const PGsScreen = ({ navigation }: any) => {
     };
 
     const PropertyCard = ({ item }: { item: any }) => {
-        // Mocking occupancy and available for visual demo if not in schema
-        // In real app, these would come from room relations.
-        const totalRooms = item.total_rooms || 0;
-        const occupiedRooms = Math.floor(totalRooms * 0.8); // Demo logic
-        const availableRooms = totalRooms - occupiedRooms;
-        const occupancyRate = totalRooms > 0 ? Math.round((occupiedRooms / totalRooms) * 100) : 0;
+        const totalRooms = item.rooms?.[0]?.count || 0;
+        const occupiedRooms = item.occupied_beds?.[0]?.count || 0; // Approximate or use a better metric if available
+        const totalBeds = item.beds?.[0]?.count || 0;
+        const availableBeds = totalBeds - occupiedRooms;
+        const occupancyRate = totalBeds > 0 ? Math.round((occupiedRooms / totalBeds) * 100) : 0;
 
         return (
             <TouchableOpacity
@@ -108,7 +211,7 @@ const PGsScreen = ({ navigation }: any) => {
                         <Text style={styles.propertyName}>{item.name}</Text>
                         <View style={styles.badgeRow}>
                             <View style={[styles.badge, { backgroundColor: COLORS.primary + "15" }]}>
-                                <Text style={[styles.badgeText, { color: COLORS.primary }]}>CO-LIVING</Text>
+                                <Text style={[styles.badgeText, { color: COLORS.primary }]}>{item.gender_type || "CO-LIVING"}</Text>
                             </View>
                             <View style={[styles.badge, { backgroundColor: COLORS.success + "15" }]}>
                                 <Text style={[styles.badgeText, { color: COLORS.success }]}>{item.total_floors || 0} FLOORS</Text>
@@ -116,10 +219,15 @@ const PGsScreen = ({ navigation }: any) => {
                         </View>
                     </View>
                     <View style={styles.headerIcons}>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => { }}>
+                        {item.status === "INACTIVE" && (
+                            <TouchableOpacity style={styles.iconBtn} onPress={() => handleRestore(item.id, item.name)}>
+                                <MaterialCommunityIcons name="backup-restore" size={18} color={COLORS.success} />
+                            </TouchableOpacity>
+                        )}
+                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleEdit(item)}>
                             <Feather name="edit-2" size={18} color={COLORS.textMuted} />
                         </TouchableOpacity>
-                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleDelete(item.id)}>
+                        <TouchableOpacity style={styles.iconBtn} onPress={() => handleDelete(item.id, item.name)}>
                             <Feather name="trash-2" size={18} color={COLORS.danger} />
                         </TouchableOpacity>
                     </View>
@@ -137,14 +245,14 @@ const PGsScreen = ({ navigation }: any) => {
                         <View style={styles.statBox}>
                             <View style={styles.statSubBox}>
                                 <Text style={styles.statSubValue}>{totalRooms}</Text>
-                                <Text style={styles.statSubLabel}>TOTAL</Text>
+                                <Text style={styles.statSubLabel} numberOfLines={1}>ROOMS</Text>
                             </View>
                             <View style={[styles.statSubBox, { borderLeftWidth: 1, borderLeftColor: COLORS.border }]}>
-                                <Text style={styles.statSubValue}>{availableRooms}</Text>
-                                <Text style={[styles.statSubLabel, { color: COLORS.success }]}>AVAIL</Text>
+                                <Text style={styles.statSubValue}>{availableBeds}</Text>
+                                <Text style={[styles.statSubLabel, { color: COLORS.success }]} numberOfLines={1}>AVAIL BEDS</Text>
                             </View>
                         </View>
-                        <Text style={styles.statMainLabel}>ROOMS (T/A)</Text>
+                        <Text style={styles.statMainLabel}>INVENTORY (R/A.B)</Text>
                     </View>
 
                     <View style={styles.occupancyContainer}>
@@ -184,7 +292,7 @@ const PGsScreen = ({ navigation }: any) => {
                     <Text style={styles.title}>PG Properties</Text>
                     <Text style={styles.subtitle}>Real-time property analytics active</Text>
                 </View>
-                <TouchableOpacity style={styles.syncBtn}>
+                <TouchableOpacity style={styles.syncBtn} onPress={onRefresh}>
                     <MaterialCommunityIcons name="database-sync" size={20} color={COLORS.textMuted} />
                 </TouchableOpacity>
             </View>
@@ -206,21 +314,28 @@ const PGsScreen = ({ navigation }: any) => {
             </View>
 
             <View style={styles.searchSection}>
-                <View style={styles.searchSection}>
-                    <View style={styles.searchBar}>
-                        <Feather name="search" size={20} color={COLORS.textMuted} />
-                        <TextInput
-                            placeholder="Search by name or city..."
-                            placeholderTextColor={COLORS.textMuted}
-                            style={styles.searchInput}
-                            value={searchTerm}
-                            onChangeText={setSearchTerm}
-                        />
-                    </View>
+                <View style={[styles.searchBar, searchTerm ? { borderColor: COLORS.primary } : {}]}>
+                    <Feather name="search" size={20} color={searchTerm ? COLORS.primary : COLORS.textMuted} />
+                    <TextInput
+                        placeholder="Search by name or city..."
+                        placeholderTextColor={COLORS.textMuted}
+                        style={styles.searchInput}
+                        value={searchTerm}
+                        onChangeText={setSearchTerm}
+                    />
+                    {searchTerm ? (
+                        <TouchableOpacity onPress={() => setSearchTerm("")}>
+                            <Feather name="x-circle" size={18} color={COLORS.textMuted} />
+                        </TouchableOpacity>
+                    ) : (
+                        <View style={styles.filterDot} />
+                    )}
                 </View>
                 <View style={styles.totalRow}>
-                    <View style={styles.totalDot} />
-                    <Text style={styles.totalText}>TOTAL: {filteredPgs.length}</Text>
+                    <View style={[styles.totalDot, searchTerm ? { backgroundColor: COLORS.primary } : { backgroundColor: COLORS.success }]} />
+                    <Text style={[styles.totalText, searchTerm ? { color: COLORS.primary } : { color: COLORS.textMuted }]}>
+                        {searchTerm ? `FOUND ${filteredPgs.length} PROPERTIES` : `TOTAL ${filteredPgs.length} PROPERTIES`}
+                    </Text>
                 </View>
             </View>
 
@@ -248,11 +363,18 @@ const PGsScreen = ({ navigation }: any) => {
             <TouchableOpacity
                 style={styles.fab}
                 activeOpacity={0.8}
-                onPress={() => Alert.alert("Coming Soon", "The feature to create a new property will be available in the next update.")}
+                onPress={handleAdd}
             >
                 <Feather name="plus" size={24} color="#fff" />
                 <Text style={styles.fabText}>Create Property</Text>
             </TouchableOpacity>
+
+            <PGFormModal
+                visible={modalVisible}
+                onClose={() => setModalVisible(false)}
+                onSuccess={fetchPGs}
+                editingPg={editingPg}
+            />
         </SafeAreaView>
     );
 };
@@ -285,9 +407,10 @@ const createStyles = (COLORS: ThemePalette) =>
             borderColor: COLORS.border,
         },
         searchInput: { flex: 1, marginLeft: 12, color: COLORS.text, fontWeight: "600", fontSize: 14 },
-        totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6 },
-        totalDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: COLORS.primary },
-        totalText: { fontSize: 11, fontWeight: "800", color: COLORS.text, letterSpacing: 1 },
+        filterDot: { width: 4, height: 4, borderRadius: 2, backgroundColor: COLORS.border },
+        totalRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, marginTop: 10 },
+        totalDot: { width: 6, height: 6, borderRadius: 3 },
+        totalText: { fontSize: 10, fontWeight: "900", letterSpacing: 1 },
 
         listContent: { paddingHorizontal: 20, paddingBottom: 100 },
         card: {
@@ -313,22 +436,32 @@ const createStyles = (COLORS: ThemePalette) =>
         divider: { height: 1, backgroundColor: COLORS.border, marginBottom: 16 },
 
         statsRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-end" },
-        statContainer: { flex: 1.2 },
+        statContainer: { flex: 1.8 },
         statBox: {
             flexDirection: "row",
             backgroundColor: COLORS.bg,
-            borderRadius: 12,
+            borderRadius: 16,
             borderWidth: 1,
             borderColor: COLORS.border,
-            padding: 8,
-            marginBottom: 8
+            paddingVertical: 10,
+            paddingHorizontal: 8,
+            marginBottom: 6,
+            minHeight: 56,
+            alignItems: "center"
         },
-        statSubBox: { flex: 1, alignItems: "center" },
-        statSubValue: { fontSize: 15, fontWeight: "800", color: COLORS.text },
-        statSubLabel: { fontSize: 8, fontWeight: "800", color: COLORS.textMuted, marginTop: 2 },
-        statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5 },
+        statSubBox: { flex: 1, alignItems: "center", justifyContent: "center" },
+        statSubValue: { fontSize: 16, fontWeight: "800", color: COLORS.text, marginBottom: 2 },
+        statSubLabel: {
+            fontSize: 7.5,
+            fontWeight: "900",
+            color: COLORS.textMuted,
+            textTransform: "uppercase",
+            textAlign: "center",
+            width: "100%"
+        },
+        statMainLabel: { fontSize: 9, fontWeight: "900", color: COLORS.textMuted, letterSpacing: 0.5, textAlign: "center" },
 
-        occupancyContainer: { flex: 1.2, marginHorizontal: 15 },
+        occupancyContainer: { flex: 1, marginHorizontal: 8 },
         occupancyHeader: { flexDirection: "row", alignItems: "center", gap: 10, marginBottom: 8, height: 44, justifyContent: "center" },
         progressBarBg: { height: 6, backgroundColor: "rgba(255,255,255,0.05)", borderRadius: 3, overflow: "hidden" },
         progressBarFill: { height: "100%", borderRadius: 3 },

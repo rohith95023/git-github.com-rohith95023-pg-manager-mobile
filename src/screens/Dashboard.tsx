@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { useIsFocused } from "@react-navigation/native";
 import {
     View,
     Text,
@@ -20,6 +21,7 @@ const { width } = Dimensions.get("window");
 
 const Dashboard = ({ navigation, route }: any) => {
     const { user } = useAuth();
+    const isFocused = useIsFocused();
     const COLORS = useThemePalette();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [loading, setLoading] = useState(true);
@@ -36,7 +38,7 @@ const Dashboard = ({ navigation, route }: any) => {
                 tenantAPI.getActive()
             ]);
 
-            if (statsRes?.data) setStats(statsRes.data);
+            if (statsRes) setStats(statsRes);
             setRecentPayments((paymentsRes || []).slice(0, 5));
             setDailyTenants((tenantsRes || []).filter((t: any) => t.stay_type === 'DAILY').slice(0, 5));
         } catch (error) {
@@ -54,8 +56,10 @@ const Dashboard = ({ navigation, route }: any) => {
     }, [route.params?.refresh]);
 
     useEffect(() => {
-        fetchData();
-    }, [fetchData]);
+        if (isFocused) {
+            fetchData();
+        }
+    }, [fetchData, isFocused]);
 
     const onRefresh = () => {
         setRefreshing(true);
@@ -64,7 +68,7 @@ const Dashboard = ({ navigation, route }: any) => {
 
     if (loading && !refreshing) {
         return (
-        <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
+            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
                 <ActivityIndicator size="large" color={COLORS.primary} />
             </View>
         );
@@ -73,7 +77,7 @@ const Dashboard = ({ navigation, route }: any) => {
     const KPICard = ({ title, value, icon, iconType = "Feather", color = COLORS.primary }: any) => {
         const IconComponent = iconType === "Material" ? MaterialCommunityIcons : Feather;
         return (
-                <View style={styles.kpiCard}>
+            <View style={styles.kpiCard}>
                 <View style={[styles.kpiIconBox, { backgroundColor: color + "15" }]}>
                     <IconComponent name={icon as any} size={20} color={color} />
                 </View>

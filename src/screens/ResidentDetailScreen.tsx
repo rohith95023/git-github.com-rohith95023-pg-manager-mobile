@@ -146,7 +146,9 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                             </View>
                             <View>
                                 <Text style={styles.allocationLabel}>FLOOR</Text>
-                                <Text style={styles.allocationValue}>{tenant.rooms?.floor || tenant.floor || "N/A"}</Text>
+                                <Text style={styles.allocationValue}>
+                                    {(tenant.rooms?.floor === 0 || tenant.rooms?.floor === "0") || (tenant.floor === 0 || tenant.floor === "0") ? "Ground" : (tenant.rooms?.floor || tenant.floor || "N/A")}
+                                </Text>
                             </View>
                         </View>
                     </View>
@@ -214,120 +216,120 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
-    container: { flex: 1, backgroundColor: COLORS.bg },
-    navHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        justifyContent: "space-between",
-        paddingHorizontal: 20,
-        paddingVertical: 15,
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border
-    },
-    backBtn: { padding: 4 },
-    navTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
-    editBtn: { padding: 8 },
-    scrollPadding: { paddingHorizontal: 20, paddingTop: 20 },
+        container: { flex: 1, backgroundColor: COLORS.bg },
+        navHeader: {
+            flexDirection: "row",
+            alignItems: "center",
+            justifyContent: "space-between",
+            paddingHorizontal: 20,
+            paddingVertical: 15,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border
+        },
+        backBtn: { padding: 4 },
+        navTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
+        editBtn: { padding: 8 },
+        scrollPadding: { paddingHorizontal: 20, paddingTop: 20 },
 
-    profileSection: { alignItems: "center", marginBottom: 30 },
-    avatarContainer: { position: "relative", marginBottom: 15 },
-    avatar: {
-        width: 100,
-        height: 100,
-        borderRadius: 35,
-        justifyContent: "center",
-        alignItems: "center"
-    },
-    avatarText: { fontSize: 36, fontWeight: "900", color: COLORS.primary },
-    statusIndicator: {
-        position: "absolute",
-        bottom: 5,
-        right: 5,
-        width: 20,
-        height: 20,
-        borderRadius: 10,
-        borderWidth: 3,
-        borderColor: COLORS.bg
-    },
-    profileName: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 8 },
-    profileStatusBadge: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 12, marginBottom: 10 },
-    profileStatusText: { fontSize: 12, fontWeight: "800", textTransform: "uppercase" },
-    enrollmentDate: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
+        profileSection: { alignItems: "center", marginBottom: 30 },
+        avatarContainer: { position: "relative", marginBottom: 15 },
+        avatar: {
+            width: 100,
+            height: 100,
+            borderRadius: 35,
+            justifyContent: "center",
+            alignItems: "center"
+        },
+        avatarText: { fontSize: 36, fontWeight: "900", color: COLORS.primary },
+        statusIndicator: {
+            position: "absolute",
+            bottom: 5,
+            right: 5,
+            width: 20,
+            height: 20,
+            borderRadius: 10,
+            borderWidth: 3,
+            borderColor: COLORS.bg
+        },
+        profileName: { fontSize: 24, fontWeight: "900", color: COLORS.text, marginBottom: 8 },
+        profileStatusBadge: { paddingHorizontal: 16, paddingVertical: 6, borderRadius: 12, marginBottom: 10 },
+        profileStatusText: { fontSize: 12, fontWeight: "800", textTransform: "uppercase" },
+        enrollmentDate: { fontSize: 13, color: COLORS.textMuted, fontWeight: "600" },
 
-    detailCard: {
-        backgroundColor: COLORS.card,
-        borderRadius: 24,
-        padding: 20,
-        marginBottom: 20,
-        borderWidth: 1,
-        borderColor: COLORS.border
-    },
-    cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
-    iconBox: {
-        width: 36,
-        height: 36,
-        borderRadius: 10,
-        justifyContent: "center",
-        alignItems: "center",
-        marginRight: 12
-    },
-    cardTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
-    cardContent: { gap: 16 },
+        detailCard: {
+            backgroundColor: COLORS.card,
+            borderRadius: 24,
+            padding: 20,
+            marginBottom: 20,
+            borderWidth: 1,
+            borderColor: COLORS.border
+        },
+        cardHeader: { flexDirection: "row", alignItems: "center", marginBottom: 20 },
+        iconBox: {
+            width: 36,
+            height: 36,
+            borderRadius: 10,
+            justifyContent: "center",
+            alignItems: "center",
+            marginRight: 12
+        },
+        cardTitle: { fontSize: 16, fontWeight: "800", color: COLORS.text },
+        cardContent: { gap: 16 },
 
-    infoRow: { flexDirection: "row", alignItems: "center" },
-    infoIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: "center", alignItems: "center", marginRight: 12 },
-    infoText: { flex: 1 },
-    infoLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", textTransform: "uppercase", marginBottom: 2 },
-    infoValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        infoRow: { flexDirection: "row", alignItems: "center" },
+        infoIcon: { width: 32, height: 32, borderRadius: 8, justifyContent: "center", alignItems: "center", marginRight: 12 },
+        infoText: { flex: 1 },
+        infoLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", textTransform: "uppercase", marginBottom: 2 },
+        infoValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
 
-    allocationGrid: { flexDirection: "row", flexWrap: "wrap", gap: 15, marginBottom: 10 },
-    allocationItem: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "rgba(255,255,255,0.02)",
-        padding: 12,
-        borderRadius: 16,
-        width: "47%",
-        gap: 12
-    },
-    allocationIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-    allocationLabel: { fontSize: 8, color: COLORS.textMuted, fontWeight: "800" },
-    allocationValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+        allocationGrid: { flexDirection: "row", flexWrap: "wrap", gap: 15, marginBottom: 10 },
+        allocationItem: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: "rgba(255,255,255,0.02)",
+            padding: 12,
+            borderRadius: 16,
+            width: "47%",
+            gap: 12
+        },
+        allocationIcon: { width: 40, height: 40, borderRadius: 12, justifyContent: "center", alignItems: "center" },
+        allocationLabel: { fontSize: 8, color: COLORS.textMuted, fontWeight: "800" },
+        allocationValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
 
-    idContainer: {
-        flexDirection: "row",
-        alignItems: "center",
-        backgroundColor: "rgba(255,255,255,0.02)",
-        padding: 16,
-        borderRadius: 16,
-        gap: 16
-    },
-    idIcon: { padding: 10, backgroundColor: COLORS.warning + "10", borderRadius: 12 },
-    idInfo: { flex: 1 },
-    idLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", marginBottom: 4 },
-    idValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
-    verifiedBadge: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 4,
-        backgroundColor: COLORS.success,
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6
-    },
-    verifiedText: { fontSize: 8, fontWeight: "900", color: "#fff" },
+        idContainer: {
+            flexDirection: "row",
+            alignItems: "center",
+            backgroundColor: "rgba(255,255,255,0.02)",
+            padding: 16,
+            borderRadius: 16,
+            gap: 16
+        },
+        idIcon: { padding: 10, backgroundColor: COLORS.warning + "10", borderRadius: 12 },
+        idInfo: { flex: 1 },
+        idLabel: { fontSize: 9, color: COLORS.textMuted, fontWeight: "800", marginBottom: 4 },
+        idValue: { fontSize: 16, fontWeight: "900", color: COLORS.text },
+        verifiedBadge: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            backgroundColor: COLORS.success,
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 6
+        },
+        verifiedText: { fontSize: 8, fontWeight: "900", color: "#fff" },
 
-    financeItem: {
-        flexDirection: "row",
-        justifyContent: "space-between",
-        alignItems: "center",
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: "rgba(255,255,255,0.05)"
-    },
-    financeLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
-    financeSubLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-    financeValue: { fontSize: 18, fontWeight: "900" }
-});
+        financeItem: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            paddingVertical: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: "rgba(255,255,255,0.05)"
+        },
+        financeLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        financeSubLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
+        financeValue: { fontSize: 18, fontWeight: "900" }
+    });
 
 export default ResidentDetailScreen;

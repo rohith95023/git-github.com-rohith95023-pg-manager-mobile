@@ -10,14 +10,17 @@ import {
     RefreshControl,
     ActivityIndicator,
     Dimensions,
-    Pressable
+    Pressable,
+    Alert
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { roomAPI, bedAPI, pgAPI } from "../services/api";
+import { supabase } from "../lib/supabaseClient";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
+import RoomFormModal from "../components/modals/RoomFormModal";
 
 const { width } = Dimensions.get("window");
 
@@ -43,6 +46,11 @@ const RoomsScreen = ({ navigation }: any) => {
     const [pgs, setPgs] = useState<any[]>([]);
 
     const [searchTerm, setSearchTerm] = useState("");
+
+    // Modal State
+    const [roomModalVisible, setRoomModalVisible] = useState(false);
+    const [editingRoom, setEditingRoom] = useState<any>(null);
+
     const statusMode = filters.showArchived ? "ARCHIVED" : "ACTIVE";
     const updateShowArchived = (value: boolean) => {
         setFilters(prev => ({ ...prev, showArchived: value }));
@@ -75,6 +83,66 @@ const RoomsScreen = ({ navigation }: any) => {
     const onRefresh = () => {
         setRefreshing(true);
         fetchData();
+    };
+
+    const handleAddRoom = () => {
+        setEditingRoom(null);
+        setRoomModalVisible(true);
+    };
+
+    const handleEditRoom = (room: any) => {
+        setEditingRoom(room);
+        setRoomModalVisible(true);
+    };
+
+    const handleDeleteRoom = async (id: string, roomNumber: string) => {
+        try {
+            setLoading(true);
+            const { count, error } = await supabase
+                .from("beds")
+                .select("id", { count: "exact", head: true })
+                .eq("room_id", id)
+                .not("tenant_id", "is", null);
+
+            setLoading(false);
+
+            if (error) throw error;
+
+            if (count && count > 0) {
+                Alert.alert(
+                    "Delete Blocked",
+                    `Cannot delete Room ${roomNumber}. It currently has ${count} occupied or reserved bed(s). Please unassign tenants before deleting.`
+                );
+                return;
+            }
+
+            Alert.alert(
+                "Delete Room",
+                `Are you sure you want to delete Room ${roomNumber} and its beds?`,
+                [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                        text: "Delete",
+                        style: "destructive",
+                        onPress: async () => {
+                            try {
+                                await roomAPI.update(id, { status: "DELETED" });
+                                // We might also want to soft delete beds, or let API handle it
+                                await supabase.from("beds").update({ status: "DELETED" }).eq("room_id", id);
+                                fetchData();
+                                Alert.alert("Success", `Room ${roomNumber} deleted successfully`);
+                            } catch (error) {
+                                Alert.alert("Error", "Failed to delete room");
+                            }
+                        }
+                    }
+                ]
+            );
+        } catch (error: any) {
+            setLoading(false);
+            console.error("Delete room check error:", error);
+            Alert.alert("Error", "Error checking room occupancy: " + error.message);
+        }
     };
 
     // Filter Logic
@@ -129,7 +197,9 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardHeader}>
                 <View style={styles.cardInfo}>
                     <Text style={styles.cardTitle}>Room {item.room_number}</Text>
-                    <Text style={styles.cardSub}>{item.pgs?.name || "N/A"} • Floor {item.floor}</Text>
+                    <Text style={styles.cardSub}>
+                        {item.pgs?.name || "N/A"} • {item.floor_number === 0 || item.floor_number === "0" ? "Ground Floor" : `Floor ${item.floor_number}`}
+                    </Text>
                 </View>
                 <View style={[styles.badge, { backgroundColor: getStatusColor(item.status) + "20" }]}>
                     <Text style={[styles.badgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
@@ -141,17 +211,17 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardFooter}>
                 <View style={styles.footerItem}>
                     <Text style={styles.footerLabel}>MONTHLY RENT</Text>
-                    <Text style={styles.footerValue}>₹{item.rent?.toLocaleString()}</Text>
+                    <Text style={styles.footerValue}>₹{Number(item.monthly_rent || 0).toLocaleString()}</Text>
                 </View>
                 <View style={styles.footerItem}>
-                    <Text style={styles.footerLabel}>DEPOSIT</Text>
-                    <Text style={styles.footerValue}>₹{item.security_deposit?.toLocaleString()}</Text>
+                    <Text style={styles.footerLabel}>SHARING</Text>
+                    <Text style={styles.footerValue}>{item.capacity} Beds</Text>
                 </View>
                 <View style={styles.actions}>
-                    <TouchableOpacity style={styles.actionBtn}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditRoom(item)}>
                         <Feather name="edit-2" size={16} color={COLORS.textMuted} />
                     </TouchableOpacity>
-                    <TouchableOpacity style={styles.actionBtn}>
+                    <TouchableOpacity style={styles.actionBtn} onPress={() => handleDeleteRoom(item.id, item.room_number)}>
                         <Feather name="trash-2" size={16} color={COLORS.danger} />
                     </TouchableOpacity>
                 </View>
@@ -364,10 +434,19 @@ const RoomsScreen = ({ navigation }: any) => {
             <TouchableOpacity
                 style={styles.fab}
                 activeOpacity={0.8}
-                onPress={() => console.log(`Add ${viewMode === "ROOMS" ? "Room" : "Bed"}`)}
+                onPress={handleAddRoom}
             >
                 <Feather name="plus" size={24} color="#fff" />
+                <Text style={styles.fabText}>Add Room</Text>
             </TouchableOpacity>
+
+            <RoomFormModal
+                visible={roomModalVisible}
+                onClose={() => setRoomModalVisible(false)}
+                onSuccess={fetchData}
+                editingRoom={editingRoom}
+                initialPgId={filters.property || undefined}
+            />
         </SafeAreaView>
     );
 };
@@ -546,11 +625,12 @@ const createStyles = (COLORS: ThemePalette) =>
 
         fab: {
             position: "absolute",
-            bottom: 24,
-            right: 24,
-            width: 56,
+            bottom: 30,
+            right: 20,
+            flexDirection: "row",
+            paddingHorizontal: 20,
             height: 56,
-            borderRadius: 20,
+            borderRadius: 28,
             backgroundColor: COLORS.primary,
             justifyContent: "center",
             alignItems: "center",
@@ -558,8 +638,10 @@ const createStyles = (COLORS: ThemePalette) =>
             shadowColor: COLORS.primary,
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.3,
-            shadowRadius: 10
-        }
+            shadowRadius: 6,
+            gap: 10
+        },
+        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
     });
 
 export default RoomsScreen;

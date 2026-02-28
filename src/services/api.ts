@@ -44,6 +44,13 @@ export const pgAPI = {
         if (error) throw error;
         return { success: true };
     },
+    getAllWithStats: (status: "ACTIVE" | "INACTIVE" = "ACTIVE") =>
+        apiClient.get('pgs', `*, 
+                rooms:rooms(count), 
+                beds:beds(count), 
+                occupied_beds:beds(count).filter(status.eq.OCCUPIED)`,
+            (query: any) => query.eq("status", status).order("created_at", { ascending: false })
+        ),
 };
 
 // Floor APIs
@@ -168,8 +175,12 @@ export const tenantAPI = {
     getActive: () => apiClient.get('tenants', (query: any) => query.in("status", ["ACTIVE", "UPCOMING", "OVERDUE"]).select(`*, daily_stay_details(*), rooms!room_id(room_number, rent), pgs!pg_id(name), beds!bed_id(bed_number)`)),
     getById: (id: string) => apiClient.getById('tenants', id),
     create: async (data: any) => {
-        const { vacate_date, total_rent, paid_amount, balance_amount, ...tenantIdentity } = data;
-        const { data: tenant, error: tenantError } = await supabase.from("tenants").insert([tenantIdentity]).select().single();
+        const { vacate_date, total_rent, paid_amount, balance_amount, balance, ...tenantIdentity } = data;
+        const insertData = {
+            ...tenantIdentity,
+            balance: balance !== undefined ? balance : (data.stay_type === 'DAILY' ? (balance_amount || total_rent || 0) : 0)
+        };
+        const { data: tenant, error: tenantError } = await supabase.from("tenants").insert([insertData]).select().single();
         if (tenantError) throw tenantError;
         if (data.stay_type === 'DAILY') {
             const { error: dailyError } = await supabase.from("daily_stay_details").insert([{

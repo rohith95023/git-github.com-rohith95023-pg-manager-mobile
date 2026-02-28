@@ -14,6 +14,7 @@ import useThemePalette from "../../hooks/useThemePalette";
 interface DropdownOption {
     label: string;
     value: string;
+    disabled?: boolean;
 }
 
 interface DropdownSelectorProps {
@@ -24,6 +25,7 @@ interface DropdownSelectorProps {
     placeholder?: string;
     disabled?: boolean;
     highlight?: boolean;
+    error?: string;
     onDisabledPress?: () => void;
 }
 
@@ -35,6 +37,7 @@ const DropdownSelector: React.FC<DropdownSelectorProps> = ({
     placeholder = "Select...",
     disabled = false,
     highlight = false,
+    error,
     onDisabledPress
 }) => {
     const COLORS = useThemePalette();
@@ -53,7 +56,7 @@ const DropdownSelector: React.FC<DropdownSelectorProps> = ({
             <TouchableOpacity
                 style={[
                     styles.selector,
-                    { borderColor: COLORS.border, backgroundColor: COLORS.card },
+                    { borderColor: error ? COLORS.danger : COLORS.border, backgroundColor: COLORS.card },
                     disabled && styles.selectorDisabled,
                     highlight && { borderColor: COLORS.primary, borderWidth: 2 }
                 ]}
@@ -103,9 +106,11 @@ const DropdownSelector: React.FC<DropdownSelectorProps> = ({
                                     style={[
                                         styles.option,
                                         { borderBottomColor: COLORS.border },
-                                        item.value === value && { backgroundColor: COLORS.primary + "15" }
+                                        item.value === value && { backgroundColor: COLORS.primary + "15" },
+                                        item.disabled && { opacity: 0.5 }
                                     ]}
-                                    onPress={() => handleSelect(item.value)}
+                                    onPress={() => !item.disabled && handleSelect(item.value)}
+                                    disabled={item.disabled}
                                 >
                                     <Text style={[
                                         styles.optionText,
@@ -124,6 +129,9 @@ const DropdownSelector: React.FC<DropdownSelectorProps> = ({
                     </SafeAreaView>
                 </TouchableOpacity>
             </Modal>
+            {error ? (
+                <Text style={[styles.errorText, { color: COLORS.danger }]}>{error}</Text>
+            ) : null}
         </View>
     );
 };
@@ -188,6 +196,12 @@ const styles = StyleSheet.create({
     },
     optionText: {
         fontSize: 15,
+    },
+    errorText: {
+        fontSize: 10,
+        fontWeight: "700",
+        marginTop: 4,
+        marginLeft: 4,
     },
 });
 

@@ -19,6 +19,7 @@ import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
+import PaymentFormModal from "../components/modals/PaymentFormModal";
 
 const { width } = Dimensions.get("window");
 const DEFAULT_PAYMENT_FILTERS = {
@@ -48,6 +49,20 @@ const PaymentsScreen = () => {
     const [pendingFilters, setPendingFilters] = useState(DEFAULT_PAYMENT_FILTERS);
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
 
+    // Modal State
+    const [isModalVisible, setModalVisible] = useState(false);
+    const [editingPayment, setEditingPayment] = useState<any>(null);
+
+    const handleAddPayment = () => {
+        setEditingPayment(null);
+        setModalVisible(true);
+    };
+
+    const handleEditPayment = (payment: any) => {
+        setEditingPayment(payment);
+        setModalVisible(true);
+    };
+
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
@@ -60,7 +75,7 @@ const PaymentsScreen = () => {
             setPayments(paymentsRes || []);
             setPgs(pgsRes || []);
 
-            const ds = dashboardStatsRes.data;
+            const ds = dashboardStatsRes;
             if (ds) {
                 const totalReceivable = ds.monthlyRevenue + ds.pendingDues;
                 const collectionRate = totalReceivable > 0 ? Math.round((ds.monthlyRevenue / totalReceivable) * 100) : 0;
@@ -188,7 +203,7 @@ const PaymentsScreen = () => {
             </View>
 
             <View style={styles.paymentFooter}>
-                <TouchableOpacity style={styles.editButton}>
+                <TouchableOpacity style={styles.editButton} onPress={() => handleEditPayment(item)}>
                     <Feather name="edit-2" size={14} color={COLORS.primary} />
                     <Text style={styles.editButtonText}>Edit</Text>
                 </TouchableOpacity>
@@ -332,10 +347,21 @@ const PaymentsScreen = () => {
 
             <TouchableOpacity
                 style={styles.fab}
-                onPress={() => Alert.alert("Coming Soon", "The feature to add a new financial entry will be available in the next update.")}
+                onPress={handleAddPayment}
             >
                 <Feather name="plus" size={24} color="#fff" />
+                <Text style={styles.fabText}>Record Payment</Text>
             </TouchableOpacity>
+
+            <PaymentFormModal
+                visible={isModalVisible}
+                onClose={() => setModalVisible(false)}
+                onSuccess={() => {
+                    fetchData();
+                    setModalVisible(false);
+                }}
+                editingPayment={editingPayment}
+            />
         </SafeAreaView>
     );
 };
@@ -483,18 +509,21 @@ const createStyles = (COLORS: ThemePalette) =>
             position: "absolute",
             bottom: 30,
             right: 20,
-            width: 48,
-            height: 48,
-            borderRadius: 16,
+            flexDirection: "row",
+            paddingHorizontal: 20,
+            height: 56,
+            borderRadius: 28,
             backgroundColor: COLORS.primary,
             justifyContent: "center",
             alignItems: "center",
-            elevation: 4,
+            elevation: 8,
             shadowColor: COLORS.primary,
-            shadowOffset: { width: 0, height: 2 },
+            shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.3,
-            shadowRadius: 4
+            shadowRadius: 6,
+            gap: 10
         },
+        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 },
         emptyState: { alignItems: "center", marginTop: 60, gap: 16 },
         emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: "600" },
         sheetSection: { marginBottom: 18, paddingHorizontal: 20 },

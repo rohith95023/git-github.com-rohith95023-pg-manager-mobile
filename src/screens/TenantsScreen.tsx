@@ -19,6 +19,7 @@ import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
 import { supabase } from "../lib/supabaseClient";
+import UnifiedStayManager from "../components/modals/UnifiedStayManager";
 
 const { width, height } = Dimensions.get("window");
 
@@ -67,9 +68,23 @@ const TenantsScreen = ({ navigation }: any) => {
     const [filters, setFilters] = useState(createDefaultTenantFilters());
     const [pendingFilters, setPendingFilters] = useState(createDefaultTenantFilters());
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
-    const [sheetFloorOptions, setSheetFloorOptions] = useState<string[]>([]);
+    const [sheetFloorOptions, setSheetFloorOptions] = useState<any[]>([]);
     const [sheetRoomOptions, setSheetRoomOptions] = useState<any[]>([]);
     const [highlightProperty, setHighlightProperty] = useState(false);
+
+    // Onboarding Modal State
+    const [isOnboardingVisible, setOnboardingVisible] = useState(false);
+    const [editingTenant, setEditingTenant] = useState<any>(null);
+
+    const handleAddTenant = () => {
+        setEditingTenant(null);
+        setOnboardingVisible(true);
+    };
+
+    const handleEditTenant = (tenant: any) => {
+        setEditingTenant(tenant);
+        setOnboardingVisible(true);
+    };
 
     useEffect(() => {
         const timer = setTimeout(() => setDebouncedSearch(searchTerm), 500);
@@ -117,12 +132,16 @@ const TenantsScreen = ({ navigation }: any) => {
             if (error) throw error;
             const uniqueFloors = [...new Set(data.map((room: any) => room.floor))]
                 .filter((floor) => floor !== null && floor !== undefined && floor !== "")
-                .sort((a, b) => {
+                .sort((a: any, b: any) => {
                     const numA = Number(a);
                     const numB = Number(b);
                     if (!isNaN(numA) && !isNaN(numB)) return numA - numB;
                     return String(a).localeCompare(String(b));
-                });
+                })
+                .map((f) => ({
+                    label: f === 0 || f === "0" ? "Ground Floor" : `Floor ${f}`,
+                    value: String(f),
+                }));
             return uniqueFloors;
         } catch (error) {
             console.error("Error fetching floors:", error);
@@ -211,7 +230,7 @@ const TenantsScreen = ({ navigation }: any) => {
                             </View>
                         </View>
                         <View style={styles.actionsRow}>
-                            <TouchableOpacity style={styles.actionBtn}>
+                            <TouchableOpacity style={styles.actionBtn} onPress={() => handleEditTenant(item)}>
                                 <Feather name="edit-2" size={14} color={COLORS.textMuted} />
                             </TouchableOpacity>
                             <TouchableOpacity style={styles.actionBtn}>
@@ -297,7 +316,6 @@ const TenantsScreen = ({ navigation }: any) => {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
                 ListHeaderComponent={
                     <View style={styles.topSection}>
-                        {/* Search Bar */}
                         {/* Search Row */}
                         <View style={styles.searchRow}>
                             <View style={styles.searchBar}>
@@ -316,7 +334,10 @@ const TenantsScreen = ({ navigation }: any) => {
                                 )}
                             </View>
                             <TouchableOpacity
-                                style={styles.filterButton}
+                                style={[
+                                    styles.filterButton,
+                                    (filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && { backgroundColor: COLORS.success }
+                                ]}
                                 onPress={() => {
                                     setPendingFilters(filters);
                                     setFilterSheetVisible(true);
@@ -325,6 +346,26 @@ const TenantsScreen = ({ navigation }: any) => {
                                 <Feather name="sliders" size={18} color="#fff" />
                                 <Text style={styles.filterButtonText}>Filter</Text>
                             </TouchableOpacity>
+                        </View>
+
+                        {/* Filter Status Bar */}
+                        <View style={styles.filterStatusRow}>
+                            <Text style={styles.countText}>
+                                {loading ? "Finding residents..." : `Found ${filteredTenants.length} residents`}
+                            </Text>
+                            {(filters.propertyId || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && (
+                                <TouchableOpacity
+                                    onPress={() => {
+                                        const defaults = createDefaultTenantFilters();
+                                        setFilters(defaults);
+                                        setPendingFilters(defaults);
+                                    }}
+                                    style={styles.clearFiltersBtn}
+                                >
+                                    <Text style={styles.clearFiltersText}>Clear All</Text>
+                                    <Feather name="x" size={12} color={COLORS.danger} />
+                                </TouchableOpacity>
+                            )}
                         </View>
                     </View>
                 }
@@ -401,7 +442,7 @@ const TenantsScreen = ({ navigation }: any) => {
                     label="Floor"
                     options={[
                         { label: "All Floors", value: "ALL" },
-                        ...sheetFloorOptions.map(floor => ({ label: `Floor ${floor}`, value: floor }))
+                        ...sheetFloorOptions.map((floor: any) => ({ label: floor.label, value: floor.value }))
                     ]}
                     value={pendingFilters.floor}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, floor: value, room: "ALL" }))}
@@ -445,10 +486,21 @@ const TenantsScreen = ({ navigation }: any) => {
             <TouchableOpacity
                 style={styles.fab}
                 activeOpacity={0.8}
-                onPress={() => console.log("Add Tenant")}
+                onPress={handleAddTenant}
             >
                 <Feather name="plus" size={24} color="#fff" />
+                <Text style={styles.fabText}>Add Resident</Text>
             </TouchableOpacity>
+
+            <UnifiedStayManager
+                visible={isOnboardingVisible}
+                onClose={() => setOnboardingVisible(false)}
+                onSuccess={() => {
+                    loadTenants();
+                    setOnboardingVisible(false);
+                }}
+                editingTenant={editingTenant}
+            />
         </SafeAreaView>
     );
 };
@@ -485,6 +537,36 @@ const createStyles = (COLORS: ThemePalette) =>
             gap: 6
         },
         filterButtonText: { fontSize: 14, fontWeight: "700", color: "#fff" },
+
+        filterStatusRow: {
+            flexDirection: "row",
+            justifyContent: "space-between",
+            alignItems: "center",
+            marginTop: 4,
+            paddingHorizontal: 4
+        },
+        countText: {
+            fontSize: 12,
+            fontWeight: "700",
+            color: COLORS.textMuted,
+            textTransform: "uppercase",
+            letterSpacing: 0.5
+        },
+        clearFiltersBtn: {
+            flexDirection: "row",
+            alignItems: "center",
+            gap: 4,
+            paddingVertical: 4,
+            paddingHorizontal: 8,
+            borderRadius: 8,
+            backgroundColor: COLORS.danger + "10",
+        },
+        clearFiltersText: {
+            fontSize: 11,
+            fontWeight: "800",
+            color: COLORS.danger,
+            textTransform: "uppercase"
+        },
 
         listContent: { paddingBottom: 100, paddingHorizontal: 20 },
         card: {
@@ -590,11 +672,12 @@ const createStyles = (COLORS: ThemePalette) =>
 
         fab: {
             position: "absolute",
-            bottom: 24,
-            right: 24,
-            width: 56,
+            bottom: 30,
+            right: 20,
+            flexDirection: "row",
+            paddingHorizontal: 20,
             height: 56,
-            borderRadius: 20,
+            borderRadius: 28,
             backgroundColor: COLORS.primary,
             justifyContent: "center",
             alignItems: "center",
@@ -602,8 +685,10 @@ const createStyles = (COLORS: ThemePalette) =>
             shadowColor: COLORS.primary,
             shadowOffset: { width: 0, height: 4 },
             shadowOpacity: 0.3,
-            shadowRadius: 10
-        }
+            shadowRadius: 6,
+            gap: 10
+        },
+        fabText: { color: "#fff", fontWeight: "800", fontSize: 14 }
     });
 
 export default TenantsScreen;

@@ -23,6 +23,7 @@ import DropdownSelector from "../components/common/DropdownSelector";
 import { supabase } from "../lib/supabaseClient";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
 import { generateDeleteCode } from "../utils/security";
+import ThemeToggleButton from "../components/ThemeToggleButton";
 
 const { width } = Dimensions.get("window");
 
@@ -544,9 +545,12 @@ const TenantsScreen = ({ navigation }: any) => {
                     <Feather name="menu" size={22} color={COLORS.text} />
                 </TouchableOpacity>
                 <Text style={styles.appBarTitle}>Resident Directory</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
-                    <Feather name="refresh-cw" size={20} color={COLORS.text} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ThemeToggleButton style={{ marginRight: 12 }} />
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
+                        <Feather name="refresh-cw" size={20} color={COLORS.text} />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <FlatList

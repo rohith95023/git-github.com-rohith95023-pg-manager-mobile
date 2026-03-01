@@ -152,41 +152,77 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
             onClose={onClose}
             onSubmit={handleSubmit(handleFormSubmit)}
             title={editingExpense ? "Edit Expense" : "Log Expense"}
+            submitLabel={editingExpense ? "Update Expense" : "Log Expense"}
             loading={loading}
         >
+            <View style={styles.prominentAmountSection}>
+                <Controller
+                    control={control}
+                    name="amount"
+                    render={({ field: { onChange, value } }) => (
+                        <View style={styles.amountContainer}>
+                            <Text style={[styles.currencySymbol, { color: COLORS.primary }]}>₹</Text>
+                            <FormField
+                                label="Expense Amount *"
+                                placeholder="0"
+                                value={value !== 0 ? String(value) : ""}
+                                onChangeText={(t) => {
+                                    const sanitized = t.replace(/[^0-9]/g, '');
+                                    onChange(sanitized === "" ? 0 : sanitized);
+                                }}
+                                error={errors.amount?.message}
+                                keyboardType="number-pad"
+                                containerStyle={styles.amountField}
+                                innerContainerStyle={{ borderWidth: 0, backgroundColor: 'transparent' }}
+                                style={styles.amountInput}
+                                hideLabel
+                            />
+                        </View>
+                    )}
+                />
+            </View>
+
             <Controller
                 control={control}
                 name="title"
                 render={({ field: { onChange, value } }) => (
-                    <FormField label="Description *" placeholder="What was this expense for?" value={value} onChangeText={onChange} error={errors.title?.message} icon="file-text" />
+                    <FormField label="What was this for? *" placeholder="e.g. Electricity bill, repair..." value={value} onChangeText={onChange} error={errors.title?.message} />
                 )}
             />
 
-            <View style={styles.row}>
-                <View style={{ flex: 1, marginRight: 8 }}>
-                    <Controller
-                        control={control}
-                        name="category"
-                        render={({ field: { onChange, value } }) => (
-                            <DropdownSelector
-                                label="Category *"
-                                options={CATEGORIES.map(c => ({ label: c, value: c }))}
-                                value={value}
-                                onChange={onChange}
-                                error={errors.category?.message}
-                            />
-                        )}
-                    />
-                </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Controller
-                        control={control}
-                        name="amount"
-                        render={({ field: { onChange, value } }) => (
-                            <FormField label="Amount *" placeholder="0.00" value={String(value)} onChangeText={onChange} error={errors.amount?.message} keyboardType="numeric" icon="dollar-sign" />
-                        )}
-                    />
-                </View>
+            <View style={styles.flatterSection}>
+                <Text style={[styles.sectionLabel, { color: COLORS.textMuted }]}>CATEGORY *</Text>
+                <Controller
+                    control={control}
+                    name="category"
+                    render={({ field: { onChange, value } }) => (
+                        <View style={styles.chipContainer}>
+                            {CATEGORIES.map(cat => (
+                                <TouchableOpacity
+                                    key={cat}
+                                    onPress={() => onChange(cat)}
+                                    style={[
+                                        styles.chip,
+                                        {
+                                            backgroundColor: value === cat ? COLORS.primary : COLORS.card,
+                                            borderColor: value === cat ? COLORS.primary : COLORS.border
+                                        }
+                                    ]}
+                                >
+                                    <Text
+                                        style={[
+                                            styles.chipText,
+                                            { color: value === cat ? '#FFF' : COLORS.text }
+                                        ]}
+                                    >
+                                        {cat}
+                                    </Text>
+                                </TouchableOpacity>
+                            ))}
+                        </View>
+                    )}
+                />
+                {errors.category?.message && <Text style={[styles.errorText, { color: COLORS.danger }]}>{errors.category.message}</Text>}
             </View>
 
             <View style={styles.row}>
@@ -195,46 +231,50 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
                         control={control}
                         name="date"
                         render={({ field: { onChange, value } }) => (
-                            <DatePickerField label="Expense Date *" value={value} onChange={onChange} error={errors.date?.message} />
+                            <DatePickerField label="Date" value={value} onChange={onChange} error={errors.date?.message} />
                         )}
                     />
                 </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
+                <View style={{ flex: 1.2, marginLeft: 8 }}>
                     <Controller
                         control={control}
                         name="pg_id"
                         render={({ field: { onChange, value } }) => (
                             <DropdownSelector
-                                label="Property"
+                                label="PG / Property"
                                 options={[
-                                    { label: "General / All", value: "" },
+                                    { label: "General", value: "" },
                                     ...pgs.map(p => ({ label: p.name, value: p.id }))
                                 ]}
                                 value={value || ""}
                                 onChange={onChange}
                                 placeholder="Select PG"
-                                error={errors.pg_id?.message}
                             />
                         )}
                     />
                 </View>
             </View>
 
-            <Controller
-                control={control}
-                name="vendor_name"
-                render={({ field: { onChange, value } }) => (
-                    <FormField label="Vendor Name" placeholder="Who was paid?" value={value || ""} onChangeText={onChange} icon="shopping-bag" />
-                )}
-            />
-
-            <Controller
-                control={control}
-                name="notes"
-                render={({ field: { onChange, value } }) => (
-                    <FormField label="Notes" placeholder="Additional details..." value={value || ""} onChangeText={onChange} multiline numberOfLines={3} style={{ height: 80 }} />
-                )}
-            />
+            <View style={styles.row}>
+                <View style={{ flex: 1, marginRight: 8 }}>
+                    <Controller
+                        control={control}
+                        name="vendor_name"
+                        render={({ field: { onChange, value } }) => (
+                            <FormField label="Vendor" placeholder="Optional" value={value || ""} onChangeText={onChange} />
+                        )}
+                    />
+                </View>
+                <View style={{ flex: 1.5, marginLeft: 8 }}>
+                    <Controller
+                        control={control}
+                        name="notes"
+                        render={({ field: { onChange, value } }) => (
+                            <FormField label="Notes" placeholder="Optional" value={value || ""} onChangeText={onChange} />
+                        )}
+                    />
+                </View>
+            </View>
 
             <ConfirmationModal
                 visible={confirmState.visible}
@@ -259,6 +299,65 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
 const styles = StyleSheet.create({
     row: {
         flexDirection: "row",
+    },
+    prominentAmountSection: {
+        marginVertical: 12,
+        alignItems: 'center',
+    },
+    amountContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+    },
+    currencySymbol: {
+        fontSize: 32,
+        fontWeight: '900',
+        marginRight: 8,
+        marginTop: 4,
+    },
+    amountField: {
+        flex: 1,
+        borderWidth: 0,
+        backgroundColor: 'transparent',
+    },
+    amountInput: {
+        fontSize: 48,
+        fontWeight: '900',
+        textAlign: 'left',
+        height: 70,
+        letterSpacing: -1,
+    },
+    flatterSection: {
+        marginBottom: 20,
+    },
+    sectionLabel: {
+        fontSize: 10,
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 12,
+        marginLeft: 4,
+    },
+    chipContainer: {
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        gap: 8,
+    },
+    chip: {
+        paddingHorizontal: 12,
+        paddingVertical: 8,
+        borderRadius: 20,
+        borderWidth: 1.5,
+    },
+    chipText: {
+        fontSize: 12,
+        fontWeight: '700',
+    },
+    errorText: {
+        fontSize: 10,
+        fontWeight: "700",
+        marginTop: 4,
+        marginLeft: 4,
     },
 });
 

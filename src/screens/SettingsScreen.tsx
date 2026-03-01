@@ -12,20 +12,15 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import { Feather } from "@expo/vector-icons";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const SettingsScreen = () => {
     const { colors, isDark, toggleTheme } = useTheme();
     const { user, logout } = useAuth();
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
     const handleLogout = () => {
-        Alert.alert(
-            "Logout",
-            "Are you sure you want to sign out?",
-            [
-                { text: "Cancel", style: "cancel" },
-                { text: "Logout", style: "destructive", onPress: logout }
-            ]
-        );
+        setShowLogoutConfirm(true);
     };
 
     const SettingItem = ({ icon, label, value, onPress, type = 'chevron', color }: any) => (
@@ -142,6 +137,16 @@ const SettingsScreen = () => {
                     <Feather name="log-out" size={18} color="#ef4444" />
                     <Text style={styles.logoutText}>Logout</Text>
                 </TouchableOpacity>
+
+                <ConfirmationModal
+                    visible={showLogoutConfirm}
+                    onClose={() => setShowLogoutConfirm(false)}
+                    onConfirm={logout}
+                    title="Sign Out"
+                    message="Are you sure you want to sign out? You will need to login again to access your properties."
+                    confirmText="Sign Out"
+                    type="danger"
+                />
             </ScrollView>
         </SafeAreaView>
     );

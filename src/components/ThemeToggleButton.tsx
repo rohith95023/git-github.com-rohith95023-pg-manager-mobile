@@ -1,5 +1,5 @@
-import React, { useRef } from "react";
-import { TouchableOpacity, StyleProp, ViewStyle, Animated } from "react-native";
+import React, { useRef, useEffect } from "react";
+import { TouchableOpacity, StyleProp, ViewStyle, Animated, StyleSheet, View, Text } from "react-native";
 import { Feather } from "@expo/vector-icons";
 import { useTheme } from "../context/ThemeContext";
 
@@ -9,67 +9,123 @@ interface ThemeToggleButtonProps {
 
 const ThemeToggleButton = ({ style }: ThemeToggleButtonProps) => {
     const { isDark, toggleTheme, colors } = useTheme();
-    const ripple = useRef(new Animated.Value(0)).current;
-    const baseStyle: ViewStyle = {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        alignItems: "center",
-        justifyContent: "center",
-        backgroundColor: isDark ? "rgba(255,255,255,0.12)" : "rgba(15,23,42,0.12)",
-        position: "relative" as const,
-        overflow: "hidden" as const,
-    };
 
-    const rippleStyle = {
-        position: "absolute" as const,
-        width: 70,
-        height: 70,
-        borderRadius: 35,
-        backgroundColor: isDark ? "rgba(248,250,252,0.25)" : "rgba(15,23,42,0.25)",
-        transform: [
-            {
-                scale: ripple.interpolate({
-                    inputRange: [0, 1],
-                    outputRange: [0.01, 1],
-                }),
-            },
-        ],
-        opacity: ripple.interpolate({
-            inputRange: [0, 1],
-            outputRange: [0.6, 0],
-        }),
-    };
+    // Animation value (0 = Light, 1 = Dark)
+    const anim = useRef(new Animated.Value(isDark ? 1 : 0)).current;
 
-    const triggerToggle = () => {
-        Animated.sequence([
-            Animated.timing(ripple, {
-                toValue: 1,
-                duration: 260,
-                useNativeDriver: true,
-            }),
-            Animated.timing(ripple, {
-                toValue: 0,
-                duration: 200,
-                useNativeDriver: true,
-            }),
-        ]).start();
-        toggleTheme();
-    };
+    useEffect(() => {
+        Animated.spring(anim, {
+            toValue: isDark ? 1 : 0,
+            useNativeDriver: true,
+            friction: 9,
+            tension: 50
+        }).start();
+    }, [isDark]);
+
+    const translateX = anim.interpolate({
+        inputRange: [0, 1],
+        outputRange: [4, 78], // TrackWidth(114) - ThumbWidth(32) - Padding(4) = 78
+    });
+
+    const lightTextOpacity = anim.interpolate({
+        inputRange: [0, 0.3],
+        outputRange: [1, 0],
+    });
+
+    const darkTextOpacity = anim.interpolate({
+        inputRange: [0.7, 1],
+        outputRange: [0, 1],
+    });
+
+    // Neumorphic colors matching the image
+    const trackColor = isDark ? "#23293e" : "#edeff5";
+    const thumbColor = isDark ? "#38415a" : "#ffffff";
+    const textColor = isDark ? "#818ba4" : "#748ba7";
 
     return (
         <TouchableOpacity
-            style={[baseStyle, style]}
-            onPress={triggerToggle}
-            activeOpacity={0.7}
-            accessibilityRole="button"
-            accessibilityLabel="Theme toggle"
-            accessibilityHint={`Switch to ${isDark ? "light" : "dark"} mode`}
+            style={[
+                styles.track,
+                { backgroundColor: trackColor, borderColor: isDark ? "#1a2135" : "#d1d9e6" },
+                style
+            ]}
+            onPress={toggleTheme}
+            activeOpacity={0.9}
         >
-            <Animated.View style={rippleStyle} pointerEvents="none" />
-            <Feather name={isDark ? "sun" : "moon"} size={22} color={colors.text} />
+            {/* Background Labels - Properly Spaced */}
+            <View style={styles.labelsContainer}>
+                <Animated.View style={[styles.labelWrapper, { opacity: darkTextOpacity, left: 16 }]}>
+                    <Text style={[styles.labelText, { color: textColor }]}>DARK MODE</Text>
+                </Animated.View>
+                <Animated.View style={[styles.labelWrapper, { opacity: lightTextOpacity, right: 16 }]}>
+                    <Text style={[styles.labelText, { color: textColor }]}>LIGHT MODE</Text>
+                </Animated.View>
+            </View>
+
+            {/* Sliding Thumb */}
+            <Animated.View
+                style={[
+                    styles.thumb,
+                    {
+                        transform: [{ translateX }],
+                        backgroundColor: thumbColor,
+                        shadowColor: "#000",
+                        elevation: 5
+                    }
+                ]}
+            >
+                <Animated.View style={[StyleSheet.absoluteFill, styles.iconBox, { opacity: lightTextOpacity }]}>
+                    <Feather name="sun" size={16} color="#f59e0b" />
+                </Animated.View>
+                <Animated.View style={[StyleSheet.absoluteFill, styles.iconBox, { opacity: darkTextOpacity }]}>
+                    <Feather name="moon" size={16} color="#d1d5db" />
+                </Animated.View>
+            </Animated.View>
         </TouchableOpacity>
     );
 };
+
+const styles = StyleSheet.create({
+    track: {
+        width: 114,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: 'center',
+        borderWidth: 1.5,
+        position: 'relative',
+        overflow: 'hidden'
+    },
+    labelsContainer: {
+        width: '100%',
+        height: '100%',
+        position: 'relative',
+        justifyContent: 'center',
+    },
+    labelWrapper: {
+        position: 'absolute',
+        height: '100%',
+        justifyContent: 'center',
+    },
+    labelText: {
+        fontSize: 8,
+        fontWeight: "900",
+        letterSpacing: 0.8,
+    },
+    thumb: {
+        width: 32,
+        height: 32,
+        borderRadius: 16,
+        position: 'absolute',
+        justifyContent: 'center',
+        alignItems: 'center',
+        shadowOffset: { width: 0, height: 3 },
+        shadowOpacity: 0.2,
+        shadowRadius: 4,
+    },
+    iconBox: {
+        justifyContent: 'center',
+        alignItems: 'center',
+    }
+});
 
 export default ThemeToggleButton;

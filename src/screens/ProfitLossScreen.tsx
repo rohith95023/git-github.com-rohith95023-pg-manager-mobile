@@ -12,14 +12,15 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { pnlAPI } from "../services/api";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import {
-    VictoryBar,
-    VictoryChart,
-    VictoryAxis,
-    VictoryGroup,
-    VictoryPie,
-    VictoryTheme,
-} from "victory-native";
+// import {
+//     VictoryBar,
+//     VictoryChart,
+//     VictoryAxis,
+//     VictoryGroup,
+//     VictoryPie,
+//     VictoryTheme,
+//     VictoryContainer,
+// } from "victory-native";
 import useThemePalette from "../hooks/useThemePalette";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 
@@ -226,79 +227,18 @@ const ProfitLossScreen = ({ navigation }: any) => {
                 </View>
 
                 {/* Monthly Performance Chart */}
-                <View style={styles.chartCard}>
-                    {chartData.length > 0 ? (
-                        <View style={styles.chartWrapper}>
-                            <VictoryChart
-                                width={width - 40}
-                                height={220}
-                            >
-                                <VictoryBar
-                                    data={chartData}
-                                    x="month"
-                                    y="revenue"
-                                    style={{ data: { fill: COLORS.success } }}
-                                />
-                                <VictoryBar
-                                    data={chartData}
-                                    x="month"
-                                    y="expense"
-                                    style={{ data: { fill: COLORS.danger } }}
-                                />
-                            </VictoryChart>
-                            <View style={styles.legendRow}>
-                                <View style={styles.legendItem}>
-                                    <View style={[styles.legendDot, { backgroundColor: COLORS.success }]} />
-                                    <Text style={styles.legendText}>Revenue</Text>
-                                </View>
-                                <View style={styles.legendItem}>
-                                    <View style={[styles.legendDot, { backgroundColor: COLORS.danger }]} />
-                                    <Text style={styles.legendText}>Expenses</Text>
-                                </View>
-                            </View>
-                        </View>
-                    ) : (
-                        <View style={styles.emptyChart}>
-                            <MaterialCommunityIcons name="chart-bar-stacked" size={40} color={COLORS.textMuted + "30"} />
-                            <Text style={styles.emptyTitle}>No Performance Data</Text>
-                            <Text style={styles.emptySubtitle}>Log payments and expenses to see charts</Text>
-                        </View>
-                    )}
+                <View style={[styles.chartCard, { height: 200, justifyContent: 'center' }]}>
+                    <Feather name="bar-chart-2" size={48} color={COLORS.primary + "40"} />
+                    <Text style={{ color: COLORS.textMuted, marginTop: 12 }}>Analytics Chart Placeholder</Text>
                 </View>
 
                 {/* Expense Distribution */}
                 <View style={styles.sectionHeaderRow}>
                     <Text style={styles.sectionTitle}>Expense Breakup</Text>
                 </View>
-                <View style={styles.chartCard}>
-                    {pieData.length > 0 ? (
-                        <View style={styles.pieWrapper}>
-                            <VictoryPie
-                                data={pieData}
-                                innerRadius={65}
-                                width={width * 0.45}
-                                height={width * 0.45}
-                                padding={10}
-                                colorScale={[COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"]}
-                                labels={() => ""}
-                            />
-                            <View style={styles.pieLegend}>
-                                {pieData.map((item, i) => (
-                                    <View key={i} style={styles.pieLegendItem}>
-                                        <View style={[styles.legendDot, { backgroundColor: [COLORS.primary, COLORS.warning, COLORS.success, "#8b5cf6", "#f97316"][i] }]} />
-                                        <Text style={styles.pieLegendText} numberOfLines={1}>{item.x}</Text>
-                                        <Text style={styles.pieValueText}>₹{item.y >= 1000 ? `${(item.y / 1000).toFixed(1)}k` : item.y}</Text>
-                                    </View>
-                                ))}
-                            </View>
-                        </View>
-                    ) : (
-                        <View style={styles.emptyChart}>
-                            <MaterialCommunityIcons name="chart-donut" size={40} color={COLORS.textMuted + "30"} />
-                            <Text style={styles.emptyTitle}>No Expense Data</Text>
-                            <Text style={styles.emptySubtitle}>Add expenses to see the category breakup</Text>
-                        </View>
-                    )}
+                <View style={[styles.chartCard, { height: 200, justifyContent: 'center' }]}>
+                    <Feather name="pie-chart" size={48} color={COLORS.success + "40"} />
+                    <Text style={{ color: COLORS.textMuted, marginTop: 12 }}>Distribution Chart Placeholder</Text>
                 </View>
 
                 {/* Detailed Breakdown */}

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import {
     View,
     Text,
@@ -18,6 +18,7 @@ import { Feather, Ionicons } from "@expo/vector-icons";
 import { useTheme } from "../context/ThemeContext";
 import { useAuth } from "../context/AuthContext";
 import ThemeToggleButton from "../components/ThemeToggleButton";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 // Screens
 import Dashboard from "../screens/Dashboard";
@@ -38,17 +39,33 @@ const Stack = createNativeStackNavigator();
 
 // Custom Drawer Component
 const CustomDrawerContent = (props: any) => {
-    const { colors, isDark } = useTheme();
+    const { colors, isDark, toggleTheme } = useTheme();
     const { user, logout } = useAuth();
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
     return (
         <View style={[styles.drawerContainer, { backgroundColor: colors.background }]}>
             {/* Header / Logo */}
             <View style={styles.drawerHeader}>
-                <View style={[styles.logoBox, { backgroundColor: colors.primary }]}>
-                    <Feather name="home" size={24} color="#fff" />
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View style={[styles.logoBox, { backgroundColor: colors.primary }]}>
+                        <Feather name="home" size={24} color="#fff" />
+                    </View>
+                    <Text style={[styles.logoText, { color: colors.text }]}>PG Manager</Text>
                 </View>
-                <Text style={[styles.logoText, { color: colors.text }]}>PG Manager</Text>
+                <TouchableOpacity
+                    onPress={toggleTheme}
+                    style={{
+                        width: 40,
+                        height: 40,
+                        borderRadius: 20,
+                        backgroundColor: isDark ? 'rgba(255,255,255,0.08)' : 'rgba(0,0,0,0.05)',
+                        justifyContent: 'center',
+                        alignItems: 'center'
+                    }}
+                >
+                    <Feather name={isDark ? "sun" : "moon"} size={20} color={colors.text} />
+                </TouchableOpacity>
             </View>
 
             {/* Navigation Items */}
@@ -77,11 +94,21 @@ const CustomDrawerContent = (props: any) => {
                     <Feather name="settings" size={18} color={colors.textSecondary} />
                 </TouchableOpacity>
 
-                <TouchableOpacity style={styles.logoutButton} onPress={logout}>
+                <TouchableOpacity style={styles.logoutButton} onPress={() => setShowLogoutConfirm(true)}>
                     <Feather name="log-out" size={20} color="#ef4444" />
                     <Text style={styles.logoutText}>Log Out</Text>
                 </TouchableOpacity>
             </View>
+
+            <ConfirmationModal
+                visible={showLogoutConfirm}
+                onClose={() => setShowLogoutConfirm(false)}
+                onConfirm={logout}
+                title="Sign Out"
+                message="Are you sure you want to sign out? You will need to login again to access your properties."
+                confirmText="Sign Out"
+                type="danger"
+            />
         </View>
     );
 };
@@ -108,6 +135,7 @@ const MainNavigator = () => {
     return (
         <Drawer.Navigator
             drawerContent={(props) => <CustomDrawerContent {...props} />}
+            backBehavior="history"
             screenOptions={({ navigation }) => ({
                 headerShown: false,
                 headerLeft: () => (
@@ -263,6 +291,7 @@ const styles = StyleSheet.create({
     drawerHeader: {
         flexDirection: "row",
         alignItems: "center",
+        justifyContent: "space-between",
         padding: 24,
         paddingTop: 60,
         marginBottom: 10,

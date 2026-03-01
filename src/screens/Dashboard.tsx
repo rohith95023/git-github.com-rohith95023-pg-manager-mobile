@@ -17,6 +17,7 @@ import { statsAPI, paymentAPI, tenantAPI } from "../services/api";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import ThemeToggleButton from "../components/ThemeToggleButton";
 
 const { width } = Dimensions.get("window");
 
@@ -92,9 +93,12 @@ const Dashboard = ({ navigation, route }: any) => {
                     <Feather name="menu" size={22} color={COLORS.text} />
                 </TouchableOpacity>
                 <Text style={styles.appBarTitle}>Overview</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Ionicons name="notifications-outline" size={20} color={COLORS.text} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ThemeToggleButton style={{ marginRight: 12 }} />
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Ionicons name="notifications-outline" size={20} color={COLORS.text} />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             <ScrollView

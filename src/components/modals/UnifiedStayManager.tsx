@@ -6,12 +6,13 @@ import * as z from "zod";
 import FormModal from "../common/FormModal";
 import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
+import SegmentedControl from "../common/SegmentedControl";
 import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI, roomAPI, bedAPI, tenantAPI, paymentAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
-import { MaterialCommunityIcons } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 
 const PROFESSION_OPTIONS = [
     "Software Engineer", "IT Professional", "Student", "Business Owner",
@@ -521,14 +522,29 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             title={editingTenant ? "Edit Resident" : "Resident Onboarding"}
             subtitle={`Step ${currentStep} of 2`}
             loading={loading}
-            submitLabel={currentStep === 1 ? "Next Step" : (editingTenant ? "Update Resident" : "Complete Onboarding")}
+            submitLabel={currentStep === 1 ? "Next: Stay Details" : (editingTenant ? "Update Resident" : "Complete Onboarding")}
         >
+            {/* Visual Progress Indicator */}
+            <View style={styles.progressContainer}>
+                <View style={[styles.progressBar, { backgroundColor: COLORS.border }]}>
+                    <View style={[styles.progressFill, { backgroundColor: COLORS.primary, width: currentStep === 1 ? '50%' : '100%' }]} />
+                </View>
+                <View style={styles.stepIcons}>
+                    <View style={[styles.stepIcon, currentStep >= 1 && { backgroundColor: COLORS.primary }]}>
+                        <Feather name="user" size={14} color={currentStep >= 1 ? "#fff" : COLORS.textMuted} />
+                    </View>
+                    <View style={[styles.stepIcon, currentStep >= 2 && { backgroundColor: COLORS.primary }]}>
+                        <Feather name="home" size={14} color={currentStep >= 2 ? "#fff" : COLORS.textMuted} />
+                    </View>
+                </View>
+            </View>
+
             <View style={{ display: currentStep === 1 ? "flex" : "none" }}>
                 <Controller
                     control={control}
                     name="fullName"
                     render={({ field: { onChange, value } }) => (
-                        <FormField label="Full Name *" placeholder="Resident's Name" value={value} onChangeText={onChange} error={errors.fullName?.message} icon="user" />
+                        <FormField label="Full Name *" placeholder="Resident's Name" value={value} onChangeText={onChange} error={errors.fullName?.message} />
                     )}
                 />
                 <View style={styles.row}>
@@ -537,7 +553,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                             control={control}
                             name="phone"
                             render={({ field: { onChange, value } }) => (
-                                <FormField label="Phone *" placeholder="10-digit number" value={value} onChangeText={onChange} error={errors.phone?.message} icon="phone" keyboardType="phone-pad" maxLength={10} />
+                                <FormField label="Phone *" placeholder="10-digit number" value={value} onChangeText={onChange} error={errors.phone?.message} keyboardType="phone-pad" maxLength={10} />
                             )}
                         />
                     </View>
@@ -546,7 +562,16 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                             control={control}
                             name="gender"
                             render={({ field: { onChange, value } }) => (
-                                <DropdownSelector label="Gender *" options={[{ label: 'Male', value: 'MALE' }, { label: 'Female', value: 'FEMALE' }]} value={value} onChange={onChange} error={errors.gender?.message} />
+                                <SegmentedControl
+                                    label="Gender *"
+                                    options={[
+                                        { label: 'Male', value: 'MALE' },
+                                        { label: 'Female', value: 'FEMALE' }
+                                    ]}
+                                    value={value}
+                                    onChange={onChange}
+                                    error={errors.gender?.message}
+                                />
                             )}
                         />
                     </View>
@@ -556,7 +581,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     control={control}
                     name="email"
                     render={({ field: { onChange, value } }) => (
-                        <FormField label="Email Address" placeholder="resident@example.com" value={value} onChangeText={onChange} error={errors.email?.message} icon="mail" keyboardType="email-address" autoCapitalize="none" />
+                        <FormField label="Email Address" placeholder="resident@example.com" value={value} onChangeText={onChange} error={errors.email?.message} keyboardType="email-address" autoCapitalize="none" />
                     )}
                 />
 
@@ -581,8 +606,8 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     </View>
                 </View>
 
-                <View style={[styles.section, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}>
-                    <Text style={[styles.sectionTitle, { color: COLORS.textMuted }]}>IDENTITY PROOF</Text>
+                <View style={styles.flatterSection}>
+                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>IDENTITY PROOF</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -635,30 +660,32 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     </View>
                 </View>
 
-                <View style={[styles.section, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}>
-                    <Text style={[styles.sectionTitle, { color: COLORS.textMuted }]}>GUARDIAN INFO (FOR MINORS)</Text>
-                    <Controller
-                        control={control}
-                        name="guardianName"
-                        render={({ field: { onChange, value } }) => (
-                            <FormField label="Guardian Name" placeholder="Parent/Guardian Name" value={value} onChangeText={onChange} error={errors.guardianName?.message} />
-                        )}
-                    />
-                    <Controller
-                        control={control}
-                        name="guardianPhone"
-                        render={({ field: { onChange, value } }) => (
-                            <FormField label="Guardian Phone" placeholder="10-digit number" value={value} onChangeText={onChange} error={errors.guardianPhone?.message} keyboardType="phone-pad" maxLength={10} />
-                        )}
-                    />
+                <View style={styles.flatterSection}>
+                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>GUARDIAN INFO (FOR MINORS)</Text>
+                    <View style={styles.row}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                            <Controller
+                                control={control}
+                                name="guardianName"
+                                render={({ field: { onChange, value } }) => (
+                                    <FormField label="Guardian Name" placeholder="Full Name" value={value} onChangeText={onChange} error={errors.guardianName?.message} />
+                                )}
+                            />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                            <Controller
+                                control={control}
+                                name="guardianPhone"
+                                render={({ field: { onChange, value } }) => (
+                                    <FormField label="Guardian Phone" placeholder="10-digit" value={value} onChangeText={onChange} error={errors.guardianPhone?.message} keyboardType="phone-pad" maxLength={10} />
+                                )}
+                            />
+                        </View>
+                    </View>
                 </View>
             </View>
 
             <View style={{ display: currentStep === 2 ? "flex" : "none" }}>
-                <TouchableOpacity onPress={() => setCurrentStep(1)} style={styles.backBtn}>
-                    <Text style={[styles.backText, { color: COLORS.primary }]}>← Back to Personal Details</Text>
-                </TouchableOpacity>
-
                 <Controller
                     control={control}
                     name="pgId"
@@ -700,14 +727,14 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 <DropdownSelector
                                     label="Bed *"
                                     options={beds.map(b => ({
-                                        label: `Bed ${b.bed_number}${b.status !== 'AVAILABLE' ? ' (Occupied)' : ''}`,
+                                        label: `Bed ${b.bed_number}${b.status !== 'AVAILABLE' ? ' (Full)' : ''}`,
                                         value: b.id,
                                         disabled: b.status !== 'AVAILABLE' && b.id !== editingTenant?.bed_id
                                     }))}
                                     value={value}
                                     onChange={onChange}
                                     error={errors.bedId?.message}
-                                    placeholder="Select Bed"
+                                    placeholder="Select"
                                     disabled={!watchRoomId}
                                 />
                             )}
@@ -715,15 +742,15 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     </View>
                 </View>
 
-                <View style={[styles.section, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}>
-                    <Text style={[styles.sectionTitle, { color: COLORS.textMuted }]}>STAY CONFIGURATION</Text>
+                <View style={styles.flatterSection}>
+                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>STAY CONFIGURATION</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
                                 control={control}
                                 name="stayType"
                                 render={({ field: { onChange, value } }) => (
-                                    <DropdownSelector
+                                    <SegmentedControl
                                         label="Stay Type *"
                                         options={[
                                             { label: "Monthly", value: "MONTHLY" },
@@ -762,7 +789,17 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 control={control}
                                 name="rentAmount"
                                 render={({ field: { onChange, value } }) => (
-                                    <FormField label={watchStayType === "DAILY" ? "Rent Per Day *" : "Rent Amount *"} placeholder="0" value={value !== undefined && value !== -1 ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? "" : Number(t))} error={errors.rentAmount?.message} keyboardType="numeric" />
+                                    <FormField
+                                        label={watchStayType === "DAILY" ? "Rent /Day" : "Rent /Mo"}
+                                        placeholder="0"
+                                        value={value !== undefined && value !== -1 && value !== 0 ? String(value) : ""}
+                                        onChangeText={(t) => {
+                                            const sanitized = t.replace(/[^0-9]/g, '');
+                                            onChange(sanitized === "" ? "" : sanitized);
+                                        }}
+                                        error={errors.rentAmount?.message}
+                                        keyboardType="number-pad"
+                                    />
                                 )}
                             />
                         </View>
@@ -771,7 +808,17 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 control={control}
                                 name="securityDeposit"
                                 render={({ field: { onChange, value } }) => (
-                                    <FormField label="Security Deposit" placeholder="0" value={value !== undefined ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? 0 : Number(t))} error={errors.securityDeposit?.message} keyboardType="numeric" />
+                                    <FormField
+                                        label="Deposit"
+                                        placeholder="0"
+                                        value={value !== undefined && value !== 0 ? String(value) : ""}
+                                        onChangeText={(t) => {
+                                            const sanitized = t.replace(/[^0-9]/g, '');
+                                            onChange(sanitized === "" ? 0 : sanitized);
+                                        }}
+                                        error={errors.securityDeposit?.message}
+                                        keyboardType="number-pad"
+                                    />
                                 )}
                             />
                         </View>
@@ -783,7 +830,17 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 control={control}
                                 name="maintenanceAmount"
                                 render={({ field: { onChange, value } }) => (
-                                    <FormField label="Maintenance Charge" placeholder="0" value={value !== undefined ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? 0 : Number(t))} error={errors.maintenanceAmount?.message} keyboardType="numeric" />
+                                    <FormField
+                                        label="Maint. Fee"
+                                        placeholder="0"
+                                        value={value !== undefined && value !== 0 ? String(value) : ""}
+                                        onChangeText={(t) => {
+                                            const sanitized = t.replace(/[^0-9]/g, '');
+                                            onChange(sanitized === "" ? 0 : sanitized);
+                                        }}
+                                        error={errors.maintenanceAmount?.message}
+                                        keyboardType="number-pad"
+                                    />
                                 )}
                             />
                         </View>
@@ -795,7 +852,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                     <DropdownSelector
                                         label="Type"
                                         options={[
-                                            { label: "No Maintenance", value: "" },
+                                            { label: "None", value: "" },
                                             { label: "One Time", value: "one_time" },
                                             { label: "Monthly", value: "monthly" }
                                         ]}
@@ -806,22 +863,21 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                             />
                         </View>
                     </View>
+
+                    {/* Compact Estimates */}
                     {watchStayType === 'DAILY' && watchJoinedDate && watchVacateDate && Number(watchRentAmount) >= 0 && (
                         <View style={[styles.estimateCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
                             <View style={styles.estimateHeader}>
-                                <Text style={[styles.estimateLabel, { color: COLORS.textMuted }]}>TOTAL STAY RENT</Text>
-                                <View style={[styles.dayRangeBadge, { backgroundColor: COLORS.primary + "10" }]}>
-                                    <Text style={[styles.dayRangeText, { color: COLORS.primary }]}>
-                                        {new Date(watchJoinedDate).toLocaleDateString([], { day: 'numeric', month: 'short' })} → {new Date(watchVacateDate).toLocaleDateString([], { day: 'numeric', month: 'short' })}
-                                        {(() => {
-                                            const start = new Date(watchJoinedDate);
-                                            const end = new Date(watchVacateDate);
-                                            const diff = end.getTime() - start.getTime();
-                                            const diffDays = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
-                                            return ` (${diffDays} Days)`;
-                                        })()}
-                                    </Text>
-                                </View>
+                                <Text style={[styles.label, { color: COLORS.textMuted }]}>TOTAL STAY RENT</Text>
+                                <Text style={[styles.dayRangeText, { color: COLORS.primary }]}>
+                                    {(() => {
+                                        const start = new Date(watchJoinedDate);
+                                        const end = new Date(watchVacateDate);
+                                        const diff = end.getTime() - start.getTime();
+                                        const diffDays = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
+                                        return `${diffDays} Days Stay`;
+                                    })()}
+                                </Text>
                             </View>
 
                             <View style={styles.estimateBody}>
@@ -835,21 +891,9 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                         return total.toLocaleString();
                                     })()}
                                 </Text>
-                                <View style={{ flex: 1, gap: 2, paddingLeft: 8 }}>
-                                    <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
-                                        (₹{Number(watchRentAmount || 0).toLocaleString()} × {(() => {
-                                            const start = new Date(watchJoinedDate);
-                                            const end = new Date(watchVacateDate);
-                                            const diff = end.getTime() - start.getTime();
-                                            return Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24))) + 1;
-                                        })()} days)
-                                    </Text>
-                                    {Number(watchMaintenanceAmount || 0) > 0 && (
-                                        <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted, fontSize: 10 }]}>
-                                            + ₹{Number(watchMaintenanceAmount).toLocaleString()} fees
-                                        </Text>
-                                    )}
-                                </View>
+                                <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
+                                    Incl. {Number(watchMaintenanceAmount || 0) > 0 ? `₹${Number(watchMaintenanceAmount).toLocaleString()} fees` : "all fees"}
+                                </Text>
                             </View>
                         </View>
                     )}
@@ -857,9 +901,9 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     {watchStayType === 'MONTHLY' && Number(watchRentAmount) >= 0 && (
                         <View style={[styles.estimateCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
                             <View style={styles.estimateHeader}>
-                                <Text style={[styles.estimateLabel, { color: COLORS.textMuted }]}>TOTAL JOINING AMOUNT</Text>
-                                <View style={[styles.dayRangeBadge, { backgroundColor: COLORS.success + "10" }]}>
-                                    <Text style={[styles.dayRangeText, { color: COLORS.success }]}>Monthly Stay</Text>
+                                <Text style={[styles.label, { color: COLORS.textMuted }]}>TOTAL JOINING AMOUNT</Text>
+                                <View style={[styles.miniBadge, { backgroundColor: COLORS.success + "12" }]}>
+                                    <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>Monthly Stay</Text>
                                 </View>
                             </View>
 
@@ -867,37 +911,32 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 <Text style={[styles.estimateValue, { color: COLORS.text }]}>
                                     ₹{(Number(watchRentAmount || 0) + Number(watchSecurityDeposit || 0) + Number(watchMaintenanceAmount || 0)).toLocaleString()}
                                 </Text>
-                                <View style={{ flex: 1, gap: 2, paddingLeft: 8 }}>
-                                    <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4 }}>
-                                        <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
-                                            ₹{Number(watchRentAmount || 0).toLocaleString()} Rent
-                                        </Text>
-                                        {Number(watchSecurityDeposit || 0) > 0 && (
-                                            <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
-                                                + ₹{Number(watchSecurityDeposit).toLocaleString()} Deposit
-                                            </Text>
-                                        )}
-                                    </View>
-                                    {Number(watchMaintenanceAmount || 0) > 0 && (
-                                        <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted, fontSize: 10 }]}>
-                                            + ₹{Number(watchMaintenanceAmount).toLocaleString()} Maintenance
-                                        </Text>
-                                    )}
-                                </View>
+                                <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
+                                    Rent + Deposit + Maint.
+                                </Text>
                             </View>
                         </View>
                     )}
                 </View>
 
-                <View style={[styles.section, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}>
-                    <Text style={[styles.sectionTitle, { color: COLORS.textMuted }]}>INITIAL PAYMENT</Text>
+                <View style={styles.flatterSection}>
+                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>INITIAL PAYMENT</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1.5, marginRight: 8 }}>
                             <Controller
                                 control={control}
                                 name="paidAmount"
                                 render={({ field: { onChange, value } }) => (
-                                    <FormField label="Amount Paid Now" placeholder="₹ 0.00" value={value !== undefined ? String(value) : ""} onChangeText={(t) => onChange(t === "" ? 0 : Number(t))} keyboardType="numeric" icon="credit-card" />
+                                    <FormField
+                                        label="Amount Paid Now"
+                                        placeholder="₹ 0"
+                                        value={value !== undefined && value !== 0 ? String(value) : ""}
+                                        onChangeText={(t) => {
+                                            const sanitized = t.replace(/[^0-9]/g, '');
+                                            onChange(sanitized === "" ? 0 : sanitized);
+                                        }}
+                                        keyboardType="number-pad"
+                                    />
                                 )}
                             />
                         </View>
@@ -948,17 +987,48 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: "row",
     },
-    section: {
-        padding: 12,
-        borderRadius: 16,
-        borderWidth: 1,
-        marginBottom: 16,
+    flatterSection: {
+        marginBottom: 8,
     },
-    sectionTitle: {
+    label: {
         fontSize: 10,
         fontWeight: "900",
-        marginBottom: 10,
+        marginBottom: 8,
         letterSpacing: 1,
+    },
+    progressContainer: {
+        marginBottom: 32,
+        paddingHorizontal: 20,
+        position: 'relative',
+        height: 30,
+        justifyContent: 'center',
+    },
+    progressBar: {
+        width: '100%',
+        height: 4,
+        borderRadius: 2,
+    },
+    progressFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    stepIcons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        position: 'absolute',
+        top: 3,
+        left: 20,
+    },
+    stepIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: '#e5e7eb',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#fff',
     },
     backBtn: {
         marginBottom: 16,
@@ -971,43 +1041,43 @@ const styles = StyleSheet.create({
         marginTop: 12,
         padding: 16,
         borderRadius: 20,
-        borderWidth: 1,
+        borderWidth: 1.5,
         borderStyle: 'dashed',
     },
     estimateHeader: {
         flexDirection: 'row',
         justifyContent: 'space-between',
         alignItems: 'center',
-        marginBottom: 12,
-    },
-    estimateLabel: {
-        fontSize: 10,
-        fontWeight: '900',
-        letterSpacing: 1,
-    },
-    dayRangeBadge: {
-        backgroundColor: 'rgba(255,255,255,0.05)',
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 8,
+        marginBottom: 8,
     },
     dayRangeText: {
         fontSize: 10,
-        fontWeight: '700',
-        color: 'rgba(255,255,255,0.6)',
+        fontWeight: '800',
+    },
+    miniBadge: {
+        paddingHorizontal: 8,
+        paddingVertical: 3,
+        borderRadius: 6,
+    },
+    miniBadgeText: {
+        fontSize: 9,
+        fontWeight: '900',
+        textTransform: 'uppercase',
     },
     estimateBody: {
         flexDirection: 'row',
         alignItems: 'baseline',
+        justifyContent: 'space-between',
         gap: 8,
     },
     estimateValue: {
-        fontSize: 28,
+        fontSize: 24,
         fontWeight: '900',
+        letterSpacing: -0.5,
     },
     estimateBreakdown: {
-        fontSize: 12,
-        fontWeight: '600',
+        fontSize: 11,
+        fontWeight: '700',
     },
 });
 

@@ -22,6 +22,7 @@ import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
 import PGFormModal from "../components/modals/PGFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import ThemeToggleButton from "../components/ThemeToggleButton";
 
 const { width } = Dimensions.get("window");
 
@@ -325,9 +326,12 @@ const PGsScreen = ({ navigation }: any) => {
                     <Feather name="menu" size={22} color={COLORS.text} />
                 </TouchableOpacity>
                 <Text style={styles.appBarTitle}>PG Properties</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <MaterialCommunityIcons name="database-sync" size={18} color={COLORS.text} />
-                </TouchableOpacity>
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <ThemeToggleButton style={{ marginRight: 12 }} />
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <MaterialCommunityIcons name="database-sync" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                </View>
             </View>
 
             {/* Segmented Control for Tabs */}

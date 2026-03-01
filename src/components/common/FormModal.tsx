@@ -63,9 +63,7 @@ const FormModal: React.FC<FormModalProps> = ({
                             <View style={styles.headerActions}>
                                 {headerRight}
                                 <TouchableOpacity onPress={onClose} style={styles.closeBtn}>
-                                    <View style={[styles.closeIconBg, { backgroundColor: COLORS.card }]}>
-                                        <Feather name="x" size={20} color={COLORS.text} />
-                                    </View>
+                                    <Feather name="x" size={24} color={COLORS.text} />
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -75,19 +73,13 @@ const FormModal: React.FC<FormModalProps> = ({
                             style={styles.scroll}
                             contentContainerStyle={styles.scrollContent}
                             showsVerticalScrollIndicator={false}
+                            keyboardShouldPersistTaps="handled"
                         >
                             {children}
                         </ScrollView>
 
                         {/* Footer */}
                         <View style={[styles.footer, { borderTopColor: COLORS.border, backgroundColor: COLORS.bg }]}>
-                            <TouchableOpacity
-                                style={[styles.cancelBtn, { borderColor: COLORS.border }]}
-                                onPress={onClose}
-                                disabled={loading}
-                            >
-                                <Text style={[styles.cancelBtnText, { color: COLORS.textMuted }]}>Cancel</Text>
-                            </TouchableOpacity>
                             <TouchableOpacity
                                 style={[styles.submitBtn, { backgroundColor: COLORS.primary }]}
                                 onPress={onSubmit}
@@ -99,6 +91,14 @@ const FormModal: React.FC<FormModalProps> = ({
                                 ) : (
                                     <Text style={styles.submitBtnText}>{submitLabel}</Text>
                                 )}
+                            </TouchableOpacity>
+
+                            <TouchableOpacity
+                                style={styles.cancelLink}
+                                onPress={onClose}
+                                disabled={loading}
+                            >
+                                <Text style={[styles.cancelLinkText, { color: COLORS.textMuted }]}>Cancel</Text>
                             </TouchableOpacity>
                         </View>
                     </KeyboardAvoidingView>
@@ -115,15 +115,15 @@ const styles = StyleSheet.create({
     },
     safeArea: {
         flex: 1,
-        borderTopLeftRadius: 30,
-        borderTopRightRadius: 30,
+        borderTopLeftRadius: 32,
+        borderTopRightRadius: 32,
         overflow: "hidden",
     },
     header: {
         flexDirection: "row",
         alignItems: "center",
-        paddingHorizontal: 20,
-        paddingVertical: 16,
+        paddingHorizontal: 24,
+        paddingVertical: 12,
         borderBottomWidth: 1,
     },
     headerActions: {
@@ -132,67 +132,60 @@ const styles = StyleSheet.create({
         gap: 12,
     },
     title: {
-        fontSize: 20,
-        fontWeight: "800",
+        fontSize: 18,
+        fontWeight: "900",
+        letterSpacing: -0.5,
     },
     subtitle: {
-        fontSize: 12,
-        fontWeight: "600",
-        marginTop: 2,
+        fontSize: 11,
+        fontWeight: "700",
+        marginTop: 1,
+        textTransform: "uppercase",
+        opacity: 0.6,
     },
     closeBtn: {
         padding: 4,
-    },
-    closeIconBg: {
-        width: 36,
-        height: 36,
-        borderRadius: 18,
-        justifyContent: "center",
-        alignItems: "center",
     },
     scroll: {
         flex: 1,
     },
     scrollContent: {
-        padding: 20,
+        padding: 24,
         paddingBottom: 40,
     },
     footer: {
-        flexDirection: "row",
-        padding: 20,
-        paddingBottom: Platform.OS === "ios" ? 10 : 20, // SafeArea handled by outer View
-        gap: 12,
+        padding: 24,
+        paddingTop: 16,
+        paddingBottom: Platform.OS === "ios" ? 10 : 20,
         borderTopWidth: 1,
-    },
-    cancelBtn: {
-        flex: 1,
-        height: 52,
-        borderRadius: 16,
-        justifyContent: "center",
-        alignItems: "center",
-        borderWidth: 1,
-    },
-    cancelBtnText: {
-        fontSize: 15,
-        fontWeight: "700",
+        gap: 8,
     },
     submitBtn: {
-        flex: 2,
-        height: 52,
-        borderRadius: 16,
+        width: "100%",
+        height: 56,
+        borderRadius: 18,
         justifyContent: "center",
         alignItems: "center",
         flexDirection: "row",
         shadowColor: "#000",
         shadowOffset: { width: 0, height: 4 },
         shadowOpacity: 0.1,
-        shadowRadius: 8,
+        shadowRadius: 10,
         elevation: 4,
     },
     submitBtnText: {
         color: "#fff",
-        fontSize: 15,
+        fontSize: 16,
         fontWeight: "800",
+    },
+    cancelLink: {
+        height: 48,
+        justifyContent: "center",
+        alignItems: "center",
+    },
+    cancelLinkText: {
+        fontSize: 14,
+        fontWeight: "700",
     },
 });
 

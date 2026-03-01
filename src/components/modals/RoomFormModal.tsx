@@ -7,6 +7,7 @@ import { MaterialCommunityIcons } from "@expo/vector-icons";
 import FormModal from "../common/FormModal";
 import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
+import SegmentedControl from "../common/SegmentedControl";
 import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI, roomAPI } from "../../services/api";
@@ -201,13 +202,11 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
             onClose={onClose}
             onSubmit={handleSubmit(onSubmit)}
             title={editingRoom ? "Edit Room" : "Add Room"}
-            subtitle="Manage your room inventory"
+            subtitle="Configure room details and capacity"
             loading={loading}
+            submitLabel={editingRoom ? "Save Changes" : "Create Room"}
         >
-            <View style={styles.sectionHeader}>
-                <View style={[styles.dot, { backgroundColor: COLORS.primary }]} />
-                <Text style={[styles.sectionTitle, { color: COLORS.primary }]}>ROOM PLACEMENT</Text>
-            </View>
+            <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 16 }]}>ROOM PLACEMENT</Text>
 
             <Controller
                 control={control}
@@ -228,22 +227,27 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                 control={control}
                 name="floor"
                 render={({ field: { onChange, value } }) => (
-                    <DropdownSelector
-                        label="Floor Number *"
-                        options={floorOptions}
-                        value={value !== undefined && value !== null ? String(value) : ""}
-                        onChange={(val) => onChange(val === "" ? "" : Number(val))}
-                        placeholder={selectedPgId ? "Select Floor" : "Select Property First"}
-                        disabled={!selectedPgId}
-                        error={errors.floor?.message}
-                    />
+                    <View>
+                        <DropdownSelector
+                            label="Floor Number *"
+                            options={floorOptions}
+                            value={value !== undefined && value !== null ? String(value) : ""}
+                            onChange={(val) => onChange(val === "" ? "" : Number(val))}
+                            placeholder={selectedPgId ? "Select Floor" : "Select Property First"}
+                            disabled={!selectedPgId}
+                            error={errors.floor?.message}
+                        />
+                        {!selectedPgId && (
+                            <Text style={[styles.helperText, { color: COLORS.textMuted }]}>
+                                You must select a property to see available floors.
+                                {editingRoom && " Floor cannot be changed for existing rooms."}
+                            </Text>
+                        )}
+                    </View>
                 )}
             />
 
-            <View style={styles.sectionHeader}>
-                <View style={[styles.dot, { backgroundColor: COLORS.primary }]} />
-                <Text style={[styles.sectionTitle, { color: COLORS.primary }]}>ROOM SPECIFICATIONS</Text>
-            </View>
+            <Text style={[styles.label, { color: COLORS.textMuted, marginTop: 8, marginBottom: 16 }]}>ROOM SPECIFICATIONS</Text>
 
             <View style={styles.row}>
                 <View style={{ flex: 1, marginRight: 8 }}>
@@ -277,7 +281,18 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                     control={control}
                     name="capacity"
                     render={({ field: { onChange, value } }) => (
-                        <FormField label="Sharing Count (Max 99) *" placeholder="Enter capacity" value={value ? String(value) : ""} onChangeText={onChange} error={errors.capacity?.message} keyboardType="numeric" maxLength={2} />
+                        <FormField
+                            label="Sharing Count (Max 99) *"
+                            placeholder="Enter capacity"
+                            value={value ? String(value) : ""}
+                            onChangeText={(t) => {
+                                const sanitized = t.replace(/[^0-9]/g, '');
+                                onChange(sanitized === "" ? 0 : sanitized);
+                            }}
+                            error={errors.capacity?.message}
+                            keyboardType="numeric"
+                            maxLength={2}
+                        />
                     )}
                 />
             )}
@@ -291,10 +306,13 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                             <FormField
                                 label="Monthly Rent (₹) *"
                                 placeholder="3000"
-                                value={value !== undefined && value !== null ? String(value) : ""}
-                                onChangeText={(text) => onChange(text === "" ? "" : Number(text))}
+                                value={value !== undefined && value !== null && value !== 0 && value !== -1 ? String(value) : ""}
+                                onChangeText={(t) => {
+                                    const sanitized = t.replace(/[^0-9]/g, '');
+                                    onChange(sanitized === "" ? "" : sanitized);
+                                }}
                                 error={errors.rent?.message}
-                                keyboardType="numeric"
+                                keyboardType="number-pad"
                             />
                         )}
                     />
@@ -305,10 +323,10 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
                 control={control}
                 name="status"
                 render={({ field: { onChange, value } }) => (
-                    <DropdownSelector
-                        label="Initial Status *"
+                    <SegmentedControl
+                        label="Room Status"
                         options={[
-                            { label: "Active", value: "AVAILABLE" },
+                            { label: "Available", value: "AVAILABLE" },
                             { label: "Maintenance", value: "MAINTENANCE" },
                             { label: "Inactive", value: "INACTIVE" }
                         ]}
@@ -347,25 +365,21 @@ const RoomFormModal: React.FC<RoomFormModalProps> = ({ visible, onClose, onSucce
 };
 
 const styles = StyleSheet.create({
-    sectionHeader: {
-        flexDirection: "row",
-        alignItems: "center",
-        gap: 8,
-        marginTop: 8,
-        marginBottom: 12,
-    },
-    dot: {
-        width: 6,
-        height: 6,
-        borderRadius: 3,
-    },
-    sectionTitle: {
-        fontSize: 11,
-        fontWeight: "800",
+    label: {
+        fontSize: 10,
+        fontWeight: "900",
         letterSpacing: 1,
     },
     row: {
         flexDirection: "row",
+    },
+    helperText: {
+        fontSize: 11,
+        fontWeight: "600",
+        marginTop: -10,
+        marginBottom: 16,
+        paddingHorizontal: 4,
+        lineHeight: 16,
     },
     hintCard: {
         flexDirection: "row",

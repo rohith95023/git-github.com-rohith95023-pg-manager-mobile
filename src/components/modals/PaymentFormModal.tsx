@@ -6,6 +6,7 @@ import * as z from "zod";
 import FormModal from "../common/FormModal";
 import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
+import SegmentedControl from "../common/SegmentedControl";
 import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
@@ -86,8 +87,26 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
     const watchTenantId = watch("tenant_id");
     const watchPgId = watch("pg_id");
     const watchType = watch("type");
+    const watchAmount = watch("amount");
 
     const selectedTenant = useMemo(() => tenants.find(t => t.id === watchTenantId), [tenants, watchTenantId]);
+
+    const outstandingBalance = useMemo(() => {
+        if (!selectedTenant) return 0;
+        if (selectedTenant.stay_type === 'DAILY') {
+            const daily = Array.isArray(selectedTenant.daily_stay_details) ? selectedTenant.daily_stay_details[0] : selectedTenant.daily_stay_details;
+            return Number(daily?.balance_amount || selectedTenant.balance_amount || 0);
+        }
+        return Number(selectedTenant.balance || 0);
+    }, [selectedTenant]);
+
+    const remainingBalance = useMemo(() => {
+        const amt = Number(watchAmount) || 0;
+        if (watchType === 'RENT') {
+            return Math.max(0, outstandingBalance - amt);
+        }
+        return outstandingBalance;
+    }, [outstandingBalance, watchAmount, watchType]);
 
     const getTenantBalance = (tenant: any) => {
         if (!tenant) return 0;
@@ -278,31 +297,32 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
             onClose={onClose}
             onSubmit={handleSubmit((data) => handleFormSubmit(data))}
             title={editingPayment ? "Edit Payment" : "Record Payment"}
+            submitLabel={editingPayment ? "Update Payment" : "Record Payment"}
             loading={loading}
         >
-            <Controller
-                control={control}
-                name="pg_id"
-                render={({ field: { onChange, value } }) => (
-                    <DropdownSelector
-                        label="Property *"
-                        options={pgs.map(p => ({ label: p.name, value: p.id }))}
-                        value={value}
-                        onChange={(val) => {
-                            onChange(val);
-                            setValue("tenant_id", "");
-                        }}
-                        error={errors.pg_id?.message}
-                        placeholder="Select Property"
-                    />
-                )}
-            />
+            <View style={styles.headerSelection}>
+                <Controller
+                    control={control}
+                    name="pg_id"
+                    render={({ field: { onChange, value } }) => (
+                        <DropdownSelector
+                            label="Property *"
+                            options={pgs.map(p => ({ label: p.name, value: p.id }))}
+                            value={value}
+                            onChange={(val) => {
+                                onChange(val);
+                                setValue("tenant_id", "");
+                            }}
+                            error={errors.pg_id?.message}
+                            placeholder="Select Property"
+                        />
+                    )}
+                />
 
-            <Controller
-                control={control}
-                name="tenant_id"
-                render={({ field: { onChange, value } }) => (
-                    <View>
+                <Controller
+                    control={control}
+                    name="tenant_id"
+                    render={({ field: { onChange, value } }) => (
                         <DropdownSelector
                             label="Resident *"
                             options={tenants
@@ -317,68 +337,73 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                             placeholder={watchPgId ? "Select Resident" : "Select Property First"}
                             disabled={!watchPgId}
                         />
-                        {value && selectedTenant && (
-                            <View style={styles.badgeRow}>
-                                <View style={[styles.badge, { backgroundColor: getTenantBalance(selectedTenant) > 0 ? COLORS.danger + '20' : COLORS.success + '20' }]}>
-                                    <Text style={[styles.badgeText, { color: getTenantBalance(selectedTenant) > 0 ? COLORS.danger : COLORS.success }]}>
-                                        DUE: ₹{getTenantBalance(selectedTenant).toLocaleString()}
-                                    </Text>
-                                </View>
-                                {selectedTenant.stay_type && (
-                                    <View style={[styles.badge, { backgroundColor: COLORS.primary + '20' }]}>
-                                        <Text style={[styles.badgeText, { color: COLORS.primary }]}>
-                                            {selectedTenant.stay_type}
-                                        </Text>
-                                    </View>
-                                )}
-                            </View>
-                        )}
-                    </View>
-                )}
-            />
-
-            <View style={styles.row}>
-                <View style={{ flex: 1.2, marginRight: 8 }}>
-                    <Controller
-                        control={control}
-                        name="amount"
-                        render={({ field: { onChange, value } }) => (
-                            <FormField label="Amount *" placeholder="0.00" value={String(value)} onChangeText={onChange} error={errors.amount?.message} keyboardType="numeric" icon="credit-card" />
-                        )}
-                    />
-                </View>
-                <View style={{ flex: 1, marginLeft: 8 }}>
-                    <Controller
-                        control={control}
-                        name="type"
-                        render={({ field: { onChange, value } }) => (
-                            <DropdownSelector
-                                label="Type *"
-                                options={[
-                                    { label: "Rent", value: "RENT" },
-                                    { label: "Deposit", value: "DEPOSIT" },
-                                    { label: "Booking", value: "BOOKING" },
-                                    { label: "Maintenance", value: "MAINTENANCE" },
-                                    { label: "Refund", value: "REFUND" },
-                                    { label: "Other", value: "OTHER" }
-                                ]}
-                                value={value}
-                                onChange={onChange}
-                                error={errors.type?.message}
-                            />
-                        )}
-                    />
-                </View>
-            </View>
-
-            {watchType === "RENT" && (
-                <Controller
-                    control={control}
-                    name="billing_month"
-                    render={({ field: { onChange, value } }) => (
-                        <DatePickerField label="Billing Month *" value={value || ""} onChange={onChange} error={errors.billing_month?.message} />
                     )}
                 />
+            </View>
+
+            <View style={styles.prominentAmountSection}>
+                <Controller
+                    control={control}
+                    name="amount"
+                    render={({ field: { onChange, value } }) => (
+                        <View style={styles.amountContainer}>
+                            <Text style={[styles.currencySymbol, { color: COLORS.primary }]}>₹</Text>
+                            <FormField
+                                label="Payment Amount *"
+                                placeholder="0"
+                                value={value !== 0 ? String(value) : ""}
+                                onChangeText={(t) => {
+                                    const sanitized = t.replace(/[^0-9]/g, '');
+                                    onChange(sanitized === "" ? 0 : sanitized);
+                                }}
+                                error={errors.amount?.message}
+                                keyboardType="number-pad"
+                                containerStyle={styles.amountField}
+                                innerContainerStyle={{ borderWidth: 0, backgroundColor: 'transparent' }}
+                                style={styles.amountInput}
+                                hideLabel
+                            />
+                        </View>
+                    )}
+                />
+            </View>
+
+            <View style={styles.flatterSection}>
+                <Controller
+                    control={control}
+                    name="type"
+                    render={({ field: { onChange, value } }) => (
+                        <SegmentedControl
+                            label="Payment For *"
+                            options={[
+                                { label: "Rent", value: "RENT" },
+                                { label: "Deposit", value: "DEPOSIT" },
+                                { label: "Booking", value: "BOOKING" },
+                                { label: "Maint.", value: "MAINTENANCE" },
+                                { label: "Other", value: "OTHER" }
+                            ]}
+                            value={value}
+                            onChange={onChange}
+                            error={errors.type?.message}
+                        />
+                    )}
+                />
+            </View>
+
+            {watchTenantId && selectedTenant && (
+                <View style={[styles.summaryCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
+                    <View style={styles.summaryItem}>
+                        <Text style={[styles.summaryLabel, { color: COLORS.textMuted }]}>OUTSTANDING</Text>
+                        <Text style={[styles.summaryValue, { color: COLORS.danger }]}>₹{outstandingBalance.toLocaleString()}</Text>
+                    </View>
+                    <View style={styles.summaryDivider} />
+                    <View style={styles.summaryItem}>
+                        <Text style={[styles.summaryLabel, { color: COLORS.textMuted }]}>NEW BALANCE</Text>
+                        <Text style={[styles.summaryValue, { color: COLORS.text, opacity: watchAmount > 0 ? 1 : 0.5 }]}>
+                            ₹{remainingBalance.toLocaleString()}
+                        </Text>
+                    </View>
+                </View>
             )}
 
             <View style={styles.row}>
@@ -387,57 +412,71 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                         control={control}
                         name="payment_date"
                         render={({ field: { onChange, value } }) => (
-                            <DatePickerField label="Transaction Date *" value={value} onChange={onChange} error={errors.payment_date?.message} />
+                            <DatePickerField label="Date" value={value} onChange={onChange} error={errors.payment_date?.message} />
                         )}
                     />
                 </View>
                 <View style={{ flex: 1, marginLeft: 8 }}>
+                    {watchType === "RENT" && (
+                        <Controller
+                            control={control}
+                            name="billing_month"
+                            render={({ field: { onChange, value } }) => (
+                                <DatePickerField label="Month" value={value || ""} onChange={onChange} error={errors.billing_month?.message} />
+                            )}
+                        />
+                    )}
+                </View>
+            </View>
+
+            <View style={styles.flatterSection}>
+                <Controller
+                    control={control}
+                    name="payment_method"
+                    render={({ field: { onChange, value } }) => (
+                        <SegmentedControl
+                            label="Method *"
+                            options={[
+                                { label: "Cash", value: "CASH" },
+                                { label: "UPI", value: "UPI" },
+                                { label: "Bank", value: "BANK_TRANSFER" },
+                                { label: "Card", value: "CARD" }
+                            ]}
+                            value={value}
+                            onChange={onChange}
+                        />
+                    )}
+                />
+            </View>
+
+            <View style={styles.row}>
+                <View style={{ flex: 1, marginRight: 8 }}>
                     <Controller
                         control={control}
-                        name="payment_method"
+                        name="status"
                         render={({ field: { onChange, value } }) => (
                             <DropdownSelector
-                                label="Method *"
+                                label="Status"
                                 options={[
-                                    { label: "Cash", value: "CASH" },
-                                    { label: "UPI", value: "UPI" },
-                                    { label: "Bank", value: "BANK_TRANSFER" },
-                                    { label: "Card", value: "CARD" }
+                                    { label: "Done", value: "COMPLETED" },
+                                    { label: "Pending", value: "PENDING" }
                                 ]}
                                 value={value}
                                 onChange={onChange}
-                                error={errors.payment_method?.message}
                             />
                         )}
                     />
                 </View>
-            </View>
-
-            <Controller
-                control={control}
-                name="status"
-                render={({ field: { onChange, value } }) => (
-                    <DropdownSelector
-                        label="Status *"
-                        options={[
-                            { label: "Completed", value: "COMPLETED" },
-                            { label: "Pending", value: "PENDING" },
-                            { label: "Partial", value: "PARTIAL" }
-                        ]}
-                        value={value}
-                        onChange={onChange}
-                        error={errors.status?.message}
+                <View style={{ flex: 1.5, marginLeft: 8 }}>
+                    <Controller
+                        control={control}
+                        name="notes"
+                        render={({ field: { onChange, value } }) => (
+                            <FormField label="Notes" placeholder="Receipt no..." value={value} onChangeText={onChange} />
+                        )}
                     />
-                )}
-            />
-
-            <Controller
-                control={control}
-                name="notes"
-                render={({ field: { onChange, value } }) => (
-                    <FormField label="Notes" placeholder="Optional notes..." value={value} onChangeText={onChange} multiline numberOfLines={3} style={{ height: 80 }} />
-                )}
-            />
+                </View>
+            </View>
 
             <ConfirmationModal
                 visible={confirmState.visible}
@@ -463,21 +502,68 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: "row",
     },
-    badgeRow: {
-        flexDirection: "row",
-        gap: 8,
-        marginTop: -10,
-        marginBottom: 10,
-        marginLeft: 4,
+    headerSelection: {
+        marginBottom: 8,
     },
-    badge: {
-        paddingHorizontal: 8,
-        paddingVertical: 4,
-        borderRadius: 6,
+    prominentAmountSection: {
+        marginVertical: 12,
+        alignItems: 'center',
     },
-    badgeText: {
-        fontSize: 10,
-        fontWeight: "bold",
+    amountContainer: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: '100%',
+    },
+    currencySymbol: {
+        fontSize: 32,
+        fontWeight: '900',
+        marginRight: 8,
+        marginTop: 4,
+    },
+    amountField: {
+        flex: 1,
+        borderWidth: 0,
+        backgroundColor: 'transparent',
+    },
+    amountInput: {
+        fontSize: 48,
+        fontWeight: '900',
+        textAlign: 'left',
+        height: 70,
+        letterSpacing: -1,
+    },
+    flatterSection: {
+        marginBottom: 16,
+    },
+    summaryCard: {
+        flexDirection: 'row',
+        padding: 16,
+        borderRadius: 20,
+        borderWidth: 1.5,
+        borderStyle: 'dashed',
+        marginBottom: 20,
+        justifyContent: 'space-around',
+        alignItems: 'center',
+    },
+    summaryItem: {
+        alignItems: 'center',
+        flex: 1,
+    },
+    summaryLabel: {
+        fontSize: 9,
+        fontWeight: '900',
+        letterSpacing: 1,
+        marginBottom: 4,
+    },
+    summaryValue: {
+        fontSize: 18,
+        fontWeight: '900',
+    },
+    summaryDivider: {
+        width: 1,
+        height: 30,
+        backgroundColor: 'rgba(0,0,0,0.1)',
     },
 });
 

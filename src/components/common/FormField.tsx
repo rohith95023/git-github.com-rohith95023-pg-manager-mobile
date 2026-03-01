@@ -9,6 +9,9 @@ interface FormFieldProps extends TextInputProps {
     error?: string;
     onIconPress?: () => void;
     rightElement?: React.ReactNode;
+    containerStyle?: any;
+    innerContainerStyle?: any;
+    hideLabel?: boolean;
 }
 
 const FormField: React.FC<FormFieldProps> = ({
@@ -17,14 +20,17 @@ const FormField: React.FC<FormFieldProps> = ({
     error,
     onIconPress,
     rightElement,
+    containerStyle,
+    innerContainerStyle,
+    hideLabel,
     style,
     ...props
 }) => {
     const COLORS = useThemePalette();
 
     return (
-        <View style={styles.container}>
-            <Text style={[styles.label, { color: COLORS.textMuted }]}>{label.toUpperCase()}</Text>
+        <View style={[styles.container, containerStyle]}>
+            {!hideLabel && <Text style={[styles.label, { color: COLORS.textMuted }]}>{label.toUpperCase()}</Text>}
             <View
                 style={[
                     styles.inputContainer,
@@ -32,6 +38,7 @@ const FormField: React.FC<FormFieldProps> = ({
                         backgroundColor: COLORS.card,
                         borderColor: error ? COLORS.danger : COLORS.border,
                     },
+                    innerContainerStyle,
                 ]}
             >
                 {icon && (

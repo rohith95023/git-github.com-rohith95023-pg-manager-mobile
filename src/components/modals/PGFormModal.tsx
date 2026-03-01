@@ -6,8 +6,10 @@ import * as z from "zod";
 import FormModal from "../common/FormModal";
 import FormField from "../common/FormField";
 import DropdownSelector from "../common/DropdownSelector";
+import SegmentedControl from "../common/SegmentedControl";
 import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
+import { Feather } from "@expo/vector-icons";
 import { pgAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
 
@@ -244,14 +246,29 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
             title={editingPg ? "Edit Property" : "Add Property"}
             subtitle={`Step ${currentStep} of 2`}
             loading={loading}
-            submitLabel={currentStep === 1 ? "Next Step" : (editingPg ? "Update Property" : "Create Property")}
+            submitLabel={currentStep === 1 ? "Next: Location Details" : (editingPg ? "Update Property" : "Create Property")}
         >
+            {/* Visual Progress Indicator */}
+            <View style={styles.progressContainer}>
+                <View style={[styles.progressBar, { backgroundColor: COLORS.border }]}>
+                    <View style={[styles.progressFill, { backgroundColor: COLORS.primary, width: currentStep === 1 ? '50%' : '100%' }]} />
+                </View>
+                <View style={styles.stepIcons}>
+                    <View style={[styles.stepIcon, currentStep >= 1 && { backgroundColor: COLORS.primary }]}>
+                        <Feather name="home" size={14} color={currentStep >= 1 ? "#fff" : COLORS.textMuted} />
+                    </View>
+                    <View style={[styles.stepIcon, currentStep >= 2 && { backgroundColor: COLORS.primary }]}>
+                        <Feather name="map-pin" size={14} color={currentStep >= 2 ? "#fff" : COLORS.textMuted} />
+                    </View>
+                </View>
+            </View>
+
             <View style={{ display: currentStep === 1 ? 'flex' : 'none' }}>
                 <Controller
                     control={control}
                     name="name"
                     render={({ field: { onChange, value } }) => (
-                        <FormField label="Building Name *" placeholder="E.g. Heritage Heights" value={value} onChangeText={onChange} error={errors.name?.message} icon="home" />
+                        <FormField label="Building Name *" placeholder="E.g. Heritage Heights" value={value} onChangeText={onChange} error={errors.name?.message} />
                     )}
                 />
                 <Controller
@@ -270,11 +287,13 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                                 <FormField
                                     label="Floors *"
                                     placeholder="Max 99"
-                                    value={value === undefined || value === null ? "" : String(value)}
-                                    onChangeText={(text) => onChange(text === "" ? "" : Number(text))}
+                                    value={value === undefined || value === null || value === 0 ? "" : String(value)}
+                                    onChangeText={(t) => {
+                                        const sanitized = t.replace(/[^0-9]/g, '');
+                                        onChange(sanitized === "" ? "" : sanitized);
+                                    }}
                                     error={errors.total_floors?.message}
-                                    icon="layers"
-                                    keyboardType="numeric"
+                                    keyboardType="number-pad"
                                     maxLength={2}
                                 />
                             )}
@@ -288,19 +307,21 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                                 <FormField
                                     label="Deposit *"
                                     placeholder="Per room"
-                                    value={value === undefined || value === null ? "" : String(value)}
-                                    onChangeText={(text) => onChange(text === "" ? "" : Number(text))}
+                                    value={value === undefined || value === null || value === 0 ? "" : String(value)}
+                                    onChangeText={(t) => {
+                                        const sanitized = t.replace(/[^0-9]/g, '');
+                                        onChange(sanitized === "" ? "" : sanitized);
+                                    }}
                                     error={errors.security_deposit?.message}
-                                    icon="credit-card"
-                                    keyboardType="numeric"
+                                    keyboardType="number-pad"
                                 />
                             )}
                         />
                     </View>
                 </View>
 
-                <View style={[styles.section, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}>
-                    <Text style={[styles.sectionTitle, { color: COLORS.textMuted }]}>MAINTENANCE CHARGES</Text>
+                <View style={styles.flatterSection}>
+                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>MAINTENANCE CHARGES</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -310,10 +331,13 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                                     <FormField
                                         label="Amount"
                                         placeholder="0"
-                                        value={value === undefined || value === null ? "" : String(value)}
-                                        onChangeText={(text) => onChange(text === "" ? 0 : Number(text))}
+                                        value={value === undefined || value === null || value === 0 ? "" : String(value)}
+                                        onChangeText={(t) => {
+                                            const sanitized = t.replace(/[^0-9]/g, '');
+                                            onChange(sanitized === "" ? 0 : sanitized);
+                                        }}
                                         error={errors.maintenance_amount?.message}
-                                        keyboardType="numeric"
+                                        keyboardType="number-pad"
                                     />
                                 )}
                             />
@@ -324,14 +348,14 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                                 name="maintenance_type"
                                 render={({ field: { onChange, value } }) => (
                                     <DropdownSelector
-                                        label="Type"
+                                        label="Collection"
                                         options={[
                                             { label: "One Time", value: "one_time" },
                                             { label: "Monthly", value: "monthly" }
                                         ]}
                                         value={value || ""}
                                         onChange={onChange}
-                                        placeholder="Select Type"
+                                        placeholder="Type"
                                         error={errors.maintenance_type?.message}
                                     />
                                 )}
@@ -344,12 +368,11 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                     control={control}
                     name="gender_type"
                     render={({ field: { onChange, value } }) => (
-                        <DropdownSelector
-                            label="Gender Type"
+                        <SegmentedControl
+                            label="Gender Policy"
                             options={[
                                 { label: "Male", value: "MALE" },
-                                { label: "Female", value: "FEMALE" },
-                                { label: "Co-Living", value: "CO-LIVING" }
+                                { label: "Female", value: "FEMALE" }
                             ]}
                             value={value}
                             onChange={onChange}
@@ -360,15 +383,11 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
             </View>
 
             <View style={{ display: currentStep === 2 ? 'flex' : 'none' }}>
-                <TouchableOpacity onPress={() => setCurrentStep(1)} style={styles.backBtn}>
-                    <Text style={[styles.backText, { color: COLORS.primary }]}>← Back to Step 1</Text>
-                </TouchableOpacity>
-
                 <Controller
                     control={control}
                     name="address"
                     render={({ field: { onChange, value } }) => (
-                        <FormField label="Full Address *" placeholder="Street, Area" value={value} onChangeText={onChange} error={errors.address?.message} icon="map-pin" />
+                        <FormField label="Full Address *" placeholder="Street, Area" value={value} onChangeText={onChange} error={errors.address?.message} />
                     )}
                 />
                 <View style={styles.row}>
@@ -408,13 +427,13 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
                             style={[
                                 styles.amenityBadge,
                                 {
-                                    backgroundColor: selectedAmenities.includes(amenity) ? COLORS.primary + "15" : COLORS.card,
+                                    backgroundColor: selectedAmenities.includes(amenity) ? COLORS.primary : COLORS.card,
                                     borderColor: selectedAmenities.includes(amenity) ? COLORS.primary : COLORS.border,
-                                    borderWidth: selectedAmenities.includes(amenity) ? 1.5 : 1
+                                    borderWidth: 1.5
                                 }
                             ]}
                         >
-                            <Text style={[styles.amenityText, { color: selectedAmenities.includes(amenity) ? COLORS.primary : COLORS.textMuted }]}>{amenity}</Text>
+                            <Text style={[styles.amenityText, { color: selectedAmenities.includes(amenity) ? '#fff' : COLORS.textMuted }]}>{amenity}</Text>
                         </TouchableOpacity>
                     ))}
                 </View>
@@ -444,17 +463,8 @@ const styles = StyleSheet.create({
     row: {
         flexDirection: "row",
     },
-    section: {
-        padding: 12,
-        borderRadius: 16,
-        borderWidth: 1,
-        marginBottom: 16,
-    },
-    sectionTitle: {
-        fontSize: 10,
-        fontWeight: "900",
-        marginBottom: 10,
-        letterSpacing: 1,
+    flatterSection: {
+        marginBottom: 8,
     },
     label: {
         fontSize: 10,
@@ -462,20 +472,54 @@ const styles = StyleSheet.create({
         marginBottom: 8,
         letterSpacing: 1,
     },
+    progressContainer: {
+        marginBottom: 32,
+        paddingHorizontal: 20,
+        position: 'relative',
+        height: 30, // Fixed height to contain icons
+        justifyContent: 'center',
+    },
+    progressBar: {
+        width: '100%',
+        height: 4,
+        borderRadius: 2,
+    },
+    progressFill: {
+        height: '100%',
+        borderRadius: 2,
+    },
+    stepIcons: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        width: '100%',
+        position: 'absolute',
+        top: 3, // Center on the bar roughly
+        left: 20,
+    },
+    stepIcon: {
+        width: 30,
+        height: 30,
+        borderRadius: 15,
+        backgroundColor: '#e5e7eb',
+        justifyContent: 'center',
+        alignItems: 'center',
+        borderWidth: 3,
+        borderColor: '#fff',
+    },
     amenitiesContainer: {
         flexDirection: "row",
         flexWrap: "wrap",
-        gap: 8,
+        gap: 6,
         marginTop: 8,
     },
     amenityBadge: {
-        paddingHorizontal: 12,
-        paddingVertical: 8,
-        borderRadius: 12,
+        paddingHorizontal: 10,
+        paddingVertical: 6,
+        borderRadius: 10,
     },
     amenityText: {
-        fontSize: 13,
-        fontWeight: "700",
+        fontSize: 12,
+        fontWeight: "800",
     },
     backBtn: {
         marginBottom: 16,
@@ -483,13 +527,6 @@ const styles = StyleSheet.create({
     backText: {
         fontSize: 14,
         fontWeight: "700",
-    },
-    errorText: {
-        fontSize: 10,
-        fontWeight: "700",
-        marginTop: -4,
-        marginBottom: 8,
-        marginLeft: 4,
     },
 });
 

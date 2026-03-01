@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import {
     View,
     Text,
@@ -13,6 +13,7 @@ import { useAuth } from "../context/AuthContext";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useNavigation } from "@react-navigation/native";
 import useThemePalette from "../hooks/useThemePalette";
+import ConfirmationModal from "../components/common/ConfirmationModal";
 
 const { width } = Dimensions.get("window");
 
@@ -21,24 +22,16 @@ const ProfileScreen = () => {
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const { user, logout } = useAuth();
     const navigation = useNavigation<any>();
+    const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
 
     const handleLogout = () => {
-        Alert.alert(
-            "Logout",
-            "Are you sure you want to sign out?",
-            [
-                { text: "Cancel", style: "cancel" },
-                { text: "Logout", style: "destructive", onPress: logout }
-            ]
-        );
+        setShowLogoutConfirm(true);
     };
 
     const InfoRow = ({ label, value, icon, isLast = false }: any) => (
         <View style={[styles.infoRow, !isLast && styles.rowDivider]}>
             <View style={styles.infoLeft}>
-                <View style={[styles.infoIcon, { backgroundColor: COLORS.primary + "10" }]}>
-                    <Feather name={icon} size={16} color={COLORS.primary} />
-                </View>
+                <Feather name={icon} size={16} color={COLORS.textMuted} style={styles.infoIconStatic} />
                 <View>
                     <Text style={styles.infoLabel}>{label}</Text>
                     <Text style={styles.infoValue}>{value || "Not Set"}</Text>
@@ -52,22 +45,30 @@ const ProfileScreen = () => {
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
                 <View style={styles.header}>
                     <Text style={styles.title}>My Profile</Text>
+                    <TouchableOpacity
+                        onPress={() => navigation.goBack()}
+                        style={[styles.backButton, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}
+                    >
+                        <Feather name="x" size={24} color={COLORS.text} />
+                    </TouchableOpacity>
                 </View>
 
                 {/* Avatar Section */}
                 <View style={styles.avatarSection}>
-                    <View style={[styles.avatarCircle, { backgroundColor: COLORS.primary }]}>
-                        <Text style={styles.avatarText}>{user?.full_name?.charAt(0).toUpperCase() || 'U'}</Text>
-                        <TouchableOpacity style={styles.editAvatarBtn}>
-                            <Feather name="camera" size={14} color="#fff" />
-                        </TouchableOpacity>
+                    <View style={[styles.avatarCircle, { backgroundColor: COLORS.primary + '12' }]}>
+                        <Text style={[styles.avatarText, { color: COLORS.primary }]}>
+                            {user?.full_name?.charAt(0).toUpperCase() || 'U'}
+                        </Text>
                     </View>
-                    <Text style={styles.userName}>{user?.full_name || "Manager Account"}</Text>
-                    <View style={styles.roleBadge}>
-                        <MaterialCommunityIcons name="shield-check" size={12} color={COLORS.primary} />
+                    <View style={styles.userInfoCentered}>
+                        <Text style={styles.userName}>{user?.full_name || "Manager Account"}</Text>
                         <Text style={styles.roleText}>{user?.role || "ADMIN"}</Text>
                     </View>
-                    <TouchableOpacity style={styles.editProfileBtn}>
+                    <TouchableOpacity
+                        style={styles.editProfileBtn}
+                        onPress={() => console.log("Edit Profile")}
+                    >
+                        <Feather name="edit-2" size={14} color={COLORS.primary} />
                         <Text style={styles.editProfileBtnText}>Edit Profile</Text>
                     </TouchableOpacity>
                 </View>
@@ -84,23 +85,21 @@ const ProfileScreen = () => {
                     </View>
                 </View>
 
-                {/* Account Info Card */}
-                <View style={styles.sectionCard}>
-                    <Text style={styles.sectionHeader}>ACCOUNT SECURITY</Text>
-                    <View style={styles.infoList}>
-                        <TouchableOpacity
-                            style={styles.menuItem}
-                            onPress={() => navigation.navigate("ChangePassword")}
-                        >
-                            <View style={styles.menuItemLeft}>
-                                <View style={[styles.infoIcon, { backgroundColor: COLORS.warning + "10" }]}>
-                                    <Feather name="lock" size={16} color={COLORS.warning} />
-                                </View>
-                                <Text style={styles.menuItemText}>Change Password</Text>
-                            </View>
-                            <Feather name="chevron-right" size={18} color={COLORS.textMuted} />
-                        </TouchableOpacity>
-                    </View>
+                {/* Account Settings */}
+                <View style={styles.sectionHeaderRow}>
+                    <Text style={styles.sectionHeader}>SETTINGS & SECURITY</Text>
+                </View>
+                <View style={styles.menuCard}>
+                    <TouchableOpacity
+                        style={styles.menuItem}
+                        onPress={() => navigation.navigate("ChangePassword")}
+                    >
+                        <View style={styles.menuItemLeft}>
+                            <Feather name="lock" size={18} color={COLORS.textMuted} />
+                            <Text style={styles.menuItemText}>Change Password</Text>
+                        </View>
+                        <Feather name="chevron-right" size={18} color={COLORS.textMuted} />
+                    </TouchableOpacity>
                 </View>
 
                 {/* Login Info */}
@@ -122,10 +121,20 @@ const ProfileScreen = () => {
                 </View>
 
                 {/* Logout Button */}
-                <TouchableOpacity style={styles.logoutButton} onPress={handleLogout}>
-                    <Feather name="log-out" size={20} color="#fff" />
-                    <Text style={styles.logoutButtonText}>Sign Out from Device</Text>
+                <TouchableOpacity style={[styles.logoutButton, { backgroundColor: COLORS.danger + '10' }]} onPress={handleLogout}>
+                    <Feather name="log-out" size={18} color={COLORS.danger} />
+                    <Text style={[styles.logoutButtonText, { color: COLORS.danger }]}>Sign Out</Text>
                 </TouchableOpacity>
+
+                <ConfirmationModal
+                    visible={showLogoutConfirm}
+                    onClose={() => setShowLogoutConfirm(false)}
+                    onConfirm={logout}
+                    title="Sign Out"
+                    message="Are you sure you want to sign out? You will need to login again to access your properties."
+                    confirmText="Sign Out"
+                    type="danger"
+                />
 
                 <View style={{ height: 40 }} />
             </ScrollView>
@@ -139,102 +148,100 @@ const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
         scrollContent: { paddingBottom: 40 },
-        header: { padding: 20, paddingBottom: 10 },
-        title: { fontSize: 26, fontWeight: "900", color: COLORS.text, letterSpacing: -1 },
-
-        avatarSection: { alignItems: "center", paddingVertical: 30 },
-        avatarCircle: {
-            width: 100,
-            height: 100,
-            borderRadius: 50,
-            justifyContent: "center",
-            alignItems: "center",
-            marginBottom: 16,
-            position: "relative",
-            elevation: 10,
-            shadowColor: COLORS.primary,
-            shadowOffset: { width: 0, height: 6 },
-            shadowOpacity: 0.3,
-            shadowRadius: 10
-        },
-        avatarText: { color: "#fff", fontSize: 36, fontWeight: "900" },
-        editAvatarBtn: {
-            position: "absolute",
-            bottom: 0,
-            right: 0,
-            backgroundColor: COLORS.primary,
-            width: 30,
-            height: 30,
-            borderRadius: 15,
-            justifyContent: "center",
-            alignItems: "center",
-            borderWidth: 3,
-            borderColor: COLORS.bg
-        },
-        userName: { fontSize: 20, fontWeight: "800", color: COLORS.text, marginBottom: 8 },
-        roleBadge: {
+        header: {
+            paddingHorizontal: 24,
+            paddingTop: 16,
+            paddingBottom: 16,
             flexDirection: "row",
             alignItems: "center",
-            backgroundColor: COLORS.primary + "15",
-            paddingHorizontal: 10,
-            paddingVertical: 4,
-            borderRadius: 20,
-            gap: 6,
-            marginBottom: 20
+            justifyContent: "space-between"
         },
-        roleText: { color: COLORS.primary, fontSize: 10, fontWeight: "900", textTransform: "uppercase" },
+        backButton: {
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            justifyContent: "center",
+            alignItems: "center",
+        },
+        title: { fontSize: 24, fontWeight: "900", color: COLORS.text, letterSpacing: -0.5 },
+
+        avatarSection: {
+            alignItems: 'center',
+            paddingVertical: 32,
+            gap: 12
+        },
+        avatarCircle: {
+            width: 80,
+            height: 80,
+            borderRadius: 40,
+            justifyContent: "center",
+            alignItems: "center",
+            marginBottom: 4
+        },
+        avatarText: { fontSize: 32, fontWeight: "900" },
+        userInfoCentered: {
+            alignItems: 'center',
+            gap: 4
+        },
+        userName: { fontSize: 20, fontWeight: "800", color: COLORS.text },
+        roleText: { color: COLORS.textMuted, fontSize: 12, fontWeight: "700", textTransform: "uppercase", letterSpacing: 0.8 },
         editProfileBtn: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
             paddingHorizontal: 20,
             paddingVertical: 10,
-            borderRadius: 12,
-            backgroundColor: COLORS.card,
+            borderRadius: 25,
+            backgroundColor: COLORS.primary + '10',
+            marginTop: 8,
             borderWidth: 1,
-            borderColor: COLORS.border
+            borderColor: COLORS.primary + '20'
         },
-        editProfileBtnText: { color: COLORS.text, fontSize: 14, fontWeight: "700" },
+        editProfileBtnText: { color: COLORS.primary, fontSize: 13, fontWeight: "700" },
 
-        sectionCard: { marginHorizontal: 20, marginBottom: 24 },
-        sectionHeader: { fontSize: 12, fontWeight: "800", color: COLORS.textMuted, marginBottom: 12, marginLeft: 4, letterSpacing: 1 },
+        sectionCard: { marginHorizontal: 20, marginBottom: 20 },
+        sectionHeaderRow: { marginHorizontal: 24, marginBottom: 12, marginTop: 10 },
+        sectionHeader: { fontSize: 11, fontWeight: "800", color: COLORS.textMuted, letterSpacing: 1 },
         infoList: {
             backgroundColor: COLORS.card,
-            borderRadius: 24,
-            padding: 10,
-            borderWidth: 1,
-            borderColor: COLORS.border
+            borderRadius: 20,
+            paddingVertical: 4,
+            paddingHorizontal: 16,
         },
-        infoRow: { padding: 12 },
-        rowDivider: { borderBottomWidth: 1, borderBottomColor: COLORS.border },
-        infoLeft: { flexDirection: "row", alignItems: "center", gap: 16 },
-        infoIcon: { width: 36, height: 36, borderRadius: 12, justifyContent: "center", alignItems: "center" },
-        infoLabel: { fontSize: 10, fontWeight: "800", color: COLORS.textMuted, marginBottom: 4 },
-        infoValue: { fontSize: 14, fontWeight: "700", color: COLORS.text },
+        infoRow: { paddingVertical: 14 },
+        rowDivider: { borderBottomWidth: 1, borderBottomColor: COLORS.border + '50' },
+        infoLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+        infoIconStatic: { width: 20, textAlign: 'center' },
+        infoLabel: { fontSize: 10, fontWeight: "700", color: COLORS.textMuted, marginBottom: 2, textTransform: 'uppercase' },
+        infoValue: { fontSize: 14, fontWeight: "600", color: COLORS.text },
 
+        menuCard: {
+            marginHorizontal: 20,
+            backgroundColor: COLORS.card,
+            borderRadius: 20,
+            paddingHorizontal: 16,
+            marginBottom: 24
+        },
         menuItem: {
             flexDirection: "row",
             alignItems: "center",
             justifyContent: "space-between",
-            padding: 12
+            paddingVertical: 16
         },
-        menuItemLeft: { flexDirection: "row", alignItems: "center", gap: 16 },
-        menuItemText: { fontSize: 15, fontWeight: "700", color: COLORS.text },
+        menuItemLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
+        menuItemText: { fontSize: 14, fontWeight: "600", color: COLORS.text },
 
         logoutButton: {
             marginHorizontal: 20,
-            height: 60,
-            backgroundColor: COLORS.danger,
-            borderRadius: 20,
+            height: 52,
+            borderRadius: 16,
             flexDirection: "row",
             justifyContent: "center",
             alignItems: "center",
-            gap: 12,
+            gap: 10,
             marginTop: 10,
-            elevation: 4,
-            shadowColor: COLORS.danger,
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.2,
-            shadowRadius: 8
         },
-        logoutButtonText: { color: "#fff", fontSize: 16, fontWeight: "800" }
+        logoutButtonText: { fontSize: 14, fontWeight: "800" }
     });
 
 export default ProfileScreen;

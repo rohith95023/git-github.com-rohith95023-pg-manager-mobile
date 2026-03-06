@@ -53,11 +53,26 @@ const normalizeResponse = <T>(response: PostgrestResponse<T> | PostgrestSingleRe
         );
     }
 
-    if (count !== null && count !== undefined) {
-        return { data, count };
+    const finalData = (count !== null && count !== undefined) ? { data, count } : data;
+
+    // Billing Engine V2 - Legacy Deprecation Warning
+    if (finalData && typeof finalData === 'object') {
+        const wrap = (obj: any): any => {
+            if (!obj || typeof obj !== 'object') return obj;
+            if (Array.isArray(obj)) return obj.map(wrap);
+            return new Proxy(obj, {
+                get(target, prop) {
+                    if (prop === 'balance' && !label.includes('RPC')) {
+                        console.warn(`[V2 Warning] Legacy .balance access detected in ${label}. Contact Billing Engine V2 for details.`);
+                    }
+                    return target[prop];
+                }
+            });
+        };
+        return wrap(finalData);
     }
 
-    return data;
+    return finalData;
 };
 
 /**

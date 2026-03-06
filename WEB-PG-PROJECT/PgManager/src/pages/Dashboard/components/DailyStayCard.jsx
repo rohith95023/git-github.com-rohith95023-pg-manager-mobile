@@ -8,7 +8,7 @@ function cn(...inputs) {
   return twMerge(clsx(inputs));
 }
 
-const DailyStayCard = ({ tenants = [], onExpand, isDark }) => {
+const DailyStayCard = ({ tenants = [], paidMap = {}, onExpand, isDark }) => {
   return (
     <div className={cn(
       "backdrop-blur-md rounded-2xl overflow-hidden shadow-xl transition-colors duration-300 h-full flex flex-col",
@@ -63,20 +63,22 @@ const DailyStayCard = ({ tenants = [], onExpand, isDark }) => {
                         {tenant.status}
                       </span>
                       {(() => {
-                          let due = Number(tenant.balance_amount || 0);
-                          if (tenant.move_in_date && tenant.vacate_date) {
-                              const start = new Date(tenant.move_in_date);
-                              const end = new Date(tenant.vacate_date);
-                              let diffDays = 1;
-                              if (end > start) diffDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
-                              const rentBase = diffDays * Number(tenant.rent_per_day || 0);
-                              const maintBase = Number(tenant.maintenance_amount || 0);
-                              due = Math.max(0, (rentBase + maintBase) - Number(tenant.paid_amount || 0));
-                          }
-                          return due > 0 ? (
-                              <span className="text-[10px] text-rose-500 font-medium">₹{due.toLocaleString('en-IN')} Due</span>
-                          ) : null;
-                      })()}
+                           const tId = tenant.tenant_id || tenant.tenants?.id;
+                           const actualPaid = paidMap[tId] || 0;
+                           const start = new Date(tenant.move_in_date);
+                           const end = new Date(tenant.vacate_date);
+                           let diffDays = 1;
+                           if (end > start) diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                           
+                           const rpd = Number(tenant.rent_per_day || 0);
+                           const maint = Number(tenant.maintenance_amount || 0);
+                           const totalExpected = (diffDays * rpd) + maint;
+                           const due = Math.max(0, totalExpected - actualPaid);
+                           
+                           return due > 0 ? (
+                               <span className="text-[10px] text-rose-500 font-medium">₹{due.toLocaleString('en-IN')} Due</span>
+                           ) : null;
+                       })()}
                   </div>
                 </td>
               </tr>

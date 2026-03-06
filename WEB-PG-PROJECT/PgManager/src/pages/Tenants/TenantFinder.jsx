@@ -16,7 +16,6 @@ import { useTheme } from "../../context/ThemeContext";
 import ThemeToggle from "../../components/ThemeToggle";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../../lib/supabaseClient";
-import ConfirmationModal from "../../components/ConfirmationModal";
 import AlertModal from "../../components/AlertModal";
 import Toast from "../../components/Toast";
 import { cn } from "../../lib/utils";
@@ -39,7 +38,8 @@ const TenantFinder = () => {
   const [page, setPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalTenants, setTotalTenants] = useState(0);
-  const [syncConfirm, setSyncConfirm] = useState({ isOpen: false, tenant: null, info: null, totalPaid: 0, correctedBalance: 0, isLoading: false });
+  const [invoiceBalances, setInvoiceBalances] = useState({});
+  const [dailyPaidSums, setDailyPaidSums] = useState({});
   const [errorStatus, setErrorStatus] = useState(null);
   const [toast, setToast] = useState(null);
 
@@ -63,38 +63,6 @@ const TenantFinder = () => {
     "Other"
   ];
 
-  const getMonthlyDuesInfo = (tenant) => {
-    if (tenant.stay_type !== "MONTHLY") return null;
-    const moveIn = new Date(tenant.move_in_date || tenant.check_in_date || tenant.created_at);
-    // Already correct, no change needed
-    const today = new Date();
-    const rent = Number(tenant.rent_per_month || tenant.rooms?.rent || 0);
-    const maintenance = Number(tenant.maintenance_amount || 0);
-
-    // Anniversary-based month calculation (Fairer rent cycle)
-    let totalMonths = (today.getFullYear() - moveIn.getFullYear()) * 12 + (today.getMonth() - moveIn.getMonth());
-    if (today.getDate() >= moveIn.getDate()) {
-        totalMonths++;
-    }
-    totalMonths = Math.max(1, totalMonths);
-
-    let expectedTotal = totalMonths * rent;
-    
-    // Apply Maintenance
-    if (tenant.maintenance_type === 'monthly') {
-        expectedTotal += (totalMonths * maintenance);
-    } else if (tenant.maintenance_type === 'one_time') {
-        expectedTotal += maintenance;
-    }
-
-    return {
-        months: totalMonths,
-        expectedTotal,
-        rent,
-        maintenance,
-        maintenanceType: tenant.maintenance_type
-    };
-  };
 
   const getLiveBalance = (tenant) => {
     if (tenant.stay_type === "DAILY") {
@@ -109,11 +77,19 @@ const TenantFinder = () => {
             const rentBase = diffDays * Number(daily?.rent_per_day || tenant.rent_per_day || 0);
             const maintBase = Number(daily?.maintenance_amount || tenant.maintenance_amount || 0);
             const totRent = rentBase + maintBase;
-            return Math.max(0, totRent - Number(daily?.paid_amount || 0));
+            
+            // Use real-time local calculation
+            const actualPaid = dailyPaidSums[tenant.id] || 0;
+            return Math.max(0, totRent - actualPaid);
         }
-        return daily?.balance_amount || tenant.balance_amount || tenant.balance || 0;
+        
+        const dbBalance = Number(daily?.balance_amount || tenant.balance_amount || 0);
+        const dbPaid = Number(daily?.paid_amount || tenant.paid_amount || 0);
+        const totalExpected = dbBalance + dbPaid;
+        return Math.max(0, totalExpected - (dailyPaidSums[tenant.id] || 0));
     }
-    return tenant.balance || 0;
+    // Unified Invoice System for Monthly residents
+    return invoiceBalances[tenant.id] || 0;
   };
 
   // Debounce Search
@@ -126,43 +102,25 @@ const TenantFinder = () => {
   }, [searchTerm]);
 
   const syncMonthlyBalance = async (tenant) => {
-    const info = getMonthlyDuesInfo(tenant);
-    if (!info) return;
-
     try {
-        const payments = await paymentAPI.getByTenantId(tenant.id);
-        
-        const totalPaid = (payments || []).reduce((sum, p) => sum + (Number(String(p.amount).replace(/[^0-9.-]+/g, "")) || 0), 0);
-        const correctedBalance = Math.max(0, info.expectedTotal - totalPaid);
+        setLoading(true); // Show progress on main UI
+        const { data: { user } } = await supabase.auth.getUser();
+        if (!user) throw new Error("Auth required");
 
-        setSyncConfirm({
-            isOpen: true,
-            tenant,
-            info,
-            totalPaid,
-            correctedBalance,
-            isLoading: false
-        });
+        // Use the new Invoice Generation system for this specific owner's tenants
+        // (The RPC handles all tenants for the owner, but we'll focus on the feedback for this one)
+        await supabase.rpc('generate_monthly_invoices', { p_owner_id: user.id });
+        
+        await fetchData(); // Refresh everything
+        showToast("Invoices generated and balance synchronized.");
     } catch (error) {
         console.error("Sync fetch failed", error);
+        showToast("Calibration failed.", "error");
+    } finally {
+        setLoading(false);
     }
   };
 
-  const confirmBalanceSync = async () => {
-    const { tenant, correctedBalance } = syncConfirm;
-    setSyncConfirm(prev => ({ ...prev, isLoading: true }));
-    try {
-        await tenantAPI.update(tenant.id, { balance: correctedBalance });
-        setSelectedTenant(prev => ({ ...prev, balance: correctedBalance }));
-        fetchData();
-        showToast("Balance synchronized successfully!");
-    } catch (error) {
-        console.error("Sync failed", error);
-        showToast("Failed to synchronize balance.", "error");
-    } finally {
-        setSyncConfirm({ isOpen: false, tenant: null, info: null, totalPaid: 0, correctedBalance: 0, isLoading: false });
-    }
-  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -180,6 +138,48 @@ const TenantFinder = () => {
       setTenants(data || []);
       setTotalTenants(count || 0);
       setTotalPages(Math.ceil((count || 0) / PAGE_SIZE));
+
+      // Fetch outstanding balances for the current search results from the Invoices system
+      if (data && data.length > 0) {
+          const tenantIds = data.map(t => t.id);
+          
+          const results = await Promise.all([
+            supabase
+              .from("payments")
+              .select("tenant_id, amount, status")
+              .in("tenant_id", tenantIds),
+            supabase
+              .from("invoices")
+              .select("tenant_id, total_amount, paid_amount, type")
+              .in("tenant_id", tenantIds)
+              .in("status", ["UNPAID", "PARTIAL"])
+              .neq("type", "DEPOSIT") // Deposit is one-time; exclude from recurring balance
+          ]);
+
+          const paymentsList = results[0].data || [];
+          const invoicesList = results[1].data || [];
+          
+          const dailySums = {};
+          paymentsList.forEach(p => {
+              const s = (p.status || "").toUpperCase();
+              if (s === 'PAID' || s === 'COMPLETED' || s === 'PAID_SUCCESS') {
+                   dailySums[p.tenant_id] = (dailySums[p.tenant_id] || 0) + Number(p.amount || 0);
+              }
+          });
+          setDailyPaidSums(dailySums);
+
+          const balances = {};
+          invoicesList.forEach(inv => {
+              // DEPOSIT invoices already excluded by the query (.neq('type','DEPOSIT'))
+              // but guard here too for safety
+              if (inv.type === 'DEPOSIT') return;
+              const amount = Number(inv.total_amount) - Number(inv.paid_amount);
+              if (amount > 0) {
+                  balances[inv.tenant_id] = (balances[inv.tenant_id] || 0) + amount;
+              }
+          });
+          setInvoiceBalances(balances);
+      }
     } catch (error) {
       console.error("Error fetching data:", error);
       setErrorStatus(error.message || "Failed to fetch data from the server.");
@@ -571,20 +571,12 @@ const TenantFinder = () => {
         setSelectedTenant={setSelectedTenant} 
         isDark={isDark} 
         syncMonthlyBalance={syncMonthlyBalance} 
+        invoiceBalance={selectedTenant ? invoiceBalances[selectedTenant.id] : 0}
+        dailyPaidSum={selectedTenant ? (dailyPaidSums[selectedTenant.id] || 0) : 0}
       />
 
       {createPortal(
         <>
-          <ConfirmationModal 
-            isOpen={syncConfirm.isOpen}
-            onClose={() => setSyncConfirm({ isOpen: false, tenant: null, info: null, totalPaid: 0, correctedBalance: 0, isLoading: false })}
-            onConfirm={confirmBalanceSync}
-            title="Reconcile Balance"
-            message={`Synchronize financial records for ${syncConfirm.tenant?.full_name}? Updated Balance: ₹${syncConfirm.correctedBalance?.toLocaleString()}. Duration: ${syncConfirm.info?.months} months.`}
-            confirmText="Sync Balance"
-            isLoading={syncConfirm.isLoading}
-            type="info"
-          />
 
           <AlertModal 
             isOpen={!!errorStatus}

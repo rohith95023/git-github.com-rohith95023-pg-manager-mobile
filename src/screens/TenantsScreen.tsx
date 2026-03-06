@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { tenantAPI, pgAPI, roomAPI } from "../services/api";
+import { billingService } from "../services/billing.service";
 import ConfirmationModal from "../components/common/ConfirmationModal";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
@@ -23,6 +24,7 @@ import DropdownSelector from "../components/common/DropdownSelector";
 import { supabase } from "../lib/supabaseClient";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
 import { generateDeleteCode } from "../utils/security";
+import NotificationService from "../services/NotificationService";
 import ThemeToggleButton from "../components/ThemeToggleButton";
 
 const { width } = Dimensions.get("window");
@@ -121,13 +123,13 @@ const TenantsScreen = ({ navigation }: any) => {
     };
 
     const handleDeleteTenant = async (tenant: any) => {
-        const balance = Number(tenant.balance || 0);
+        const balance = tenant.outstanding_balance || 0;
 
         if (balance > 0) {
             setConfirmState({
                 visible: true,
                 title: "Deletion Blocked",
-                message: "Cannot delete tenant with pending dues.",
+                message: `Cannot delete resident with pending dues (₹${balance}).`,
                 type: "danger",
                 singleButton: true,
                 confirmText: "Close",
@@ -164,18 +166,18 @@ const TenantsScreen = ({ navigation }: any) => {
                         await roomAPI.recalculateOccupancy(tenant.room_id);
                     }
 
-                    setConfirmState({
-                        visible: true,
-                        title: "Success",
-                        message: "Resident deleted successfully.",
-                        type: "success",
-                        singleButton: true,
-                        cancelText: "Done",
-                        onClose: () => {
-                            setConfirmState(prev => ({ ...prev, visible: false }));
-                            onRefresh();
-                        }
-                    });
+                    // Cancel notifications
+                    try {
+                        await NotificationService.cancelAllForTenant(tenant.id);
+                    } catch (notifErr) {
+                        console.warn("Failed to cancel notifications:", notifErr);
+                    }
+
+                    // Close modal and refresh list securely
+                    setConfirmState({ visible: false, title: "", message: "", type: "info" });
+                    setConfirmInput("");
+                    setConfirmTargetCode("");
+                    loadTenants(1, false);
                 } catch (err: any) {
                     console.error("Delete error:", err);
                     setConfirmState({
@@ -222,14 +224,25 @@ const TenantsScreen = ({ navigation }: any) => {
             const tenantList = tenantResponse?.data || [];
             const count = tenantResponse?.count || 0;
 
+            // Fetch outstanding balances from Billing Engine V2
+            const tenantsWithBalances = await Promise.all(tenantList.map(async (t: any) => {
+                try {
+                    const bal = await billingService.getOutstandingBalance(t.id);
+                    return { ...t, outstanding_balance: bal };
+                } catch (e) {
+                    console.warn(`Failed to fetch balance for ${t.id}:`, e);
+                    return { ...t, outstanding_balance: 0 };
+                }
+            }));
+
             if (shouldAppend) {
-                setTenants(prev => [...prev, ...tenantList]);
+                setTenants(prev => [...prev, ...tenantsWithBalances]);
             } else {
-                setTenants(tenantList);
+                setTenants(tenantsWithBalances);
             }
 
             setTotalCount(count);
-            setHasMore(shouldAppend ? (tenants.length + tenantList.length < count) : (tenantList.length < count));
+            setHasMore(shouldAppend ? (tenants.length + tenantsWithBalances.length < count) : (tenantsWithBalances.length < count));
             if (pageNum === 1) setPgs(Array.isArray(pgsData) ? pgsData : []);
             setPage(pageNum);
         } catch (error) {
@@ -321,27 +334,8 @@ const TenantsScreen = ({ navigation }: any) => {
     };
 
     const getTenantBalance = (tenant: any) => {
-        if (tenant.stay_type === 'DAILY') {
-            const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details?.[0] : tenant.daily_stay_details;
-            const moveIn = tenant.move_in_date || daily?.move_in_date;
-            const vacate = tenant.vacate_date || daily?.vacate_date;
-            const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
-            const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
-
-            if (moveIn && vacate) {
-                const start = new Date(moveIn);
-                const end = new Date(vacate);
-                let diffDays = 1;
-                if (end > start) {
-                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                }
-                const totalRent = (diffDays * Number(rentPerDay)) + Number(maintenance);
-                const paid = Number(daily?.paid_amount || tenant.paid_amount || 0);
-                return Math.max(0, totalRent - paid);
-            }
-            return Number(daily?.balance_amount || tenant.balance_amount || tenant.balance || 0);
-        }
-        return Number(tenant.balance || 0);
+        // ALWAYS use the invoice-derived balance from V2
+        return Number(tenant.outstanding_balance || 0);
     };
 
     const getDailyStayInfo = (tenant: any) => {
@@ -667,6 +661,7 @@ const TenantsScreen = ({ navigation }: any) => {
                 loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
                 needsInput={confirmState.needsInput}
+                inputPlaceholder={confirmState.inputPlaceholder}
                 inputValue={confirmInput}
                 onInputChange={setConfirmInput}
                 confirmDisabled={confirmState.needsInput && confirmInput !== confirmTargetCode}

@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion';
-import { AlertCircle, BedDouble, CheckCircle2, CreditCard, Shield } from 'lucide-react';
+import { AlertCircle, AlertTriangle, BedDouble, CheckCircle2, CreditCard, Shield } from 'lucide-react';
 import { InputField } from './InputField';
 import { cn } from './utils';
 
@@ -449,14 +449,26 @@ export const Step2Stay = ({
                                 calcBase = (diffDays * Number(formData.rentAmount || 0)) + Number(formData.maintenanceAmount || 0);
                             }
                         } else {
-                            calcBase = Number(formData.rentAmount || 0) + (formData.maintenanceType === "monthly" || formData.maintenanceType === "one_time" ? Number(formData.maintenanceAmount || 0) : 0);
+                            const rentPart = Number(formData.rentAmount || 0);
+                            const maintPart = (formData.maintenanceType === "monthly" || formData.maintenanceType === "one_time") ? Number(formData.maintenanceAmount || 0) : 0;
+                            const depositPart = Number(formData.securityDeposit || 0);
+                            calcBase = rentPart + maintPart + depositPart;
                         }
-                        const balance = Math.max(0, calcBase - Number(formData.paidAmount || 0));
+                        const isOverpaid = Number(formData.paidAmount || 0) > calcBase;
+                        const balance = isOverpaid ? 0 : Math.max(0, calcBase - Number(formData.paidAmount || 0));
 
                         return (
-                            <p className="text-[9px] text-emerald-600/70 font-bold italic mt-2">
-                                Remaining Balance: ₹{balance.toLocaleString()}
-                            </p>
+                            <div className="mt-2 space-y-1">
+                                {isOverpaid ? (
+                                    <p className="text-[10px] text-rose-500 font-black animate-pulse flex items-center gap-1 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20">
+                                        <AlertTriangle size={14} /> WARNING: Paid amount (₹{Number(formData.paidAmount).toLocaleString()}) is GREATER than total expected (₹{calcBase.toLocaleString()}).
+                                    </p>
+                                ) : (
+                                    <p className="text-[9px] text-emerald-600/70 font-bold italic">
+                                        Remaining Balance: ₹{balance.toLocaleString()}
+                                    </p>
+                                )}
+                            </div>
                         );
                     })()}
                 </div>

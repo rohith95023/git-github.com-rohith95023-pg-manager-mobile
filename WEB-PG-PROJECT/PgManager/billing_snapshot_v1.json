@@ -1,0 +1,168 @@
+{
+  "rpcs": {
+    "allocate_payment": "\r\nDECLARE\r\n  v_remaining_amount numeric;\r\n  v_invoice record;\r\n  v_alloc_amount numeric;\r\n  v_new_paid numeric;\r\n  v_new_status text;\r\n  v_total_allocated numeric := 0;\r\nBEGIN\r\n    -- 1. Security check\r\n    IF auth.uid() <> p_owner_id THEN\r\n        RAISE EXCEPTION 'Unauthorized: Owner ID mismatch';\r\n    END IF;\r\n\r\n    -- 2. Lock the payment row\r\n    SELECT amount INTO v_remaining_amount \r\n    FROM public.payments \r\n    WHERE id = p_payment_id \r\n    AND tenant_id = p_tenant_id \r\n    AND owner_id = p_owner_id\r\n    FOR UPDATE;\r\n\r\n    IF NOT FOUND THEN\r\n        INSERT INTO public.billing_logs (event_type, tenant_id, owner_id, details)\r\n        VALUES ('ERROR', p_tenant_id, p_owner_id, jsonb_build_object('message', 'Payment not found', 'payment_id', p_payment_id));\r\n        RAISE EXCEPTION 'Payment not found or tenant mismatch';\r\n    END IF;\r\n\r\n    -- 3. Allocation logic\r\n    FOR v_invoice IN \r\n        SELECT id, total_amount, paid_amount \r\n        FROM public.invoices\r\n        WHERE tenant_id = p_tenant_id\r\n        AND status IN ('UNPAID', 'PARTIAL')\r\n        ORDER BY billing_period_start ASC\r\n        FOR UPDATE\r\n    LOOP\r\n        EXIT WHEN v_remaining_amount <= 0;\r\n\r\n        v_alloc_amount := LEAST(v_remaining_amount, v_invoice.total_amount - v_invoice.paid_amount);\r\n        v_new_paid := v_invoice.paid_amount + v_alloc_amount;\r\n        v_new_status := CASE WHEN v_new_paid >= v_invoice.total_amount THEN 'PAID' ELSE 'PARTIAL' END;\r\n\r\n        INSERT INTO public.payment_allocations (payment_id, invoice_id, amount_applied)\r\n        VALUES (p_payment_id, v_invoice.id, v_alloc_amount);\r\n\r\n        UPDATE public.invoices\r\n        SET paid_amount = v_new_paid, status = v_new_status, updated_at = now()\r\n        WHERE id = v_invoice.id;\r\n\r\n        v_remaining_amount := v_remaining_amount - v_alloc_amount;\r\n        v_total_allocated := v_total_allocated + v_alloc_amount;\r\n    END LOOP;\r\n\r\n    -- 4. Overpayment Handling\r\n    IF v_remaining_amount > 0 THEN\r\n        INSERT INTO public.tenant_credits (tenant_id, amount, payment_id, owner_id)\r\n        VALUES (p_tenant_id, v_remaining_amount, p_payment_id, p_owner_id)\r\n        ON CONFLICT (tenant_id) \r\n        DO UPDATE SET amount = public.tenant_credits.amount + EXCLUDED.amount, updated_at = now();\r\n    END IF;\r\n\r\n    -- Logging\r\n    INSERT INTO public.billing_logs (event_type, tenant_id, owner_id, details)\r\n    VALUES ('ALLOCATION', p_tenant_id, p_owner_id, jsonb_build_object(\r\n        'payment_id', p_payment_id,\r\n        'allocated', v_total_allocated,\r\n        'credit_created', v_remaining_amount\r\n    ));\r\nEND;\r\n",
+    "generate_monthly_invoices": "\r\nDECLARE\r\n    r_tenant RECORD;\r\n    v_last_invoice_date DATE;\r\n    v_next_invoice_date DATE;\r\n    v_tenants_checked INTEGER := 0;\r\n    v_invoices_created INTEGER := 0;\r\n    v_rent_amount NUMERIC;\r\n    v_maint_amount NUMERIC;\r\n    v_total_to_charge NUMERIC;\r\nBEGIN\r\n    -- 1. Security check\r\n    IF p_owner_id <> auth.uid() THEN\r\n        RAISE EXCEPTION 'Unauthorized execution: owner_id does not match session.';\r\n    END IF;\r\n\r\n    -- 2. Iterate through all active MONTHLY tenants\r\n    FOR r_tenant IN (\r\n        SELECT t.id, t.full_name, t.move_in_date, t.rent_per_month, t.maintenance_amount, t.maintenance_type, r.rent as room_rent\r\n        FROM public.tenants t\r\n        LEFT JOIN public.rooms r ON t.room_id = r.id\r\n        WHERE t.owner_id = p_owner_id \r\n          AND t.status = 'ACTIVE' \r\n          AND t.stay_type = 'MONTHLY'\r\n    ) LOOP\r\n        v_tenants_checked := v_tenants_checked + 1;\r\n\r\n        SELECT MAX(billing_period_start) INTO v_last_invoice_date\r\n        FROM public.invoices\r\n        WHERE tenant_id = r_tenant.id;\r\n\r\n        IF v_last_invoice_date IS NULL THEN\r\n            v_last_invoice_date := r_tenant.move_in_date;\r\n        END IF;\r\n\r\n        v_next_invoice_date := (v_last_invoice_date + INTERVAL '1 month')::DATE;\r\n\r\n        WHILE v_next_invoice_date <= CURRENT_DATE LOOP\r\n            IF NOT EXISTS (\r\n                SELECT 1 FROM public.invoices \r\n                WHERE tenant_id = r_tenant.id \r\n                AND billing_period_start = v_next_invoice_date\r\n            ) THEN\r\n                v_rent_amount := COALESCE(r_tenant.rent_per_month, r_tenant.room_rent, 0);\r\n                v_maint_amount := CASE \r\n                    WHEN r_tenant.maintenance_type = 'monthly' THEN COALESCE(r_tenant.maintenance_amount, 0)\r\n                    ELSE 0\r\n                END;\r\n                v_total_to_charge := v_rent_amount + v_maint_amount;\r\n\r\n                IF v_total_to_charge > 0 THEN\r\n                    INSERT INTO public.invoices (\r\n                        tenant_id, owner_id, billing_period_start, billing_period_end,\r\n                        total_amount, paid_amount, status, type\r\n                    ) VALUES (\r\n                        r_tenant.id, p_owner_id, v_next_invoice_date,\r\n                        (v_next_invoice_date + INTERVAL '1 month' - INTERVAL '1 day')::DATE,\r\n                        v_total_to_charge, 0, 'UNPAID', 'RENT'\r\n                    );\r\n                    v_invoices_created := v_invoices_created + 1;\r\n                END IF;\r\n            END IF;\r\n            v_next_invoice_date := (v_next_invoice_date + INTERVAL '1 month')::DATE;\r\n        END LOOP;\r\n    END LOOP;\r\n\r\n    -- Logging\r\n    INSERT INTO public.billing_logs (event_type, owner_id, details)\r\n    VALUES ('GENERATION', p_owner_id, jsonb_build_object(\r\n        'tenants_checked', v_tenants_checked,\r\n        'invoices_created', v_invoices_created,\r\n        'timestamp', now()\r\n    ));\r\n\r\n    RETURN json_build_object(\r\n        'tenants_checked', v_tenants_checked,\r\n        'invoices_created', v_invoices_created\r\n    );\r\nEND;\r\n",
+    "get_outstanding_balance": "\r\nDECLARE\r\n    v_balance NUMERIC;\r\nBEGIN\r\n    -- 1. Security check\r\n    IF p_owner_id <> auth.uid() THEN\r\n        RAISE EXCEPTION 'Unauthorized execution: owner_id does not match session.';\r\n    END IF;\r\n\r\n    -- 2. Calculate SUM(total_amount - paid_amount)\r\n    SELECT COALESCE(SUM(total_amount - paid_amount), 0)\r\n    INTO v_balance\r\n    FROM public.invoices\r\n    WHERE tenant_id = p_tenant_id\r\n      AND owner_id = p_owner_id\r\n      AND status IN ('UNPAID', 'PARTIAL');\r\n\r\n    RETURN ROUND(v_balance, 2);\r\nEND;\r\n",
+    "billing_health_check": "\r\nDECLARE\r\n    v_duplicates INTEGER;\r\n    v_overpaid INTEGER;\r\n    v_orphans INTEGER;\r\n    v_negatives INTEGER;\r\n    v_summary JSONB;\r\nBEGIN\r\n    -- Security Check\r\n    IF p_owner_id <> auth.uid() THEN\r\n        RAISE EXCEPTION 'Unauthorized: Owner ID mismatch';\r\n    END IF;\r\n\r\n    -- 1. Duplicate Invoices\r\n    SELECT COUNT(*) INTO v_duplicates FROM (\r\n        SELECT tenant_id, billing_period_start, COUNT(*)\r\n        FROM public.invoices\r\n        WHERE owner_id = p_owner_id\r\n        GROUP BY tenant_id, billing_period_start\r\n        HAVING COUNT(*) > 1\r\n    ) sub;\r\n\r\n    -- 2. Overpaid Invoices\r\n    SELECT COUNT(*) INTO v_overpaid\r\n    FROM public.invoices\r\n    WHERE owner_id = p_owner_id AND paid_amount > (total_amount + 0.01);\r\n\r\n    -- 3. Orphan Allocations\r\n    SELECT COUNT(*) INTO v_orphans\r\n    FROM public.payment_allocations pa\r\n    LEFT JOIN public.invoices i ON pa.invoice_id = i.id\r\n    WHERE i.id IS NULL;\r\n\r\n    -- 4. Negative Totals\r\n    SELECT COUNT(*) INTO v_negatives\r\n    FROM public.invoices\r\n    WHERE owner_id = p_owner_id AND total_amount < 0 AND type <> 'CREDIT';\r\n\r\n    v_summary := jsonb_build_object(\r\n        'duplicate_invoices', v_duplicates,\r\n        'overpaid_invoices', v_overpaid,\r\n        'orphan_allocations', v_orphans,\r\n        'negative_totals', v_negatives,\r\n        'healthy', (v_duplicates = 0 AND v_overpaid = 0 AND v_orphans = 0 AND v_negatives = 0)\r\n    );\r\n\r\n    RETURN v_summary;\r\nEND;\r\n"
+  },
+  "schema": {
+    "invoices": [
+      {
+        "column_name": "updated_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "tenant_id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "billing_period_start",
+        "data_type": "date",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "billing_period_end",
+        "data_type": "date",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "total_amount",
+        "data_type": "numeric",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "paid_amount",
+        "data_type": "numeric",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "owner_id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "status",
+        "data_type": "text",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "type",
+        "data_type": "text",
+        "is_nullable": "NO"
+      }
+    ],
+    "payment_allocations": [
+      {
+        "column_name": "id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "payment_id",
+        "data_type": "uuid",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "invoice_id",
+        "data_type": "uuid",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "amount_applied",
+        "data_type": "numeric",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      }
+    ],
+    "tenant_credits": [
+      {
+        "column_name": "id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "tenant_id",
+        "data_type": "uuid",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "owner_id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "amount",
+        "data_type": "numeric",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "updated_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "payment_id",
+        "data_type": "uuid",
+        "is_nullable": "YES"
+      }
+    ],
+    "billing_logs": [
+      {
+        "column_name": "id",
+        "data_type": "uuid",
+        "is_nullable": "NO"
+      },
+      {
+        "column_name": "tenant_id",
+        "data_type": "uuid",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "owner_id",
+        "data_type": "uuid",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "details",
+        "data_type": "jsonb",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "created_at",
+        "data_type": "timestamp with time zone",
+        "is_nullable": "YES"
+      },
+      {
+        "column_name": "event_type",
+        "data_type": "text",
+        "is_nullable": "NO"
+      }
+    ]
+  }
+}

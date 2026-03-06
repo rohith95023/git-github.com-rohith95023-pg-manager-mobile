@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
 import { pgAPI, paymentAPI, tenantAPI, reservationAPI } from "../../services/api";
 import { supabase } from "../../lib/supabaseClient";
@@ -45,6 +45,7 @@ const Payments = () => {
   const isDark = theme === "dark";
   const [payments, setPayments] = useState([]);
   const [tenants, setTenants] = useState([]); // Active Residents
+  const [allTenantsForFinancials, setAllTenantsForFinancials] = useState([]); // Active + Deleted Daily (for financial records)
   const [pgs, setPgs] = useState([]);
   const [loading, setLoading] = useState(true);
   const [showModal, setShowModal] = useState(false);
@@ -60,6 +61,8 @@ const Payments = () => {
   const [expandedRows, setExpandedRows] = useState(new Set());
   const [showOverpaymentConfirm, setShowOverpaymentConfirm] = useState(false);
   const [pendingPayload, setPendingPayload] = useState(null);
+  const [invoices, setInvoices] = useState([]);
+  const [tenantCredits, setTenantCredits] = useState({});
 
   const toggleRow = (rowId) => {
     setExpandedRows(prev => {
@@ -92,35 +95,108 @@ const Payments = () => {
     setLoading(true);
     try {
       console.log("Fetching Ledger Data...");
-      const [paymentsRes, tenantsRes, pgsRes] = await Promise.allSettled([
+      const [paymentsRes, tenantsRes, deletedTenantsRes, pgsRes] = await Promise.allSettled([
         paymentAPI.getAll(),
         supabase.from("tenants").select(`*, rooms!room_id(room_number, floor), pgs!pg_id(name), beds!bed_id(bed_number), daily_stay_details(*)`).neq("status", "DELETED"),
+        // Fetch ALL DELETED tenants (both DAILY and MONTHLY) to preserve their financial records.
+        // tenantAPI.hardDelete() is a soft-delete (status='DELETED') so data is still in DB.
+        supabase.from("tenants").select(`*, rooms!room_id(room_number, floor), pgs!left(name), beds!bed_id(bed_number), daily_stay_details(*)`).eq("status", "DELETED"),
         pgAPI.getAll(),
       ]);
       
+      let fetchedTenants = [];
+      if (tenantsRes.status === 'fulfilled') {
+          fetchedTenants = Array.isArray(tenantsRes.value) ? tenantsRes.value : (tenantsRes.value?.data || []);
+          setTenants(fetchedTenants);
+      }
+
+      // Merge ALL deleted tenants (daily + monthly) for financial records display
+      let allTenantsForFinancials = [...fetchedTenants];
+      if (deletedTenantsRes.status === 'fulfilled') {
+          const deletedTenants = Array.isArray(deletedTenantsRes.value) ? deletedTenantsRes.value : (deletedTenantsRes.value?.data || []);
+          allTenantsForFinancials = [...allTenantsForFinancials, ...deletedTenants];
+      }
+      setAllTenantsForFinancials(allTenantsForFinancials);
+
       if (paymentsRes.status === 'fulfilled') {
           const val = paymentsRes.value;
           const data = Array.isArray(val) ? val : (val?.data || []);
-          console.log("Payments Found:", data.length);
-          console.log("Payment statuses:", data.map(p => ({ id: p.id, status: p.status, amount: p.amount })));
           setPayments(data);
-      } else {
-          console.error("Payments Failed:", paymentsRes.reason);
-      }
-
-      if (tenantsRes.status === 'fulfilled') {
-          const val = tenantsRes.value;
-          const data = Array.isArray(val) ? val : (val?.data || []);
-          console.log("Tenants Found:", data.length);
-          setTenants(data);
-      } else {
-          console.error("Tenants Failed:", tenantsRes.reason);
       }
 
       if (pgsRes.status === 'fulfilled') {
           const val = pgsRes.value;
           const data = Array.isArray(val) ? val : (val?.data || []);
           setPgs(data);
+      }
+
+      // Fetch precise outstanding balances and ALL invoices for Enterprise UI
+      const { data: { user } } = await supabase.auth.getUser();
+      if (user) {
+          // Fetch all invoices with direct pg join (doesn't require tenants relationship to work)
+          // This ensures financial records persist even when tenants/properties are deleted
+          const { data: allInvoices } = await supabase
+            .from("invoices")
+            .select(`
+                *,
+                pgs!left(name)
+            `)
+            .eq("owner_id", user.id)
+            .order('billing_period_start', { ascending: false });
+          
+          // Fetch ALL tenants (including DELETED) to enrich invoice data
+          const { data: allTenantsList } = await supabase
+            .from("tenants")
+            .select(`
+                id,
+                full_name,
+                status,
+                pg_id,
+                pgs!left(name),
+                rooms!room_id(room_number, floor),
+                beds!bed_id(bed_number)
+            `);
+          
+          // Enrich invoices with tenant data
+          const tenantMap = {};
+          (allTenantsList || []).forEach(t => {
+              tenantMap[t.id] = t;
+          });
+          
+          const enrichedInvoices = (allInvoices || []).map(inv => ({
+              ...inv,
+              tenants: tenantMap[inv.tenant_id] || null
+          }));
+          
+          // Always set invoices (even if empty) to ensure state updates
+          setInvoices(enrichedInvoices);
+          
+          const balances = {};
+          enrichedInvoices.forEach(inv => {
+              // EXCLUDE DEPOSIT-type invoices from recurring balance.
+              // Security deposit is a one-time refundable charge tracked separately;
+              // including it in monthly dues causes false "still ₹X due" after rent is paid.
+              if (inv.type === 'DEPOSIT') return;
+              const bal = Number(inv.total_amount) - Number(inv.paid_amount);
+              if (bal > 0) {
+                  balances[inv.tenant_id] = (balances[inv.tenant_id] || 0) + bal;
+              }
+          });
+          setTenantBalances(balances);
+
+          // Fetch Tenant Credits
+          const { data: credits } = await supabase
+            .from("tenant_credits")
+            .select("tenant_id, amount")
+            .eq("owner_id", user.id);
+          
+          if (credits) {
+              const creditsMap = {};
+              credits.forEach(c => {
+                  creditsMap[c.tenant_id] = (creditsMap[c.tenant_id] || 0) + Number(c.amount);
+              });
+              setTenantCredits(creditsMap);
+          }
       }
     } catch (error) {
       console.error("Critical Error in fetchData:", error);
@@ -129,6 +205,8 @@ const Payments = () => {
       setLoading(false);
     }
   };
+
+  const [tenantBalances, setTenantBalances] = useState({});
 
   useEffect(() => {
     fetchData();
@@ -198,20 +276,42 @@ const Payments = () => {
       const tenant = tenants.find(t => t.id === tenantId);
       if (!tenant) return 0;
       
-      const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-
       if (tenant.stay_type === 'DAILY') {
+          const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
+          
+          // Use the fetched local 'payments' array for real-time calculation 
+          const actualPaid = payments
+            .filter(p => p.tenant_id === tenantId && (['PAID', 'COMPLETED', 'PAID_SUCCESS'].includes((p.status || "").toUpperCase())))
+            .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
           if (daily?.move_in_date && daily?.vacate_date) {
                const start = new Date(daily.move_in_date);
                const end = new Date(daily.vacate_date);
                let diffDays = 1;
                if (end > start) diffDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
-               const totRent = diffDays * Number(daily.rent_per_day || tenant.rent_per_day || 0) + Number(daily.maintenance_amount || tenant.maintenance_amount || 0);
-               return Math.max(0, totRent - Number(daily.paid_amount || 0));
+               
+               const rpd = Number(daily.rent_per_day || tenant.rent_per_day || 0);
+               const maint = Number(daily.maintenance_amount || tenant.maintenance_amount || 0);
+               const totRent = (diffDays * rpd) + maint;
+               
+               return Math.max(0, totRent - actualPaid);
           }
-          return Number(daily?.balance_amount || tenant.balance_amount || 0);
+          
+          const dbTotal = Number(daily?.total_rent || tenant.total_rent || 0);
+          return Math.max(0, dbTotal - actualPaid);
       }
-      return Number(tenant.balance || 0); 
+
+      // For Monthly/Quarterly tenants:
+      // Primary: use invoice-based balance (most accurate)
+      // Fallback: if no invoices exist yet, estimate from rent + maintenance
+      //           so new tenants don't get a false "overpayment" on their first payment
+      if (tenantBalances[tenantId] !== undefined) {
+          return tenantBalances[tenantId];
+      }
+      // No invoice data yet — estimate one month's charge as the expected balance
+      const estimatedRent = Number(tenant.rent_per_month || tenant.custom_rent || tenant.rent || 0);
+      const estimatedMaint = Number(tenant.maintenance_amount || 0);
+      return estimatedRent + estimatedMaint;
   };
 
   const getTenantJoinedDate = (tenantId) => {
@@ -290,8 +390,15 @@ const Payments = () => {
         }
 
         // Overpayment Check
+        // Only warn if we have a known positive balance AND the amount exceeds it.
+        // Skip the check when balance is 0 for non-DAILY tenants — that means
+        // no invoice/payment history yet, not that nothing is owed.
         const balance = getTenantBalance(payload.tenant_id);
-        if (payload.amount > balance && !showOverpaymentConfirm) {
+        const selectedTenant = tenants.find(t => t.id === payload.tenant_id);
+        const hasKnownBalance = selectedTenant?.stay_type === 'DAILY'
+            ? true                                      // daily always has a computed balance
+            : tenantBalances[payload.tenant_id] !== undefined; // monthly: only if invoices loaded
+        if (hasKnownBalance && balance > 0 && payload.amount > balance && !showOverpaymentConfirm) {
             setPendingPayload(payload);
             setShowOverpaymentConfirm(true);
             setIsSubmitting(false);
@@ -321,51 +428,8 @@ const Payments = () => {
         if (editingPayment) {
             await paymentAPI.update(editingPayment.id, payload);
         } else {
-            const newPayment = await paymentAPI.create(payload);
-            
-            // Financial Logic: Update Tenant/Stay Balance
-            if (payload.status === 'COMPLETED' || payload.status === 'PAID') {
-                const tenant = tenants.find(t => t.id === payload.tenant_id);
-                if (tenant) {
-                    if (payload.type === 'DEPOSIT') {
-                        // Update Security Deposit Paid
-                        const currentDeposit = Number(tenant.security_deposit || 0);
-                        await tenantAPI.update(tenant.id, { security_deposit: currentDeposit + payload.amount });
-                    } else if (payload.type === 'RENT') {
-                        // Update Rent Balance
-                        const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-                        if (tenant.stay_type === 'DAILY') {
-                            const currentPaid = Number(daily?.paid_amount || tenant.paid_amount || 0);
-                            const totalRent = Number(daily?.total_rent || tenant.total_rent || 0);
-                            const newPaid = currentPaid + payload.amount;
-                            const newBalance = Math.max(0, totalRent - newPaid);
-                            await tenantAPI.update(tenant.id, { 
-                                paid_amount: newPaid, 
-                                balance_amount: newBalance 
-                            });
-                        } else {
-                            const currentBalance = Number(tenant.balance || 0);
-                            await tenantAPI.update(tenant.id, { balance: currentBalance - payload.amount });
-                        }
-                    } else if (payload.type === 'REFUND') {
-                        // Refund reduces security deposit
-                        const currentDeposit = Number(tenant.security_deposit || 0);
-                        await tenantAPI.update(tenant.id, { security_deposit: Math.max(0, currentDeposit - payload.amount) });
-                    }
-
-                    // Maintenance Paid Status Tracking
-                    const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-                    const maintAmt = tenant.stay_type === 'DAILY' ? (daily?.maintenance_amount || 0) : (tenant.maintenance_amount || 0);
-                    const maintType = tenant.stay_type === 'DAILY' ? daily?.maintenance_type : tenant.maintenance_type;
-
-                    if (maintType === 'one_time' && !tenant.maintenance_paid) {
-                        if (payload.type === 'MAINTENANCE' || payload.amount >= maintAmt || (payload.type === 'RENT' && payload.amount > 0)) {
-                             // Mark as paid if explicit or if paying rent (assuming maintenance is prioritized/included)
-                             await tenantAPI.update(tenant.id, { maintenance_paid: true });
-                        }
-                    }
-                }
-            }
+            // paymentAPI.create now also calls the allocate_payment RPC internally
+            await paymentAPI.create(payload);
         }
 
         // Close modal and clear form/URL immediately
@@ -446,88 +510,185 @@ const Payments = () => {
     setDeleteConfirm({ isOpen: false, id: null });
   };
 
+  // Helper: Format Invoice Type (Enterprise Mode)
+  const formatInvoiceType = (inv) => {
+    const typeMap = {
+      'RENT': 'Rent',
+      'DEPOSIT': 'Security Deposit',
+      'MAINTENANCE': 'Maintenance',
+      'UTILITIES': 'Utilities',
+      'BOOKING': 'Booking Advance',
+      'OPENING_BALANCE': 'Opening Balance',
+      'CREDIT': 'Credit Adjustment'
+    };
+    
+    if (inv.type === 'RENT' && inv.billing_period_start) {
+      const date = new Date(inv.billing_period_start);
+      const monthYear = date.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      return `Rent – ${monthYear}`;
+    }
+    
+    return typeMap[inv.type] || inv.type || "Other";
+  };
+
+  // Helper: Calculate Overdue Status
+  const getOverdueDays = (inv) => {
+    if (!inv.billing_period_end) return 0;
+    const end = new Date(inv.billing_period_end);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    
+    // Status logic from Requirement #2
+    const totalAmount = Number(inv.total_amount || 0);
+    const paidAmount = Number(inv.paid_amount || 0);
+    const isPaid = paidAmount >= totalAmount;
+
+    if (today > end && !isPaid) {
+      const diffTime = Math.abs(today - end);
+      return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    }
+    return 0;
+  };
+
   // Calculations
   const totalReceived = payments.filter(p => {
       const s = (p.status || "").toUpperCase();
       return s === 'PAID' || s === 'COMPLETED';
   }).reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
   
-  // Update: Pending stat now correctly reflects outstanding dues from all residents 
-  // to match the "DUE" badges in the Resident Directory.
   const totalPending = tenants.reduce((sum, t) => sum + getTenantBalance(t.id), 0);
   
-  // Create Virtual "Due" Records from residents with balances
-  const outstandingDues = tenants
-      .filter(t => getTenantBalance(t.id) > 0)
-      .map(t => ({
-          id: `due-${t.id}`,
-          tenant_id: t.id,
-          amount: getTenantBalance(t.id),
-          status: 'PENDING_DUE',
-          tenants: t,
-          type: 'RENT',
-          payment_date: null,
-          isVirtual: true,
-          billing_month: t.move_in_date // Fallback for sorting
-      }));
+  // Create Virtual Records for ALL Residents (Daily, Monthly, Quarterly, etc.)
+  // so their full payment history remains visible after paying dues.
+  const outstandingDuesVirtual = allTenantsForFinancials
+      .map(t => {
+          let totalAmount = 0;
+          let startDate = t.move_in_date;
+          let endDate = new Date().toISOString().split('T')[0];
 
-  const allDisplayItems = [...payments, ...outstandingDues];
+          // Handle based on stay type
+          if (t.stay_type === 'DAILY') {
+              const daily = Array.isArray(t.daily_stay_details) ? t.daily_stay_details[0] : t.daily_stay_details;
 
-  const groupKey = (p) => {
-      if (p.isVirtual) return `due-${p.tenant_id}`;
-      const tId = p.tenant_id;
-      const bMonth = p.billing_month || p.billingMonth || p.billingmonth || "no-month";
-      const type = p.type || p.payment_type;
-      
-      if (type === 'RENT') return `rent-${tId}-${bMonth}`;
-      return `other-${p.id}`;
-  };
-
-  const groupedData = allDisplayItems.filter(p => {
-      let matchStatus = true;
-      const pStatus = (p.status || "").toUpperCase();
-      
-      if (filterStatus) {
-          if (filterStatus === 'PAID') {
-              matchStatus = pStatus === 'PAID' || pStatus === 'COMPLETED';
-          } else if (filterStatus === 'PENDING') {
-              matchStatus = pStatus === 'PENDING' || pStatus === 'PENDING_DUE';
+              // Calculate the true total expected for this stay
+              if (daily?.move_in_date && daily?.vacate_date) {
+                  const start = new Date(daily.move_in_date);
+                  const end   = new Date(daily.vacate_date);
+                  let diffDays = 1;
+                  if (end > start) diffDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                  const rpd   = Number(daily.rent_per_day || t.rent_per_day || 0);
+                  const maint = Number(daily.maintenance_amount || t.maintenance_amount || 0);
+                  totalAmount = (diffDays * rpd) + maint;
+              } else {
+                  totalAmount = Number(daily?.total_rent || t.total_rent || 0);
+              }
+              startDate = daily?.move_in_date || t.move_in_date;
+              endDate = daily?.vacate_date || new Date().toISOString().split('T')[0];
           } else {
-              matchStatus = pStatus === filterStatus.toUpperCase();
+              // MONTHLY, QUARTERLY, YEARLY, etc. - use monthly rent
+              const monthlyRent = Number(t.rent_per_month || t.rent || 0);
+              const maintenanceAmount = Number(t.maintenance_amount || 0);
+              totalAmount = monthlyRent + maintenanceAmount;
+              startDate = t.move_in_date;
+              endDate = new Date().toISOString().split('T')[0];
           }
-      }
-      
+
+          // Real-time paid amount from the payments list (same logic as getTenantBalance)
+          const actualPaid = payments
+              .filter(p => p.tenant_id === t.id &&
+                  ['PAID', 'COMPLETED', 'PAID_SUCCESS'].includes((p.status || '').toUpperCase()))
+              .reduce((sum, p) => sum + (Number(p.amount) || 0), 0);
+
+          const paidAmount = Math.min(actualPaid, totalAmount || actualPaid);
+          const balance    = Math.max(0, totalAmount - actualPaid);
+          const status     = balance === 0 && totalAmount > 0 ? 'PAID'
+                           : paidAmount > 0                   ? 'PARTIAL'
+                           : 'UNPAID';
+
+          return {
+              id: `due-${t.id}`,
+              tenant_id: t.id,
+              total_amount: totalAmount,
+              paid_amount: paidAmount,
+              status,
+              tenants: t,
+              pgs: t.pgs, // Include PG data
+              type: 'RENT',
+              billing_period_start: startDate,
+              billing_period_end: endDate,
+              isVirtual: true,
+          };
+      });
+
+  // Enterprise UI shows: Invoices + Virtual Records for ALL Residents
+  // Deduplicate by tenant_id (invoices take precedence if both exist)
+  const invoicesByTenant = new Set(invoices.map(inv => inv.tenant_id));
+  const allDisplayItems = [
+      ...invoices,
+      ...outstandingDuesVirtual.filter(virt => !invoicesByTenant.has(virt.tenant_id))
+  ];
+
+  const filteredItems = allDisplayItems.filter(p => {
       const rawT = p.tenants || p.tenant;
       const tInfo = Array.isArray(rawT) ? rawT[0] : (rawT || {});
       const pgId = tInfo.pg_id || tInfo.pgId || p.pg_id || p.pgId || "";
       const tenantName = tInfo.full_name?.toLowerCase() || "";
       const searchLower = searchTerm.toLowerCase();
-      const bMonth = (p.billing_month || p.billingMonth || p.billingmonth || "").toLowerCase();
       
-      const matchSearch = tenantName.includes(searchLower) || bMonth.includes(searchLower);
+      const typeLabel = formatInvoiceType(p).toLowerCase();
+      const matchSearch = tenantName.includes(searchLower) || typeLabel.includes(searchLower);
       const matchPg = !filterPg || pgId === filterPg;
 
-      return matchStatus && matchSearch && matchPg;
-  }).reduce((acc, p) => {
-      const key = groupKey(p);
-      if (!acc[key]) {
-          acc[key] = {
-              ...p,
-              id: key,
-              items: [],
-              totalAmount: 0,
-              isGrouped: false
-          };
+      // Status Filter logic
+      let matchStatus = true;
+      if (filterStatus) {
+          const totalAmount = Number(p.total_amount || 0);
+          const paidAmount = Number(p.paid_amount || 0);
+          
+          if (filterStatus === 'PAID') {
+              matchStatus = paidAmount >= totalAmount;
+          } else if (filterStatus === 'PENDING') {
+              matchStatus = paidAmount < totalAmount;
+          }
       }
-      acc[key].items.push(p);
-      acc[key].totalAmount += Number(p.amount);
-      if (acc[key].items.length > 1) acc[key].isGrouped = true;
-      return acc;
+
+      return matchStatus && matchSearch && matchPg;
+  });
+
+  // Group by Resident for "Enterprise Grouping" (One row per person)
+  const groupedByTenant = filteredItems.reduce((acc, inv) => {
+    const tId = inv.tenant_id;
+    if (!acc[tId]) {
+      const tInfo = inv.tenants || (Array.isArray(inv.tenant) ? inv.tenant[0] : inv.tenant);
+      acc[tId] = {
+        id: `tenant-${tId}`,
+        tenant_id: tId,
+        tenants: tInfo,
+        pgs: inv.pgs, // Direct pgs data from invoice (for deleted properties)
+        invoices: [],
+        total_amount: 0,
+        paid_amount: 0,
+        billing_period_start: inv.billing_period_start,
+        billing_period_end: inv.billing_period_end
+      };
+    }
+    acc[tId].invoices.push(inv);
+    acc[tId].total_amount += Number(inv.total_amount || 0);
+    acc[tId].paid_amount += Number(inv.paid_amount || 0);
+    
+    // Track date range
+    if (new Date(inv.billing_period_start) < new Date(acc[tId].billing_period_start)) {
+        acc[tId].billing_period_start = inv.billing_period_start;
+    }
+    if (new Date(inv.billing_period_end) > new Date(acc[tId].billing_period_end)) {
+        acc[tId].billing_period_end = inv.billing_period_end;
+    }
+    return acc;
   }, {});
 
-  const filteredPayments = Object.values(groupedData).sort((a, b) => {
-      const dateA = new Date(a.payment_date || a.payment_date || a.billing_month || 0);
-      const dateB = new Date(b.payment_date || b.payment_date || b.billing_month || 0);
+  const filteredPayments = Object.values(groupedByTenant).sort((a, b) => {
+      const dateA = new Date(a.billing_period_start || 0);
+      const dateB = new Date(b.billing_period_start || 0);
       return dateB - dateA;
   });
 
@@ -673,159 +834,231 @@ const Payments = () => {
             <table className="w-full text-left text-sm">
                 <thead className={cn("border-b", isDark ? "border-white/5 bg-white/5" : "bg-slate-200/60 border-slate-300")}>
                     <tr className={cn("text-xs font-black uppercase tracking-wider", isDark ? "text-slate-400" : "text-slate-950")}>
-                        <th className="px-6 py-4">Payment For</th>
-                        <th className="px-6 py-4">Joining Date</th>
-                        <th className="px-6 py-4">Details</th>
-                        <th className="px-6 py-4" title="Represents rent billing cycle. Not the payment date.">Billing Period</th>
-                        <th className="px-6 py-4">Amount</th>
-                        <th className="px-6 py-4">Status</th>
+                        <th className="px-6 py-4">Resident Summary</th>
+                        <th className="px-6 py-4">Pending Item(s)</th>
+                        <th className="px-6 py-4">Active Period</th>
+                        <th className="px-6 py-4">Financial Progress</th>
+                        <th className="px-6 py-4">Current Status</th>
                         <th className="px-6 py-4 text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody className={cn("divide-y", isDark ? "divide-white/5" : "divide-slate-100")}>
-                    {filteredPayments.map(group => (
-                        <>
-                        <tr key={group.id} className={cn(
-                            "group transition-colors", 
-                            group.isVirtual ? (isDark ? "bg-amber-500/5" : "bg-amber-50/50") : (isDark ? "hover:bg-white/5" : "hover:bg-slate-50")
-                        )}>
-                            <td className="px-6 py-4 font-bold text-base text-slate-800 dark:text-slate-100">
-                                <div className="flex items-center gap-2">
-                                    {group.isGrouped && (
+                    {filteredPayments.map(group => {
+                        const totalAmount = Number(group.total_amount || 0);
+                        const paidAmount = Number(group.paid_amount || 0);
+                        const remainingAmount = Math.max(0, totalAmount - paidAmount);
+                        const hasCredits = tenantCredits[group.tenant_id] > 0;
+                        const creditBalance = tenantCredits[group.tenant_id] || 0;
+                        
+                        // Summary info for the group
+                        const unpaidInvoices = group.invoices.filter(i => Number(i.paid_amount || 0) < Number(i.total_amount || 0));
+                        const latestOverdue = Math.max(...group.invoices.map(i => getOverdueDays(i)));
+
+                        return (
+                            <React.Fragment key={group.id}>
+                            <tr className={cn(
+                                "group transition-all duration-300", 
+                                isDark ? "hover:bg-blue-500/[0.03]" : "hover:bg-slate-50"
+                            )}>
+                                <td className="px-6 py-5">
+                                    <div className="flex items-center gap-3">
                                         <button 
                                             onClick={() => toggleRow(group.id)}
                                             className={cn(
-                                                "p-1 rounded transition-all duration-200",
-                                                isDark ? "text-slate-200 hover:bg-blue-500/20 hover:text-blue-400" : "text-slate-600 hover:bg-blue-50 hover:text-blue-600"
+                                                "p-1.5 rounded-lg transition-all duration-300",
+                                                expandedRows.has(group.id) ? "bg-blue-500 text-white shadow-lg shadow-blue-500/20" : 
+                                                (isDark ? "bg-white/5 text-slate-400 hover:bg-white/10" : "bg-slate-100 text-slate-600 hover:bg-slate-200")
                                             )}
-                                            style={{ transform: expandedRows.has(group.id) ? 'rotate(90deg)' : 'none' }}
                                         >
-                                            <ChevronRight size={14} strokeWidth={2.5} />
+                                            <ChevronRight size={14} strokeWidth={3} className={cn("transition-transform duration-300", expandedRows.has(group.id) && "rotate-90")} />
                                         </button>
-                                    )}
-                                     <div className={cn("p-1.5 rounded-lg transition-transform hover:scale-110 shadow-sm", group.isVirtual ? "bg-amber-500/20 text-amber-500 border border-amber-500/20" : "bg-blue-500/20 text-blue-500 border border-blue-500/20")}>
-                                        {group.isVirtual ? <Clock size={14} strokeWidth={2.5}/> : <User size={14} strokeWidth={2.5}/>}
-                                    </div>
                                         <div className="flex flex-col">
                                             <div className="flex items-center gap-2">
-                                                <span className="text-sm font-black truncate max-w-[150px]">{(group.tenants || group.tenant)?.full_name || "Resident"}</span>
-                                                {((group.tenants || group.tenant)?.stay_type) && (
-                                                    <span className={cn(
-                                                        "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-tighter border",
-                                                        (group.tenants || group.tenant).stay_type === 'MONTHLY' ? "bg-blue-500/10 text-blue-500 border-blue-500/20" : "bg-purple-500/10 text-purple-500 border-purple-500/20"
-                                                    )}>
-                                                        {(group.tenants || group.tenant).stay_type}
-                                                    </span>
-                                                )}
-                                            </div>
-                                            <span className={cn("text-[9px] font-bold uppercase tracking-tighter", isDark ? "text-slate-400" : "text-slate-500")}>
-                                                {group.isVirtual ? "Outstanding Account" : "Registered Resident"}
-                                            </span>
-                                        </div>
-                                    </div>
-                                </td>
-                                <td className="px-6 py-4">
-                                    <span className={cn("text-xs font-bold font-mono", isDark ? "text-slate-400" : "text-slate-500")}>
-                                        {(group.tenants || group.tenant)?.move_in_date ? 
-                                            (group.tenants || group.tenant).move_in_date : 
-                                            <span className="opacity-50 italic text-[10px]">Not Assigned</span>
-                                        }
-                                    </span>
-                                </td>
-                                <td className="px-6 py-4">
-                                    <div className="flex flex-col">
-                                        <span className={cn("text-sm font-semibold tracking-tight", isDark ? "text-slate-200" : "text-slate-900")}>
-                                            {(group.tenants || group.tenant)?.pgs?.name || group.pgs?.name || "Previous Allocation"}
-                                        </span>
-                                        <div className={cn("text-[10px] font-medium flex items-center gap-1.5 mt-0.5", isDark ? "text-slate-400" : "text-slate-500")}>
-                                            {(group.tenants || group.tenant)?.rooms ? (
-                                                <span>
-                                                    {`Floor ${(group.tenants || group.tenant).rooms.floor || 0} • Room ${(group.tenants || group.tenant).rooms.room_number}`}
-                                                    {((group.tenants || group.tenant).beds?.bed_number) && ` • ${(group.tenants || group.tenant).beds.bed_number}`}
+                                                <h3 className={cn("text-[13px] font-black uppercase tracking-tight", isDark ? "text-white" : "text-slate-900")}>
+                                                    {(group.tenants || group.tenant)?.full_name ?? "Deleted Tenant"}
+                                                </h3>
+                                                <span className={cn(
+                                                    "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                                    (group.tenants || group.tenant)?.stay_type === "DAILY" 
+                                                        ? "bg-amber-500/10 text-amber-500 border-amber-500/20" 
+                                                        : "bg-blue-500/10 text-blue-500 border-blue-500/20"
+                                                )}>
+                                                    {(group.tenants || group.tenant)?.stay_type || "STAY"}
                                                 </span>
-                                            ) : (
-                                                <span className="opacity-50">Room Not Assigned</span>
-                                            )}
+                                            </div>
+                                            <div className="flex items-center gap-2 mt-1">
+                                                <span className="text-[10px] font-bold text-slate-500">
+                                                    {(group.tenants || group.tenant)?.pgs?.name || group.pgs?.name || (group.isVirtual ? "Deleted Property" : "No PG")}
+                                                </span>
+                                            </div>
                                         </div>
                                     </div>
                                 </td>
-                                <td className="px-6 py-4">
-                                    {group.type === 'RENT' && (group.billing_month || group.billingMonth || group.billingmonth) ? (
-                                        <div className="flex flex-col">
-                                            <span className={cn("px-2 py-1 rounded-lg border text-[10px] font-black uppercase tracking-widest w-fit cursor-help", isDark ? "border-blue-500/30 bg-blue-500/10 text-blue-400 shadow-[0_0_15px_rgba(59,130,246,0.1)]" : "border-blue-100 bg-blue-50 text-blue-600 shadow-sm")} title="Represents rent billing cycle. Not the payment date.">
-                                                {group.billing_month || group.billingMonth || group.billingmonth}
+                                <td className="px-6 py-5">
+                                    <div className="flex flex-col gap-1">
+                                        <div className="flex flex-wrap gap-1">
+                                            {group.invoices.slice(0, 2).map((inv, idx) => (
+                                                <span key={idx} className="px-2 py-0.5 rounded bg-slate-100 dark:bg-white/5 text-[9px] font-black uppercase text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-white/5">
+                                                    {inv.type}
+                                                </span>
+                                            ))}
+                                            {group.invoices.length > 2 && <span className="text-[9px] font-bold opacity-40">+{group.invoices.length - 2} more</span>}
+                                        </div>
+                                        {latestOverdue > 0 && (
+                                            <span className="text-[8px] font-black text-rose-500 uppercase flex items-center gap-1">
+                                                <AlertTriangle size={8} /> Needs Attention
                                             </span>
-                                            {!group.isVirtual && <span className={cn("text-[9px] mt-1 font-bold italic", isDark ? "text-slate-400" : "text-slate-500")}>Monthly Rent Cycle</span>}
-                                        </div>
-                                    ) : (
-                                        <div className="flex flex-col">
-                                            <span className="text-[11px] font-black text-slate-600 dark:text-slate-300 tracking-tight">{group.payment_date || group.txnDate || group.txndate || "-"}</span>
-                                            <span className={cn("text-[9px] font-bold uppercase tracking-tighter mt-0.5", isDark ? "text-slate-400" : "text-slate-500")}>{group.type || "OTHER"}</span>
-                                        </div>
-                                    )}
-                                </td>
-                                <td className="px-6 py-4">
-                                    <div className="flex flex-col">
-                                        <span className="text-lg font-black text-emerald-500 tabular-nums">₹{group.totalAmount.toLocaleString()}</span>
-                                        {group.isGrouped && <span className={cn("text-[9px] font-bold uppercase tracking-tighter", isDark ? "text-slate-400" : "text-slate-500")}>Combined ({group.items.length} TXNS)</span>}
+                                        )}
                                     </div>
                                 </td>
-                            <td className="px-6 py-4">
-                                <span className={cn("px-3 py-1.5 rounded-xl text-[9px] font-black uppercase tracking-[0.1em] border shadow-sm transition-all", 
-                                    group.status?.toUpperCase() === 'COMPLETED' || group.status?.toUpperCase() === 'PAID' ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20 shadow-emerald-500/5" : 
-                                    group.status?.toUpperCase() === 'PENDING' || group.status === 'PENDING_DUE' ? "bg-amber-500/10 text-amber-500 border-amber-500/20 animate-pulse-slow shadow-amber-500/5" : "bg-rose-500/10 text-rose-500 border-rose-500/20 shadow-rose-500/5"
-                                )}>
-                                    {group.status === 'PENDING_DUE' ? 'OUTSTANDING' : (['COMPLETED', 'PAID'].includes(group.status?.toUpperCase()) ? 'PAID' : (group.status || '-'))}
-                                </span>
-                            </td>
-                            <td className="px-6 py-4 text-right">
-                                <div className="flex justify-end gap-2">
-                                    {group.isVirtual ? (
-                                        <button 
-                                            onClick={() => navigate(`/payments?tenantId=${group.tenant_id}&amount=${group.amount}`)}
-                                            className="px-3 py-1 bg-blue-600 text-white text-[10px] font-black uppercase rounded-lg hover:bg-blue-700 transition-all"
-                                        >
-                                            Pay Now
-                                        </button>
-                                    ) : (
-                                        <>
-                                            {!group.isGrouped && (
-                                                <>
-                                                    <button onClick={() => handleEdit(group.items[0])} className="p-2 hover:bg-blue-500/10 text-blue-500 rounded"><Pencil size={16}/></button>
-                                                </>
-                                            )}
-                                            {group.isGrouped && (
-                                                <button onClick={() => toggleRow(group.id)} className="text-[10px] font-bold text-blue-500 hover:underline">
-                                                    {expandedRows.has(group.id) ? "Hide Details" : "View Split"}
-                                                </button>
-                                            )}
-                                        </>
-                                    )}
-                                </div>
-                            </td>
-                        </tr>
-                        {group.isGrouped && expandedRows.has(group.id) && group.items.map((item, idx) => (
-                            <tr key={item.id} className={cn("text-[11px]", isDark ? "bg-white/5" : "bg-slate-50")}>
-                                <td colSpan={2} className="px-10 py-2 border-l-2 border-blue-500">Payment #{idx + 1}</td>
-                                <td className="px-6 py-2 opacity-70">{item.payment_method}</td>
-                                <td className="px-6 py-2 opacity-70">
-                                    <span className="font-bold flex items-center gap-1.5">
-                                        <Calendar size={10} /> {item.payment_date}
-                                        <span className="text-[8px] opacity-40 uppercase tracking-tighter">(Payment Date)</span>
-                                    </span>
-                                </td>
-                                <td className="px-6 py-2 font-bold">₹{Number(item.amount).toLocaleString()}</td>
-                                <td className="px-6 py-2">
+                                <td className="px-6 py-5">
                                     <div className="flex items-center gap-2">
-                                        <button onClick={() => handleEdit(item)} className="text-blue-500 hover:text-blue-600">Edit</button>
-                                        <button onClick={() => handleDelete(item.id)} className="text-rose-500 hover:text-rose-600">Delete</button>
+                                        <span className={cn("px-2.5 py-1.5 rounded-xl text-[10px] font-black uppercase tracking-widest border", isDark ? "border-white/5 bg-white/5 text-slate-300" : "border-slate-200 bg-slate-50 text-slate-600 shadow-sm")}>
+                                            {new Date(group.billing_period_start).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} - {new Date(group.billing_period_end).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}
+                                        </span>
                                     </div>
                                 </td>
-                                <td></td>
+                                <td className="px-6 py-5">
+                                    <div className="flex flex-col w-40 gap-1.5">
+                                        <div className="flex justify-between items-end">
+                                            <span className="text-[10px] font-black uppercase text-slate-400">Paid Progress</span>
+                                            <span className="text-xs font-black dark:text-emerald-400 text-emerald-600">₹{paidAmount.toLocaleString()}</span>
+                                        </div>
+                                        <div className="h-1.5 w-full bg-slate-100 dark:bg-white/5 rounded-full overflow-hidden flex">
+                                            <div 
+                                                className={cn("h-full transition-all duration-1000", remainingAmount === 0 ? "bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]" : "bg-blue-500 shadow-[0_0_10px_rgba(59,130,246,0.3)]")}
+                                                style={{ width: `${Math.min(100, (paidAmount / (totalAmount || 1)) * 100)}%` }}
+                                            />
+                                        </div>
+                                        <div className="flex justify-between text-[9px] font-bold tracking-tight">
+                                           <span className="opacity-40 uppercase">Total: ₹{totalAmount.toLocaleString()}</span>
+                                           <span className={cn(remainingAmount > 0 ? "text-rose-500" : "text-emerald-500 opacity-60")}>
+                                               {remainingAmount > 0 ? `Remaining: ₹${remainingAmount.toLocaleString()}` : 'Settled'}
+                                           </span>
+                                        </div>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-5">
+                                    <div className="flex items-center gap-2">
+                                        <span className={cn("px-4 py-1.5 rounded-2xl text-[9px] font-black uppercase tracking-[0.15em] border transition-all duration-500", 
+                                            remainingAmount === 0 ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" : 
+                                            paidAmount > 0 ? "bg-blue-500/10 text-blue-500 border-blue-500/20" : 
+                                            "bg-rose-500/10 text-rose-500 border-rose-500/20"
+                                        )}>
+                                            {remainingAmount === 0 ? 'CLEARED' : (paidAmount > 0 ? 'PARTIAL' : 'OUTSTANDING')}
+                                        </span>
+                                    </div>
+                                </td>
+                                <td className="px-6 py-5 text-right">
+                                    <div className="flex justify-end">
+                                        {remainingAmount > 0 ? (
+                                            <button 
+                                                onClick={() => navigate(`/payments?tenantId=${group.tenant_id}&amount=${remainingAmount}`)}
+                                                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg shadow-blue-500/30 active:scale-95 flex items-center gap-2"
+                                            >
+                                                <IndianRupee size={12} strokeWidth={3} /> Collect 
+                                            </button>
+                                        ) : (
+                                            <div className="flex items-center gap-2 text-emerald-500 bg-emerald-500/10 px-4 py-2 rounded-xl border border-emerald-500/10">
+                                                <CheckCircle2 size={14} />
+                                                <span className="text-[9px] font-black uppercase tracking-widest">Accounts Clear</span>
+                                            </div>
+                                        )}
+                                    </div>
+                                </td>
                             </tr>
-                        ))}
-                        </>
-                    ))}
+                            {expandedRows.has(group.id) && (
+                                <tr className={isDark ? "bg-white/[0.02]" : "bg-slate-50/50"}>
+                                    <td colSpan={6} className="px-8 py-0">
+                                        <div className="py-6 space-y-4">
+                                            <div className="flex items-center justify-between border-b dark:border-white/5 pb-2">
+                                                <h4 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Breakdown of Dues</h4>
+                                                <span className="text-[9px] font-bold opacity-40 uppercase">UID: {group.tenant_id.slice(0, 10)}</span>
+                                            </div>
+                                            
+                                            <div className="space-y-2">
+                                                {group.invoices.map((inv) => {
+                                                    const invRemaining = Number(inv.total_amount) - Number(inv.paid_amount);
+                                                    const invOverdue = getOverdueDays(inv);
+                                                    
+                                                    return (
+                                                        <div key={inv.id} className={cn("p-4 rounded-2xl flex items-center justify-between transition-all border", isDark ? "bg-black/20 border-white/5 hover:border-blue-500/30" : "bg-white border-slate-200 hover:border-blue-500/30 shadow-sm")}>
+                                                            <div className="flex items-center gap-4">
+                                                                <div className={cn("p-3 rounded-xl", invRemaining > 0 ? "bg-rose-500/10 text-rose-500" : "bg-emerald-500/10 text-emerald-500")}>
+                                                                    {invRemaining > 0 ? <Clock size={16} /> : <CheckCircle2 size={16} />}
+                                                                </div>
+                                                                <div>
+                                                                    <div className="flex items-center gap-2 flex-wrap">
+                                                                        <span className={cn(
+                                                                            "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                                                            inv.type === 'DEPOSIT' ? "bg-emerald-500/10 text-emerald-500 border-emerald-500/20" :
+                                                                            inv.type === 'MAINTENANCE' ? "bg-blue-500/10 text-blue-500 border-blue-500/20" :
+                                                                            "bg-slate-500/10 text-slate-500 border-slate-500/10"
+                                                                        )}>
+                                                                            {formatInvoiceType(inv)}
+                                                                        </span>
+                                                                        {invOverdue > 0 && <span className="bg-rose-500 text-white text-[7px] font-black px-1.5 py-0.5 rounded uppercase">Overdue {invOverdue}d</span>}
+                                                                    </div>
+                                                                    <div className="text-[10px] font-bold opacity-40 mt-0.5">Period: {new Date(inv.billing_period_start).toDateString()} - {new Date(inv.billing_period_end).toDateString()}</div>
+                                                                </div>
+                                                            </div>
+                                                            
+                                                            <div className="flex items-center gap-12 text-right">
+                                                                <div>
+                                                                    <p className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">Amount Summary</p>
+                                                                    <p className="text-xs font-black text-slate-800 dark:text-white">₹{Number(inv.paid_amount).toLocaleString()} <span className="opacity-30">/ ₹{Number(inv.total_amount).toLocaleString()}</span></p>
+                                                                </div>
+                                                                <div className="w-24">
+                                                                   <p className="text-[8px] font-black text-slate-500 uppercase tracking-tighter">Status</p>
+                                                                   <span className={cn("text-[9px] font-black uppercase", invRemaining === 0 ? "text-emerald-500" : "text-rose-500")}>
+                                                                       {invRemaining === 0 ? "Settle Full" : `₹${invRemaining.toLocaleString()} Due`}
+                                                                   </span>
+                                                                </div>
+                                                                {invRemaining > 0 && (
+                                                                    <button 
+                                                                        onClick={() => navigate(`/payments?tenantId=${group.tenant_id}&amount=${invRemaining}`)}
+                                                                        className="p-2.5 rounded-xl bg-blue-500/10 text-blue-500 hover:bg-blue-500 hover:text-white transition-all shadow-sm"
+                                                                        title="Pay specifically for this item"
+                                                                    >
+                                                                        <Plus size={16} strokeWidth={3} />
+                                                                    </button>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                            
+                                            <div className="flex justify-between items-center bg-blue-500/[0.03] p-4 rounded-2xl border border-blue-500/10 border-dashed">
+                                                <div className="flex items-center gap-3">
+                                                    <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center text-blue-500 font-black text-xs">SUM</div>
+                                                    <div>
+                                                        <p className="text-[10px] font-black uppercase text-blue-500">Current Balance Settlement</p>
+                                                        <p className="text-[9px] font-bold opacity-50">Combined dues for all pending items above.</p>
+                                                    </div>
+                                                </div>
+                                                <div className="flex items-center gap-6">
+                                                    <div className="text-right">
+                                                        <p className="text-[14px] font-black text-slate-800 dark:text-white">₹{remainingAmount.toLocaleString()}</p>
+                                                        <p className="text-[8px] font-black text-slate-500 uppercase">Total Payable</p>
+                                                    </div>
+                                                    {remainingAmount > 0 && (
+                                                        <button 
+                                                            onClick={() => navigate(`/payments?tenantId=${group.tenant_id}&amount=${remainingAmount}`)}
+                                                            className="px-6 py-3 bg-blue-600 text-white text-[10px] font-black uppercase tracking-widest rounded-2xl hover:bg-blue-700 shadow-xl shadow-blue-500/20 active:scale-95"
+                                                        >
+                                                            Settle Full Balance
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            )}
+                            </React.Fragment>
+                        );
+                    })}
                     {filteredPayments.length === 0 && (
                         <tr>
                             <td colSpan={6} className="px-6 py-12 text-center text-slate-500 italic">
@@ -838,57 +1071,75 @@ const Payments = () => {
           </div>
 
           {/* Mobile View */}
-          <div className={cn("md:hidden divide-y", isDark ? "divide-white/5" : "divide-slate-100")}>
-                {filteredPayments.map(group => (
+           <div className={cn("md:hidden divide-y", isDark ? "divide-white/5" : "divide-slate-100")}>
+                {filteredPayments.map(group => {
+                    const totalAmount = Number(group.total_amount || 0);
+                    const paidAmount = Number(group.paid_amount || 0);
+                    const remainingAmount = Math.max(0, totalAmount - paidAmount);
+                    const overdueDays = getOverdueDays(group);
+                    const hasCredits = tenantCredits[group.tenant_id] > 0;
+                    const creditBalance = tenantCredits[group.tenant_id] || 0;
+
+                    return (
                     <div key={group.id} className={cn("p-4 space-y-4", group.isVirtual && (isDark ? "bg-amber-500/5" : "bg-amber-50/50"))}>
                         <div className="flex justify-between items-start">
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-3 text-left">
                                 <div className={cn("p-2 rounded-xl", group.isVirtual ? "bg-amber-500/10 text-amber-500" : "bg-blue-500/10 text-blue-500")}>
-                                    {group.isVirtual ? <Clock size={16}/> : <User size={16}/>}
+                                    <User size={16}/>
                                 </div>
                                 <div>
-                                    <div className="flex items-center gap-2">
-                                        <h3 className={cn("font-bold text-sm", isDark ? "text-white" : "text-slate-900")}>
-                                            {(group.tenants || group.tenant)?.full_name || "Resident"}
-                                        </h3>
-                                        {((group.tenants || group.tenant)?.stay_type) && (
+                                    <div className="flex flex-col">
+                                        <div className="flex items-center gap-2">
+                                            <h3 className={cn("text-[13px] font-black uppercase tracking-tight", isDark ? "text-white" : "text-slate-900")}>
+                                                {(group.tenants || group.tenant)?.full_name || "Resident"}
+                                            </h3>
                                             <span className={cn(
-                                                "px-1 py-0.5 rounded text-[7px] font-black uppercase tracking-tighter border",
-                                                (group.tenants || group.tenant).stay_type === 'MONTHLY' ? "bg-blue-500/10 text-blue-500 border-blue-500/20" : "bg-purple-500/10 text-purple-500 border-purple-500/20"
+                                                "px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border",
+                                                (group.tenants || group.tenant)?.stay_type === "DAILY" 
+                                                    ? "bg-amber-500/10 text-amber-500 border-amber-500/20" 
+                                                    : "bg-blue-500/10 text-blue-500 border-blue-500/20"
                                             )}>
-                                                {(group.tenants || group.tenant).stay_type}
+                                                {(group.tenants || group.tenant)?.stay_type || "STAY"}
                                             </span>
-                                        )}
+                                        </div>
+
                                     </div>
                                     <p className="text-[10px] text-slate-500 uppercase font-black tracking-widest mt-0.5">
-                                        {group.isVirtual ? "Outstanding Due" : `${group.items.length > 1 ? group.items.length + " Payments" : (group.payment_method || "CASH") + " • " + group.type}`}
+                                        {formatInvoiceType(group)}
                                     </p>
                                 </div>
                             </div>
                             <div className={cn(
                                 "px-2 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider",
-                                group.status?.toUpperCase() === 'COMPLETED' || group.status?.toUpperCase() === 'PAID' ? "bg-emerald-500/10 text-emerald-500" :
-                                group.status?.toUpperCase() === 'PENDING' || group.status === 'PENDING_DUE' ? "bg-amber-500/10 text-amber-500" : "bg-rose-500/10 text-rose-500"
+                                paidAmount >= totalAmount ? "bg-emerald-500/10 text-emerald-500" :
+                                paidAmount > 0 ? "bg-amber-500/10 text-amber-500" : "bg-rose-500/10 text-rose-500"
                             )}>
-                                {group.status === 'PENDING_DUE' ? 'OUTSTANDING' : (['COMPLETED', 'PAID'].includes(group.status?.toUpperCase()) ? 'PAID' : (group.status || '-'))}
+                                {paidAmount >= totalAmount ? 'PAID' : (paidAmount > 0 ? 'PARTIAL' : 'UNPAID')}
                             </div>
                         </div>
 
+                        {overdueDays > 0 && (
+                            <div className="bg-rose-500/10 border border-rose-500/20 p-2 rounded-xl flex items-center gap-3">
+                                <AlertTriangle size={14} className="text-rose-500" />
+                                <span className="text-[10px] font-black uppercase text-rose-500">Overdue by {overdueDays} days</span>
+                            </div>
+                        )}
+
                         <div className="grid grid-cols-2 gap-2">
                              <div className="bg-slate-100/50 dark:bg-white/5 p-2 rounded-xl border border-slate-200/50 dark:border-white/5">
-                                <p className="text-[8px] uppercase font-bold text-slate-500 tracking-tighter">Joining Date</p>
-                                <p className="text-[11px] font-bold text-slate-600 dark:text-slate-300">
-                                    {(group.tenants || group.tenant)?.move_in_date || "Not Assigned"}
+                                <p className="text-[8px] uppercase font-bold text-slate-500 tracking-tighter">Billing Period</p>
+                                <p className="text-[10px] font-bold text-slate-600 dark:text-slate-300">
+                                    {new Date(group.billing_period_start).toLocaleDateString([], { month: 'short', day: 'numeric' })} - {new Date(group.billing_period_end).toLocaleDateString([], { month: 'short', day: 'numeric' })}
                                 </p>
                              </div>
                              <div className="bg-slate-100/50 dark:bg-white/5 p-2 rounded-xl border border-slate-200/50 dark:border-white/5">
-                                <p className="text-[8px] uppercase font-bold text-slate-500 tracking-tighter">Location Context</p>
+                                <p className="text-[8px] uppercase font-bold text-slate-500 tracking-tighter">Property Context</p>
                                 <div className="text-[10px] font-bold text-slate-600 dark:text-slate-300 leading-tight">
-                                    <div className="truncate">{(group.tenants || group.tenant)?.pgs?.name || group.pgs?.name || "Previous Allocation"}</div>
+                                    <div className="truncate">{(group.tenants || group.tenant)?.pgs?.name || group.pgs?.name || "Deleted Property"}</div>
                                     <div className="text-[9px] opacity-70">
                                         {(group.tenants || group.tenant)?.rooms ? 
-                                            `F${(group.tenants || group.tenant).rooms.floor} • R${(group.tenants || group.tenant).rooms.room_number}` : 
-                                            "Room Not Assigned"
+                                            `F${(group.tenants || group.tenant).rooms.floor} R${(group.tenants || group.tenant).rooms.room_number}` : 
+                                            "Room N/A"
                                         }
                                     </div>
                                 </div>
@@ -897,76 +1148,65 @@ const Payments = () => {
 
                         <div className="flex items-center justify-between bg-slate-100/50 dark:bg-white/5 p-3 rounded-xl border border-slate-200/50 dark:border-white/5">
                             <div>
-                                <p className="text-[9px] uppercase font-bold text-slate-500 tracking-tighter">Amount Paid</p>
-                                <p className="text-lg font-black text-emerald-600">₹{group.totalAmount.toLocaleString()}</p>
+                                <p className="text-[9px] uppercase font-bold text-slate-500 tracking-tighter">Amount Summary</p>
+                                <div className="flex flex-col">
+                                    <span className="text-lg font-black text-emerald-600">₹{paidAmount.toLocaleString()} <span className="text-[10px] text-slate-500 opacity-50 font-medium">/ ₹{totalAmount.toLocaleString()}</span></span>
+                                    {remainingAmount > 0 && <span className="text-[10px] font-bold text-rose-500">Due: ₹{remainingAmount.toLocaleString()}</span>}
+                                </div>
                             </div>
-                            <div className="text-right">
-                                <p className="text-[9px] uppercase font-bold text-slate-500 tracking-tighter">Billing Period</p>
-                                <p className={cn("text-[11px] font-bold", isDark ? "text-white" : "text-slate-900")}>
-                                    {group.type === 'RENT' ? (group.billing_month || group.billingMonth || group.billingmonth || "-") : (group.payment_date || group.txnDate || "-")}
+                            <div className="text-right flex flex-col items-end">
+                                <p className="text-[9px] uppercase font-bold text-slate-500 tracking-tighter">Invoice ID</p>
+                                <p className={cn("text-[11px] font-mono", isDark ? "text-slate-400" : "text-slate-500")}>
+                                    {group.id.slice(0, 8)}
                                 </p>
                             </div>
                         </div>
 
-                        {group.isGrouped && (
-                            <div className="space-y-2">
-                                <button 
-                                    onClick={() => toggleRow(group.id)}
-                                    className="w-full flex items-center justify-between px-3 py-2 bg-blue-500/5 text-blue-500 rounded-lg text-[10px] font-black uppercase tracking-widest border border-blue-500/10"
-                                >
-                                    <span>{expandedRows.has(group.id) ? "Hide Details" : `Show ${group.items.length} Split Payments`}</span>
-                                    <ChevronRight size={14} className={cn("transition-transform", expandedRows.has(group.id) && "rotate-90")} />
-                                </button>
-                                
-                                {expandedRows.has(group.id) && (
-                                    <div className="space-y-2 pl-2 border-l-2 border-blue-500/30">
-                                        {group.items.map((item, idx) => (
-                                            <div key={item.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-white/5">
-                                                <div className="text-[10px] font-bold">
-                                                    <span className="opacity-50 mr-2">#{idx+1}</span>
-                                                    {item.payment_date}
-                                                </div>
-                                                <div className="flex items-center gap-3">
-                                                    <span className="text-[10px] font-black">₹{Number(item.amount).toLocaleString()}</span>
-                                                    <div className="flex gap-2">
-                                                        <button onClick={() => handleEdit(item)} className="p-1 text-blue-500"><Pencil size={14}/></button>
-                                                        <button onClick={() => handleDelete(item.id)} className="p-1 text-rose-500"><Trash2 size={14}/></button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                        )}
-
                         <div className="flex gap-2">
-                            {group.isVirtual ? (
+                            {remainingAmount > 0 ? (
                                 <button 
-                                    onClick={() => navigate(`/payments?tenantId=${group.tenant_id}&amount=${group.amount}`)}
+                                    onClick={() => navigate(`/payments?tenantId=${group.tenant_id}&amount=${remainingAmount}`)}
                                     className="flex-1 py-3 bg-blue-600 text-white rounded-xl text-xs font-black uppercase tracking-[0.2em] shadow-lg shadow-blue-500/30"
                                 >
                                     Pay Now
                                 </button>
-                            ) : !group.isGrouped && (
-                                <>
-                                    <button onClick={() => handleEdit(group.items[0])} className="flex-1 flex items-center justify-center gap-2 py-3 bg-blue-500/10 text-blue-400 rounded-xl text-[10px] font-black uppercase tracking-widest border border-blue-500/20">
-                                        <Pencil size={14} /> Edit
-                                    </button>
-                                    <button onClick={() => handleDelete(group.items[0].id)} className="flex-1 flex items-center justify-center gap-2 py-3 bg-rose-500/10 text-rose-400 rounded-xl text-[10px] font-black uppercase tracking-widest border border-rose-500/20">
-                                        <Trash2 size={14} /> Delete
-                                    </button>
-                                </>
+                            ) : (
+                                <div className="flex-1 py-3 bg-emerald-500/10 text-emerald-500 rounded-xl text-xs font-black uppercase text-center border border-emerald-500/20">
+                                    Invoice Settled
+                                </div>
                             )}
+                            <button 
+                                onClick={() => toggleRow(group.id)}
+                                className="px-4 py-3 bg-[var(--bg-subtle)] text-[var(--text-secondary)] rounded-xl border border-[var(--border-soft)]"
+                            >
+                                <ChevronRight size={18} className={cn("transition-transform", expandedRows.has(group.id) && "rotate-90")} />
+                            </button>
                         </div>
+                        
+                        {expandedRows.has(group.id) && (
+                            <div className="p-4 rounded-xl bg-slate-100/30 dark:bg-white/5 space-y-2 animate-in slide-in-from-top-2">
+                                <p className="text-[10px] font-black uppercase text-slate-500 border-b border-slate-200 dark:border-white/10 pb-1">Full Breakdown</p>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                    <span className="text-[10px] text-slate-500">Total Amount:</span>
+                                    <span className="text-[10px] font-bold text-right">₹{totalAmount.toLocaleString()}</span>
+                                    <span className="text-[10px] text-slate-500">Paid Amount:</span>
+                                    <span className="text-[10px] font-bold text-right text-emerald-500">₹{paidAmount.toLocaleString()}</span>
+                                    <span className="text-[10px] text-slate-500">Remaining:</span>
+                                    <span className="text-[10px] font-bold text-right text-rose-500">₹{remainingAmount.toLocaleString()}</span>
+                                    <span className="text-[10px] text-slate-500">Invoice ID:</span>
+                                    <span className="text-[10px] font-mono text-right truncate">{group.id}</span>
+                                </div>
+                            </div>
+                        )}
                     </div>
-                ))}
+                    );
+                })}
            </div>
        </div>
        {/* Modal */}
        {showModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
-          <div className={cn("fixed inset-0 transition-opacity", isDark ? "bg-slate-950/80" : "bg-black/40")} />
+          <div className="fixed inset-0 transition-opacity" />
           <div className={cn(
             "relative w-full max-w-2xl border-2 rounded-3xl shadow-[0_0_50px_rgba(0,0,0,0.3)] animate-in fade-in zoom-in duration-200 flex flex-col max-h-[95vh] md:max-h-[90vh] overflow-hidden",
             isDark ? "bg-[#0f172a] border-white/10" : "bg-white border-slate-200"
@@ -1041,9 +1281,11 @@ const Payments = () => {
                                 <option value="">{formData.pgId ? "-- Choose Resident --" : "Select PG first"}</option>
                                 {tenants
                                     .filter(t => (t.pg_id || t.pgId) === formData.pgId)
+                                    .sort((a,b) => (a.status === 'ACTIVE' ? -1 : 1)) // Active residents at the top
+                                    .filter((v, i, a) => a.findIndex(t => t.id === v.id) === i) // Unique IDs to avoid duplicates
                                     .map(t => (
                                         <option key={t.id} value={t.id}>
-                                            {t.full_name} — {t.rooms?.room_number ? `Room ${t.rooms.room_number}` : "N/A"} {t.rooms?.floor ? `(Floor ${t.rooms.floor})` : ""}
+                                            {t.full_name} — {t.rooms?.room_number ? `Room ${t.rooms.room_number}` : "N/A"} {t.status !== 'ACTIVE' ? `(${t.status})` : ""}
                                         </option>
                                     ))
                                 }
@@ -1120,13 +1362,34 @@ const Payments = () => {
                 {/* Amount & Date/Month */}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                      <AmountInput 
-                        label={<>Amount (₹) <span className="text-rose-500">*</span></>}
+                        label={
+                            <div className="flex items-center justify-between w-full pr-1">
+                                <span>Amount (₹) <span className="text-rose-500">*</span></span>
+                                {formData.tenant_id && (
+                                    <span className={cn(
+                                        "text-[9px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md",
+                                        getTenantBalance(formData.tenant_id) > 0 ? "bg-rose-500/10 text-rose-500" : "bg-emerald-500/10 text-emerald-500"
+                                    )}>
+                                        Balance Due: ₹{getTenantBalance(formData.tenant_id).toLocaleString()}
+                                    </span>
+                                )}
+                            </div>
+                        }
                         name="amount"
                         value={formData.amount}
                         isDark={isDark}
                         onChange={handleInputChange}
                         error={formErrors.amount}
                      />
+                     {formData.tenant_id && Number(formData.amount) > getTenantBalance(formData.tenant_id) && (
+                         <motion.p 
+                            initial={{ opacity: 0, y: -5 }} 
+                            animate={{ opacity: 1, y: 0 }}
+                            className="text-[9px] text-amber-500 font-bold uppercase tracking-widest mt-1 ml-1 flex items-center gap-1"
+                         >
+                            <AlertTriangle size={10} /> Overpayment Alert: Exceeds Current Balance
+                         </motion.p>
+                     )}
                      
                      {formData.type === "RENT" ? (
                          <div className="space-y-2 flex-1">

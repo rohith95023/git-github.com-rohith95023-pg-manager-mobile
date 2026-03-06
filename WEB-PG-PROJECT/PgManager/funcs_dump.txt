@@ -1,0 +1,62 @@
+--- FUNCTION: archive_pg_cascade ---
+
+BEGIN
+    -- Update PG status
+    UPDATE public.pgs SET 
+        status = 'INACTIVE',
+        name = p_archived_name
+    WHERE id = p_pg_id;
+
+    -- Update rooms and beds to MAINTENANCE
+    UPDATE public.rooms SET status = 'MAINTENANCE' WHERE pg_id = p_pg_id;
+    UPDATE public.beds SET status = 'MAINTENANCE' WHERE room_id IN (SELECT id FROM public.rooms WHERE pg_id = p_pg_id);
+END;
+
+------------------------------
+--- FUNCTION: hard_delete_pg_cascade ---
+--- FIXED: Payments and expenses are now PRESERVED (pg_id nullified), not deleted ---
+
+BEGIN
+    -- 1. Unassign all residents from rooms and beds in this PG
+    --    Mark them DELETED but preserve their financial records (payments, invoices)
+    UPDATE public.tenants 
+    SET 
+        room_id = NULL, 
+        bed_id = NULL,
+        status = 'DELETED'
+    WHERE pg_id = p_pg_id AND status != 'DELETED';
+
+    -- 2. PRESERVE financial history: nullify pg_id on payments (NOT deleted)
+    --    This prevents all financial totals from going to zero after property deletion
+    UPDATE public.payments SET pg_id = NULL WHERE pg_id = p_pg_id;
+
+    -- 3. PRESERVE financial history: nullify pg_id on expenses (NOT deleted)
+    UPDATE public.expenses SET pg_id = NULL WHERE pg_id = p_pg_id;
+
+    -- 4. Delete bookings (operational records, safe to remove)
+    DELETE FROM public.bookings WHERE pg_id = p_pg_id;
+    
+    -- 5. Delete inventory (beds, then rooms)
+    DELETE FROM public.beds WHERE room_id IN (SELECT id FROM public.rooms WHERE pg_id = p_pg_id);
+    DELETE FROM public.rooms WHERE pg_id = p_pg_id;
+
+    -- 6. Finally delete the Property record itself
+    DELETE FROM public.pgs WHERE id = p_pg_id;
+END;
+
+------------------------------
+--- FUNCTION: restore_pg_cascade ---
+
+BEGIN
+    -- Update PG status
+    UPDATE public.pgs SET 
+        status = 'ACTIVE',
+        name = p_restored_name
+    WHERE id = p_pg_id;
+
+    -- Update rooms and beds to AVAILABLE
+    UPDATE public.rooms SET status = 'AVAILABLE' WHERE pg_id = p_pg_id;
+    UPDATE public.beds SET status = 'AVAILABLE' WHERE room_id IN (SELECT id FROM public.rooms WHERE pg_id = p_pg_id);
+END;
+
+------------------------------

@@ -5,6 +5,7 @@ import {
     CheckCircle2, IndianRupee, ArrowUpRight, User, MoreVertical 
 } from 'lucide-react';
 import { tenantAPI } from '../../../services/api';
+import { supabase } from '../../../lib/supabaseClient';
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
 
@@ -38,16 +39,47 @@ const DailyStayModal = ({ isOpen, onClose, isDark }) => {
             // Handle both { data, count } and raw data array
             const data = result?.data || (Array.isArray(result) ? result : []);
             
+            // Fetch real-time payments for these tenants to avoid trigger lag
+            const tenantIds = (data || []).map(t => t.id);
+            const { data: allPayments } = await supabase.from('payments')
+                .select('tenant_id, amount, status')
+                .in('tenant_id', tenantIds);
+            
+            const paidMap = {};
+            (allPayments || []).forEach(p => {
+                const s = (p.status || "").toUpperCase();
+                if (s === 'PAID' || s === 'COMPLETED' || s === 'PAID_SUCCESS') {
+                    paidMap[p.tenant_id] = (paidMap[p.tenant_id] || 0) + Number(p.amount || 0);
+                }
+            });
+
             // Map nested daily_stay_details to flat structure for UI compatibility
             const processed = (data || []).map(t => {
                 const details = Array.isArray(t.daily_stay_details) ? t.daily_stay_details[0] : t.daily_stay_details;
+                
+                // Recalculate for UI consistency
+                const start = new Date(details?.move_in_date || t.move_in_date || t.check_in_date || t.created_at);
+                const end = new Date(details?.vacate_date || t.vacate_date);
+                let days = 1;
+                if (end > start) {
+                    days = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                }
+                
+                const rentPerDay = Number(details?.rent_per_day || t.rent_per_day || 0);
+                const maintAmt = Number(details?.maintenance_amount || t.maintenance_amount || 0);
+                const calcTotalRent = (days * rentPerDay) + maintAmt;
+                
+                // Use local real-time calculated sum
+                const actualPaid = paidMap[t.id] || 0;
+                const calcBalance = Math.max(0, calcTotalRent - actualPaid);
+
                 return {
                     ...t,
-                    // Priority extraction from details, fallback to tenant fields
                     move_in_date: details?.move_in_date || t.move_in_date || t.check_in_date || t.created_at,
                     vacate_date: details?.vacate_date || t.vacate_date,
-                    total_rent: details?.total_rent || t.total_rent || 0,
-                    balance_amount: details?.balance_amount ?? t.balance_amount ?? 0,
+                    total_rent: calcTotalRent,
+                    balance_amount: calcBalance,
+                    paid_amount: actualPaid, // Inject this for row rendering as well
                     daily_stay_details: details
                 };
             });
@@ -187,9 +219,20 @@ const DailyStayModal = ({ isOpen, onClose, isDark }) => {
                                 ) : tenants.length === 0 ? (
                                     <tr><td colSpan={6} className="p-12 text-center text-slate-500 italic">No daily stay tenants found matching your filters.</td></tr>
                                 ) : tenants.map((tenant) => {
-                                    const days = Math.ceil((new Date(tenant.vacate_date) - new Date(tenant.move_in_date)) / (1000 * 60 * 60 * 24));
-                                    const progress = Math.min(100, Math.max(0, ((new Date() - new Date(tenant.move_in_date)) / (new Date(tenant.vacate_date) - new Date(tenant.move_in_date))) * 100));
+                                    const start = new Date(tenant.move_in_date);
+                                    const end = new Date(tenant.vacate_date);
+                                    let days = 1;
+                                    if (end > start) {
+                                        days = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                    }
+                                    const progress = Math.min(100, Math.max(0, ((new Date().getTime() - start.getTime()) / (end.getTime() - start.getTime() || 1)) * 100));
                                     
+                                    // Use calculated total rent for UI consistency if DB value seems dated
+                                    const calcTotalRent = (days * Number(tenant.daily_stay_details?.rent_per_day || tenant.rent_per_day || 0)) + Number(tenant.daily_stay_details?.maintenance_amount || tenant.maintenance_amount || 0);
+                                    const displayTotalRent = Math.max(Number(tenant.total_rent || 0), calcTotalRent);
+                                    // Use the flat paid_amount (which we injected as the real-time sum)
+                                    const displayBalance = Math.max(0, displayTotalRent - Number(tenant.paid_amount || 0));
+
                                     return (
                                         <tr key={tenant.id} className={cn("transition-colors group", isDark ? "hover:bg-white/5" : "hover:bg-slate-50")}>
                                             <td className="px-6 py-4">
@@ -233,10 +276,10 @@ const DailyStayModal = ({ isOpen, onClose, isDark }) => {
                                                 </div>
                                             </td>
                                             <td className="px-6 py-4 text-right">
-                                                <div className="font-bold text-emerald-500">₹{tenant.total_rent}</div>
-                                                {Number(tenant.balance_amount) > 0 ? (
+                                                <div className="font-bold text-emerald-500">₹{displayTotalRent.toLocaleString()}</div>
+                                                {displayBalance > 0 ? (
                                                     <div className="text-[10px] font-bold text-rose-500 bg-rose-500/10 px-1.5 py-0.5 rounded inline-block mt-1">
-                                                        Due: ₹{tenant.balance_amount}
+                                                        Due: ₹{displayBalance.toLocaleString()}
                                                     </div>
                                                 ) : (
                                                     <div className="text-[10px] text-emerald-600 flex items-center justify-end gap-1 mt-1">

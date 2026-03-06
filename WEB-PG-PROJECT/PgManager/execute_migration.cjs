@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const pool = new Pool({
-  connectionString: `postgresql://postgres:${encodeURIComponent('Rk@95023&95023.')}@xdzshjbepsntlavtcmpp.supabase.co:5432/postgres`,
+  connectionString: `postgresql://postgres:${encodeURIComponent('Rk@95023&95023.')}@db.xdzshjbepsntlavtcmpp.supabase.co:5432/postgres`,
   ssl: { rejectUnauthorized: false }
 });
 

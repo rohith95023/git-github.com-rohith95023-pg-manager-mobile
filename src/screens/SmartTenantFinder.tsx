@@ -13,6 +13,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { tenantAPI, pgAPI } from "../services/api";
+import { billingService } from "../services/billing.service";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
@@ -99,6 +100,14 @@ const SmartTenantFinder = ({ navigation }: any) => {
             const tenantList = tenantsRes.data || [];
             const count = tenantsRes.count || 0;
 
+            // V2 Balance Fetching
+            const balances = await Promise.all(
+                tenantList.map((t: any) => billingService.getOutstandingBalance(t.id).catch(() => 0))
+            );
+            tenantList.forEach((t: any, i: number) => {
+                t.outstanding_balance = balances[i] || 0;
+            });
+
             if (shouldAppend) {
                 setTenants(prev => [...prev, ...tenantList]);
             } else {
@@ -156,7 +165,7 @@ const SmartTenantFinder = ({ navigation }: any) => {
         const initials = (item.full_name || "U").split(" ").map((n: string) => n[0]).join("").toUpperCase().slice(0, 2);
         const rent = item.rent_per_month || item.rent || item.rooms?.rent || 0;
         const deposit = item.security_deposit || item.rooms?.deposit || 0;
-        const balance = Number(item.balance || 0);
+        const balance = Number(item.outstanding_balance || 0);
 
         return (
             <TouchableOpacity

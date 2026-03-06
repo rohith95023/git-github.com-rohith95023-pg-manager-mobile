@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { pgAPI, roomAPI, bedAPI, floorAPI } from '../services/api';
+import { pgAPI, roomAPI, bedAPI } from '../services/api';
 import { supabase } from '../lib/supabaseClient';
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -66,40 +66,16 @@ const HierarchySelector = ({
     }
 
     const loadFloors = async () => {
-        setLoadingStates(prev => ({ ...prev, floors: true }));
-        try {
-            // Fetch floors from DB to support dynamic additions
-            const floorsData = await floorAPI.getByPgId(selection.pgId);
-            
-            // Fallback for legacy data if no floors exist but totalFloors is set (optional, but good for safety)
-            // But primarily we want real DB floors.
-            if (floorsData && floorsData.length > 0) {
-                 setFloors(floorsData.map(f => ({
-                     ...f,
-                     name: (f.floor_number || f.floorNumber || 0) === 0 ? "Ground Floor" : `Floor ${f.floor_number || f.floorNumber || 0}`, // Standardize name if missing
-                     floor_number: f.floor_number || f.floorNumber // Ensure consistency
-                 })));
-            } else {
-                 // FALLBACK: Generate from totalFloors for legacy/migrated PGs
-                 const selectedPg = pgs.find(p => p.id === selection.pgId);
-                 if (selectedPg && selectedPg.totalFloors !== undefined) {
-                     console.log("[Hierarchy] Using fallback floor generation for PG:", selectedPg.name);
-                     const generatedFloors = Array.from({ length: selectedPg.totalFloors + 1 }, (_, i) => ({
-                        id: i, // Use index as ID for generated floors (legacy behavior)
-                        name: i === 0 ? "Ground Floor" : `Floor ${i}`,
-                        floorNumber: i,
-                        floor_number: i
-                     }));
-                     setFloors(generatedFloors);
-                 } else {
-                     setFloors([]);
-                 }
-            }
-        } catch (err) {
-            console.error("Failed to load floors:", err);
-            setError('Failed to load floors');
-        } finally {
-            setLoadingStates(prev => ({ ...prev, floors: false }));
+        const selectedPg = pgs.find(p => p.id === selection.pgId);
+        if (selectedPg && selectedPg.total_floors !== undefined) {
+             const generatedFloors = Array.from({ length: selectedPg.total_floors + 1 }, (_, i) => ({
+                id: i,
+                name: i === 0 ? "Ground Floor" : `Floor ${i}`,
+                floor_number: i
+             }));
+             setFloors(generatedFloors);
+        } else {
+             setFloors([]);
         }
     };
     

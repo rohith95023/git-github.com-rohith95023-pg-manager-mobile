@@ -11,7 +11,9 @@ import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
 import { pgAPI, roomAPI, bedAPI, tenantAPI, paymentAPI } from "../../services/api";
+import { billingService } from "../../services/billing.service";
 import { supabase } from "../../lib/supabaseClient";
+import NotificationService from "../../services/NotificationService";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 
 const PROFESSION_OPTIONS = [
@@ -388,23 +390,9 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             setLoading(true);
             const { data: { user } } = await supabase.auth.getUser();
 
-            // Calculate Initial Dues and Balance
-            let initialDue = 0;
-            let totalDailyRent = 0;
-
-            if (data.stayType === "DAILY" && data.vacateDate) {
-                const start = new Date(data.joinedDate);
-                const end = new Date(data.vacateDate);
-                const diffTime = Math.abs(end.getTime() - start.getTime());
-                const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
-                totalDailyRent = (Number(data.rentAmount) || 0) * diffDays;
-                initialDue = totalDailyRent + (Number(data.maintenanceAmount) || 0);
-            } else {
-                // Monthly: Initial Due = Rent + Maintenance (if any)
-                initialDue = (Number(data.rentAmount) || 0) + (Number(data.maintenanceAmount) || 0);
-            }
-
-            const initialBalance = Math.max(0, initialDue - (Number(data.paidAmount) || 0));
+            // V2: Balances are handled by invoices. Local calculation removed to prevent drift.
+            const initialBalance = 0;
+            const totalDailyRent = 0; // Legacy placeholder
 
             const payload: any = {
                 full_name: data.fullName,
@@ -428,7 +416,8 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 rent_per_day: data.stayType === "DAILY" ? (Number(data.rentAmount) || 0) : null,
                 total_rent: data.stayType === "DAILY" ? totalDailyRent : null,
                 paid_amount: Number(data.paidAmount) || 0,
-                balance_amount: initialBalance,
+                // balance_amount: initialBalance, // REMOVED v2
+
                 custom_rent: data.stayType === "MONTHLY" ? (Number(data.rentAmount) || 0) : null,
                 maintenance_amount: Number(data.maintenanceAmount) || 0,
                 maintenance_type: data.maintenanceType || null,
@@ -437,13 +426,8 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 owner_id: user?.id
             };
 
-            // Calculate balance for daily stays or if rent changed
-            if (data.stayType === "DAILY") {
-                payload.balance = initialBalance;
-                payload.balance_amount = initialBalance;
-            } else if (!editingTenant) {
-                payload.balance = initialBalance;
-            }
+            // balance fields removed per V2 rules
+
 
             let tenantId = editingTenant?.id;
 
@@ -461,6 +445,9 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             } else {
                 const tenant = await tenantAPI.create(payload);
                 tenantId = tenant.id;
+
+                // Invoice creation is now automatically handled in tenantAPI.create for monthly tenants
+
                 // Occupy bed
                 await bedAPI.update(data.bedId, { status: "OCCUPIED", tenant_id: tenantId });
             }
@@ -470,7 +457,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
 
             // 2. handle Payment
             if (data.paidAmount > 0) {
-                await paymentAPI.create({
+                const newPayment: any = await paymentAPI.create({
                     tenant_id: tenantId,
                     pg_id: data.pgId,
                     amount: data.paidAmount,
@@ -482,6 +469,34 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     notes: `Onboarding payment: ₹${data.paidAmount}`,
                     owner_id: user?.id
                 });
+
+                const paymentId = newPayment?.id;
+                if (paymentId) {
+                    try {
+                        await billingService.allocatePayment(paymentId, tenantId, data.paidAmount);
+                    } catch (allocErr) {
+                        console.warn("Onboarding allocation failed:", allocErr);
+                    }
+                }
+            }
+
+            // 3. Handle Notifications
+            try {
+                if (data.stayType === "MONTHLY") {
+                    await NotificationService.scheduleMonthlyRentReminder(
+                        tenantId,
+                        data.fullName,
+                        data.joinedDate
+                    );
+                } else if (data.stayType === "DAILY" && data.vacateDate) {
+                    await NotificationService.scheduleCheckoutReminder(
+                        tenantId,
+                        data.fullName,
+                        data.vacateDate
+                    );
+                }
+            } catch (notifErr) {
+                console.warn("Failed to schedule notification:", notifErr);
             }
 
             setConfirmState({

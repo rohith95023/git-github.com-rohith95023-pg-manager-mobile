@@ -71,14 +71,7 @@ export const pgAPI = {
   },
 };
 
-// Floor APIs
-export const floorAPI = {
-  getAll: () => apiClient.get("floors", "*, pgs(name)"),
-  getByPgId: (pgId) => apiClient.get("floors", "*", (query) => query.eq("pg_id", pgId).order("floor_number")),
-  create: (data) => apiClient.post("floors", data),
-  update: (id, data) => apiClient.update("floors", id, data),
-  delete: (id) => apiClient.delete("floors", id),
-};
+
 
 // Room APIs
 export const roomAPI = {
@@ -339,9 +332,69 @@ export const tenantAPI = {
         .single();
     
     if (tenantError) throw tenantError;
+ 
+    // 3. Auto-generate initial invoice for Monthly residents (New Billing System)
+    if (tenant && tenant.stay_type === 'MONTHLY') {
+        const maintType = tenant.maintenance_type;
+        const maintenance = (maintType === 'one_time' || maintType === 'monthly') ? Number(tenant.maintenance_amount || 0) : 0;
+        const totalInvoiceAmount = initialRent + maintenance;
+        
+        // Calculate 1 month interval for the first invoice period
+        const startDate = new Date(tenant.move_in_date);
+        const endDate = new Date(startDate);
+        endDate.setMonth(endDate.getMonth() + 1);
+        
+        // Handle edge cases where next month has fewer days (e.g. Jan 31 -> Feb 28)
+        if (endDate.getDate() !== startDate.getDate()) {
+            endDate.setDate(0);
+        } else {
+            endDate.setDate(endDate.getDate() - 1);
+        }
+
+        const insertPayloads = [{
+            tenant_id: tenant.id,
+            owner_id: tenant.owner_id,
+            type: 'RENT',
+            total_amount: totalInvoiceAmount,
+            paid_amount: 0,
+            status: 'UNPAID',
+            billing_period_start: tenant.move_in_date,
+            billing_period_end: endDate.toISOString().split('T')[0]
+        }];
+
+        if (Number(tenant.security_deposit || 0) > 0) {
+            insertPayloads.push({
+                tenant_id: tenant.id,
+                owner_id: tenant.owner_id,
+                type: 'DEPOSIT',
+                total_amount: Number(tenant.security_deposit),
+                paid_amount: 0,
+                status: 'UNPAID',
+                billing_period_start: tenant.move_in_date,
+                billing_period_end: endDate.toISOString().split('T')[0]
+            });
+        }
+
+        const { error: invoiceError } = await supabase.from("invoices").insert(insertPayloads);
+
+        if (invoiceError) {
+            console.error("Failed to generate initial invoices:", invoiceError);
+        }
+    }
 
     // 2. Insert Daily Stay Details if applicable
     if (data.stay_type === 'DAILY') {
+        const start = new Date(data.move_in_date);
+        const end = new Date(vacate_date);
+        let diffDays = 1;
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && end > start) {
+            diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        }
+
+        const calcTotalRent = (diffDays * Number(data.rent_per_day || 0)) + Number(data.maintenance_amount || 0);
+        const calcPaid = Number(paid_amount || 0);
+        const calcBalance = Math.max(0, calcTotalRent - calcPaid);
+
         const { error: dailyError } = await supabase
             .from("daily_stay_details")
             .insert([{
@@ -349,9 +402,9 @@ export const tenantAPI = {
                 move_in_date: data.move_in_date,
                 vacate_date: vacate_date,
                 rent_per_day: data.rent_per_day || 0,
-                total_rent: total_rent || 0,
-                paid_amount: paid_amount || 0,
-                balance_amount: balance_amount || total_rent || 0,
+                total_rent: calcTotalRent,
+                paid_amount: calcPaid,
+                balance_amount: calcBalance,
                 maintenance_amount: data.maintenance_amount || 0,
                 maintenance_type: data.maintenance_type || null
             }]);
@@ -388,7 +441,27 @@ export const tenantAPI = {
             if (Object.prototype.hasOwnProperty.call(data, field)) dailyUpdates[field] = data[field];
         });
 
-        // Use tenant_id to find the record
+        // Smart Recalculation for Daily Stays
+        if (data.stay_type === 'DAILY' || dailyUpdates.vacate_date || dailyUpdates.rent_per_day) {
+            // Fetch current state to ensure we have all values for calculation
+            const { data: current } = await supabase.from("daily_stay_details").select("*").eq("tenant_id", id).maybeSingle();
+            if (current) {
+                const start = new Date(dailyUpdates.move_in_date || current.move_in_date);
+                const end = new Date(dailyUpdates.vacate_date || current.vacate_date);
+                if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+                    let diffDays = 1;
+                    if (end > start) diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                    
+                    const rentRate = Number(dailyUpdates.rent_per_day ?? current.rent_per_day ?? 0);
+                    const maintAmt = Number(dailyUpdates.maintenance_amount ?? current.maintenance_amount ?? 0);
+                    const paidAmt = Number(dailyUpdates.paid_amount ?? current.paid_amount ?? 0);
+
+                    dailyUpdates.total_rent = (diffDays * rentRate) + maintAmt;
+                    dailyUpdates.balance_amount = Math.max(0, dailyUpdates.total_rent - paidAmt);
+                }
+            }
+        }
+
         const { error } = await supabase.from("daily_stay_details").update(dailyUpdates).eq("tenant_id", id);
         if (error) throw error;
     }
@@ -560,6 +633,14 @@ export const tenantAPI = {
         return await query.order("created_at", { ascending: false });
     }, "Get Daily Stay Tenants");
   },
+  getOutstandingBalance: (tenantId, ownerId) => apiClient.request(async () => {
+    const { data, error } = await supabase.rpc('get_outstanding_balance', {
+        p_tenant_id: tenantId,
+        p_owner_id: ownerId
+    });
+    if (error) throw error;
+    return Number(data || 0);
+  }, "Get Outstanding Balance"),
 };
 
 // Reservation APIs
@@ -587,32 +668,52 @@ export const reservationAPI = {
 export const paymentAPI = {
   getAll: () => apiClient.get("payments", `
     *, 
-    tenants!tenant_id(
+    tenants!left!tenant_id(
         full_name, 
         status,
         move_in_date,
         rooms!room_id(room_number, floor), 
-        pgs!pg_id(name),
+        pgs!left(name),
         beds!bed_id(bed_number)
     ),
-    bookings!reservation_id(
+    bookings!left!reservation_id(
         status,
         tenants!tenant_id(full_name),
         rooms!room_id(room_number),
-        pgs!pg_id(name)
+        pgs!left(name)
     )
   `, (query) => query.order("payment_date", { ascending: false })),
   getById: (id) => apiClient.getById("payments", id, `*, tenants(full_name), bookings(id)`),
   getByTenantId: (tenantId) => apiClient.get("payments", "*", (query) => query.eq("tenant_id", tenantId).order("payment_date", { ascending: false })),
   getByReservationId: (reservationId) => apiClient.get("payments", "*", (query) => query.eq("reservation_id", reservationId).order("payment_date", { ascending: false })),
-  create: (data) => apiClient.post("payments", data),
+  create: (data) => apiClient.request(async () => {
+    // 1. Create the payment record
+    const { data: payment, error } = await supabase.from("payments").insert([data]).select().single();
+    if (error) throw error;
+
+    // 2. Only if the payment is successful/captured, allocate it to invoices
+    if (data.status === 'COMPLETED' || data.status === 'PAID') {
+        // Attempt to allocate. We don't fail the whole request if allocation hits a snag, 
+        // but we want it to happen.
+        try {
+            await supabase.rpc('allocate_payment', {
+                p_tenant_id: data.tenant_id,
+                p_owner_id: data.owner_id || (await supabase.auth.getUser()).data.user?.id,
+                p_payment_id: payment.id
+            });
+        } catch (allocError) {
+            console.warn("Payment created but allocation failed:", allocError);
+        }
+    }
+    return payment;
+  }, "Create Payment"),
   update: (id, data) => apiClient.update("payments", id, data),
   delete: (id) => apiClient.delete("payments", id),
 };
 
 // Expense APIs
 export const expenseAPI = {
-  getAll: () => apiClient.get("expenses", "*, pgs(name)", (query) => query.order("date", { ascending: false })),
+  getAll: () => apiClient.get("expenses", "*, pgs!left(name)", (query) => query.order("date", { ascending: false })),
   getById: (id) => apiClient.getById("expenses", id),
   create: (data) => apiClient.post("expenses", data),
   update: (id, data) => apiClient.update("expenses", id, data),
@@ -630,27 +731,34 @@ export const statsAPI = {
         supabase.from("bookings").select("*", { count: "exact", head: true }).eq("status", "PENDING"),
         supabase.from("payments").select("*"),
         supabase.from("expenses").select("*"),
-        supabase.from("beds").select("*", { count: "exact", head: true }).neq("status", "INACTIVE"),
-        supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "OCCUPIED").neq("status", "INACTIVE"),
-        supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "MAINTENANCE").neq("status", "INACTIVE"),
+        supabase.from("beds").select("*", { count: "exact", head: true }).neq("status", "INACTIVE"),       // totalBeds (idx 6)
+        supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "OCCUPIED"),       // occupiedBeds (idx 7)
+        supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "MAINTENANCE"),    // maintenanceBeds (idx 8)
         supabase.from("rooms").select("*", { count: "exact", head: true }).eq("status", "MAINTENANCE"),
         supabase.from("rooms").select("*", { count: "exact", head: true }).in("status", ["AVAILABLE", "PARTIAL", "FULL"]),
         supabase.from("tenants")
           .select(`*, pgs!pg_id(name), rooms!room_id(room_number)`)
+          .neq("status", "DELETED")
           .order("created_at", { ascending: false })
           .limit(5),
-        // New Daily Stay Queries
         supabase.from("tenants").select("*", { count: "exact", head: true }).eq("stay_type", "DAILY").eq("status", "ACTIVE"),
         supabase.from("tenants").select("*", { count: "exact", head: true }).eq("stay_type", "MONTHLY").eq("status", "ACTIVE"),
         supabase.from("daily_stay_details").select("*", { count: "exact", head: true }).eq("vacate_date", new Date().toISOString().split('T')[0]),
-        // Limit 5 for preview card
+        // Limit 5 for preview card (Index 15) - only non-DELETED tenants
         supabase.from("daily_stay_details")
-          .select("move_in_date, vacate_date, total_rent, balance_amount, tenants(id, full_name, status)")
+          .select("move_in_date, vacate_date, total_rent, balance_amount, rent_per_day, maintenance_amount, tenants!inner(id, full_name, status, pg_id, pgs!pg_id(name))")
+          .eq("tenants.status", "ACTIVE")
           .order("move_in_date", { ascending: false })
           .limit(5),
-        // Additional queries for outstanding balances
-        supabase.from("tenants").select("balance").eq("status", "ACTIVE").eq("stay_type", "MONTHLY"),
-        supabase.from("daily_stay_details").select("balance_amount, tenants!inner(status)").eq("tenants.status", "ACTIVE")
+        // Invoice Dues for MONTHLY tenants (Index 16)
+        supabase.from("invoices").select("tenant_id, total_amount, paid_amount, tenants!inner(status, stay_type)").in("status", ["UNPAID", "PARTIAL"]).neq("tenants.status", "DELETED"),
+        // Active Daily Tenants data for dues calculation (Index 17)
+        supabase.from("tenants")
+          .select("id, full_name, stay_type, pg_id, pgs!pg_id(name), rent_per_day, maintenance_amount, daily_stay_details(move_in_date, vacate_date, rent_per_day, paid_amount, maintenance_amount)")
+          .eq("stay_type", "DAILY")
+          .eq("status", "ACTIVE"),
+        // Direct AVAILABLE beds count (Index 18) - more accurate than totalBeds - occupied - maintenance
+        supabase.from("beds").select("*", { count: "exact", head: true }).eq("status", "AVAILABLE")
       ]);
 
       // Log errors if any but continue if partial data available
@@ -668,7 +776,7 @@ export const statsAPI = {
         pgs, rooms, tenants, bookings, payments, expenses, 
         totalBeds, occupiedBeds, maintenanceBeds, maintenanceRooms, activeRooms, recentResidents,
         dailyActive, monthlyActive, dailyCheckouts, recentDailyTenants,
-        tenantBalances, dailyBalances
+        invoiceDues, dailyDuesRaw, availableBeds
       ] = results;
   
       const allPayments = payments?.data || [];
@@ -699,27 +807,53 @@ export const statsAPI = {
         })
         .reduce((sum, e) => sum + parseMoney(e?.amount), 0);
 
-      // Enhanced Calculation: Calculate Total Outstanding Dues across all residents
-      // This logic must match TenantFinder and Payments pages for consistency
-      const tenantsWithDues = tenantBalances?.data || [];
-      const dailyDetailsWithDues = dailyBalances?.data || [];
+      // Create a map of total paid by tenant to handle real-time calculations
+      const tenantPaidMap = {};
+      allPayments.forEach(p => {
+          const s = (p.status || "").toUpperCase();
+          if (s === 'PAID' || s === 'COMPLETED' || s === 'PAID_SUCCESS') {
+              tenantPaidMap[p.tenant_id] = (tenantPaidMap[p.tenant_id] || 0) + parseMoney(p.amount);
+          }
+      });
 
-      const monthlyDues = tenantsWithDues.reduce((sum, t) => sum + Number(t.balance || 0), 0);
-      
-      const dailyDues = dailyDetailsWithDues.reduce((sum, d) => {
-          // Calculation matching TenantFinder: Total Rent (Days * RentPerDay + Maint) - Paid
-          const start = new Date(d.move_in_date);
-          const end = new Date(d.vacate_date);
-          let diffDays = 1;
-          if (end > start) diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-          
-          const totalRent = (diffDays * Number(d.rent_per_day || 0)) + Number(d.maintenance_amount || 0);
-          const balance = Math.max(0, totalRent - Number(d.paid_amount || 0));
-          return sum + balance;
-      }, 0);
+      // ─── PENDING DUES CALCULATION ─────────────────────────────────────────
+      // Step 1: Sum up ALL monthly tenant invoice balances from invoiceBalanceMap.
+      // The invoiceDues query returns ALL unpaid/partial invoices; build the map.
+      const invoiceBalanceMap = {};
+      (invoiceDues?.data || []).forEach(inv => {
+          const balance = Number(inv.total_amount) - Number(inv.paid_amount);
+          if (balance > 0) {
+              invoiceBalanceMap[inv.tenant_id] = (invoiceBalanceMap[inv.tenant_id] || 0) + balance;
+          }
+      });
 
-      const totalPendingDues = Math.round(monthlyDues + dailyDues);
-  
+      // Step 2: Sum all invoice balances (covers MONTHLY tenants and any DEPOSIT/BOOKING invoices)
+      let totalPendingDues = Object.values(invoiceBalanceMap).reduce((sum, bal) => sum + bal, 0);
+
+      // Step 3: Add DAILY tenant outstanding dues (calculated from daily_stay_details, not invoices)
+      (dailyDuesRaw?.data || []).forEach(t => {
+            const tId = t.id;
+            const actualPaid = tenantPaidMap[tId] || 0;
+            
+            if (t.stay_type === 'DAILY' && t.daily_stay_details) {
+                const daily = Array.isArray(t.daily_stay_details) ? t.daily_stay_details[0] : t.daily_stay_details;
+                if (!daily) return;
+
+                const start = new Date(daily.move_in_date);
+                const end = new Date(daily.vacate_date);
+                let diffDays = 1;
+                if (end > start) diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                
+                const rentBase = diffDays * Number(t.rent_per_day || daily.rent_per_day || 0);
+                const maintenanceBase = Number(t.maintenance_amount || daily.maintenance_amount || 0);
+                const totalStayRent = rentBase + maintenanceBase;
+                
+                const stayDue = Math.max(0, totalStayRent - actualPaid);
+                totalPendingDues += stayDue;
+            }
+      });
+
+
       return {
         data: {
           totalPGs: pgs?.count || 0,
@@ -737,102 +871,46 @@ export const statsAPI = {
           totalBeds: totalBeds?.count || 0,
           occupiedBeds: occupiedBeds?.count || 0,
           maintenanceBeds: maintenanceBeds?.count || 0,
+          availableBeds: availableBeds?.count || 0,
           recentResidents: recentResidents?.data || [],
           dailyActiveTenants: dailyActive?.count || 0,
           monthlyActiveTenants: monthlyActive?.count || 0,
           dailyCheckouts: dailyCheckouts?.count || 0,
           recentDailyTenants: (recentDailyTenants?.data || []).map(d => {
             const tenant = Array.isArray(d.tenants) ? d.tenants[0] : d.tenants;
+            const tId = tenant?.id;
+            const correctPaid = tenantPaidMap[tId] || 0;
             return {
               ...d,
-              id: tenant?.id,
+              id: tId,
               full_name: tenant?.full_name,
               status: tenant?.status,
+              // Inject correct paid amount for the card to use
+              paid_amount: correctPaid 
             };
-          })
+          // Safety net: only show ACTIVE tenants even if the DB filter somehow misses them
+          }).filter(d => d.status === 'ACTIVE' && d.full_name)
         }
       };
     }, "GET Dashboard Stats");
   },
 
-  reconcileAllBalances: async () => {
+  generateMonthlyInvoices: async (ownerId) => {
     return apiClient.request(async () => {
-        // 1. Fetch all active monthly tenants with their rent info
-        const { data: tenants, error: fetchError } = await supabase
-            .from("tenants")
-            .select("id, full_name, move_in_date, created_at, rent_per_month, balance, maintenance_amount, maintenance_type, rooms:room_id(rent)")
-            .eq("stay_type", "MONTHLY")
-            .eq("status", "ACTIVE");
-        
-        if (fetchError) throw fetchError;
-        if (!tenants || tenants.length === 0) return { success: true, count: 0 };
-
-        // 2. Fetch all payments to calculate actual paid amounts
-        const { data: allPayments, error: payError } = await supabase
-            .from("payments")
-            .select("tenant_id, amount");
-        
-        if (payError) throw payError;
-        
-        const paymentMap = (allPayments || []).reduce((acc, p) => {
-            const cleanAmount = Number(String(p.amount).replace(/[^0-9.-]+/g, "")) || 0;
-            acc[p.tenant_id] = (acc[p.tenant_id] || 0) + cleanAmount;
-            return acc;
-        }, {});
-
-        const today = new Date();
-        const updates = [];
-
-        // 3. Compare system-calculated balance vs current DB balance
-        for (const tenant of tenants) {
-            const moveIn = new Date(tenant.move_in_date || tenant.created_at);
-            if (isNaN(moveIn.getTime())) continue;
-
-            const rent = Number(tenant.rent_per_month || tenant.rooms?.rent || 0);
-            const maintenance = Number(tenant.maintenance_amount || 0);
-            
-            // Anniversary-based month calculation (Fairer rent cycle)
-            let monthDiff = (today.getFullYear() - moveIn.getFullYear()) * 12 + (today.getMonth() - moveIn.getMonth());
-            if (today.getDate() >= moveIn.getDate()) {
-                monthDiff++;
-            }
-            monthDiff = Math.max(1, monthDiff);
-            
-            let expectedTotal = monthDiff * rent;
-            
-            // Apply Maintenance
-            if (tenant.maintenance_type === 'monthly') {
-                expectedTotal += (monthDiff * maintenance);
-            } else if (tenant.maintenance_type === 'one_time') {
-                expectedTotal += maintenance;
-            }
-
-            const paidTotal = paymentMap[tenant.id] || 0;
-            const correctedBalance = Math.max(0, expectedTotal - paidTotal);
-
-            // Only update if there is a discrepancy
-            const currentBalance = Number(tenant.balance || 0);
-            if (Math.abs(correctedBalance - currentBalance) > 1) {
-                // Use the established update method for consistency and RLS handling
-                updates.push(tenantAPI.update(tenant.id, { balance: correctedBalance }));
-            }
-        }
-
-        // 4. Run updates in parallel
-        if (updates.length > 0) {
-            await Promise.all(updates);
-        }
-
-        return { success: true, updatedCount: updates.length };
-    }, "Reconcile All Balances");
+      const { data, error } = await supabase.rpc('generate_monthly_invoices', {
+          p_owner_id: ownerId
+      });
+      if (error) throw error;
+      return data;
+    }, "Generate Monthly Invoices");
   }
 };
 // Profit & Loss APIs
 export const pnlAPI = {
   getSummary: async () => {
     const [paymentsRes, expensesRes] = await Promise.all([
-      supabase.from('payments').select('amount, payment_date, created_at, status, pg_id, pgs(name)'),
-      supabase.from('expenses').select('amount, date, created_at, pg_id, pgs(name)')
+      supabase.from('payments').select('amount, payment_date, created_at, status, pg_id, pgs!left(name)'),
+      supabase.from('expenses').select('amount, date, created_at, pg_id, pgs!left(name)')
     ]);
 
     if (paymentsRes.error) throw paymentsRes.error;
@@ -907,7 +985,7 @@ export const backupAPI = {
     return apiClient.request(async () => {
         // Fetch only records that are currently "Visible" in the app
         // This excludes soft-deleted (status='DELETED') and archived records
-        const [pgs, rooms, beds, tenants, payments, expenses, dailyDetails, bookings, floors] = await Promise.all([
+        const [pgs, rooms, beds, tenants, payments, expenses, dailyDetails, bookings] = await Promise.all([
             supabase.from("pgs").select("*").neq("status", "DELETED").neq("status", "INACTIVE"),
             supabase.from("rooms").select("*").neq("status", "DELETED"),
             supabase.from("beds").select("*").neq("status", "DELETED"),
@@ -915,8 +993,7 @@ export const backupAPI = {
             supabase.from("payments").select("*").neq("status", "DELETED"),
             supabase.from("expenses").select("*").neq("status", "DELETED"),
             supabase.from("daily_stay_details").select("*"),
-            supabase.from("bookings").select("*").neq("status", "CANCELLED").neq("status", "REJECTED"),
-            supabase.from("floors").select("*")
+            supabase.from("bookings").select("*").neq("status", "CANCELLED").neq("status", "REJECTED")
         ]);
 
         return {
@@ -929,7 +1006,6 @@ export const backupAPI = {
                 expenses: expenses.data || [],
                 dailyDetails: dailyDetails.data || [],
                 bookings: bookings.data || [],
-                floors: floors.data || [],
                 snapshot_type: 'VISIBLE_APP_DATA_SYNC',
                 timestamp: new Date().toISOString()
             }
@@ -937,35 +1013,15 @@ export const backupAPI = {
     }, "Get App-Visible System Data for export");
   },
   createSnapshot: async (data, filename, format) => {
-    return apiClient.request(async () => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) throw new Error("Authentication required");
-
-        const recordCount = Object.values(data).reduce((acc, curr) => {
-            if (Array.isArray(curr)) return acc + curr.length;
-            if (curr && typeof curr === 'object') return acc + 1; // For dashboardStats
-            return acc;
-        }, 0);
-
-        return await supabase
-            .from("system_data_snapshots")
-            .insert([{
-                owner_id: user.id,
-                snapshot_data: data,
-                filename,
-                format,
-                record_count: recordCount
-            }])
-            .select()
-            .single();
-    }, "Create System Snapshot");
+    // Legacy snapshot logic placeholder (previously system_data_snapshots)
+    console.log("Creating local data export:", filename);
+    return { data: { success: true } };
   }
 };
 
 export default {
   authAPI,
   pgAPI,
-  floorAPI,
   roomAPI,
   bedAPI,
   tenantAPI,

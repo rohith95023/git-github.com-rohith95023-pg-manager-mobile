@@ -12,6 +12,8 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
+import { billingService } from "../services/billing.service";
+import { ActivityIndicator } from "react-native";
 
 const { width } = Dimensions.get("window");
 
@@ -19,6 +21,44 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
     const { tenant } = route.params;
     const COLORS = useThemePalette();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
+
+    // Billing Engine V2 State
+    const [outstandingBalance, setOutstandingBalance] = React.useState<number | null>(null);
+    const [tenantCredit, setTenantCredit] = React.useState<number>(0);
+    const [invoices, setInvoices] = React.useState<any[]>([]);
+    const [loadingBilling, setLoadingBilling] = React.useState(false);
+
+    React.useEffect(() => {
+        loadBillingData();
+    }, [tenant.id]);
+
+    const loadBillingData = async () => {
+        setLoadingBilling(true);
+        try {
+            const [balance, creditRes, invoicesRes]: any = await Promise.all([
+                billingService.getOutstandingBalance(tenant.id),
+                billingService.getCredits(tenant.id),
+                billingService.getInvoices(tenant.id)
+            ]);
+
+            setOutstandingBalance(balance);
+            setTenantCredit(creditRes?.amount || 0);
+            setInvoices(invoicesRes || []);
+        } catch (err) {
+            console.error("Failed to load billing data:", err);
+        } finally {
+            setLoadingBilling(false);
+        }
+    };
+
+    const getInvoiceStatusColor = (status: string) => {
+        switch (status?.toUpperCase()) {
+            case 'PAID': return COLORS.success;
+            case 'PARTIAL': return COLORS.warning;
+            case 'UNPAID': return COLORS.danger;
+            default: return COLORS.textMuted;
+        }
+    };
 
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
@@ -194,57 +234,83 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                             <Text style={styles.financeLabel}>{tenant.stay_type === 'DAILY' ? 'Rent (Per Day)' : 'Monthly Rent'}</Text>
                             <Text style={styles.financeSubLabel}>{tenant.stay_type === 'DAILY' ? 'Daily accommodation fee' : 'Standard monthly lease'}</Text>
                         </View>
-                        <Text style={[styles.financeValue, { color: COLORS.text }]}>₹{Number(tenant.rent_per_day || tenant.rent_per_month || tenant.rent || tenant.rooms?.rent || 0).toLocaleString()}</Text>
+                        <Text style={[styles.financeValue, { color: COLORS.text }]}>₹{Number(tenant.rent_amount || tenant.rent_per_day || tenant.rent_per_month || tenant.rent || tenant.rooms?.rent || 0).toLocaleString()}</Text>
                     </View>
-                    {tenant.stay_type === 'DAILY' && (
-                        <View style={styles.financeItem}>
-                            <View>
-                                <Text style={styles.financeLabel}>Total Estimated Rent</Text>
-                                <Text style={styles.financeSubLabel}>Based on stay duration</Text>
-                            </View>
-                            <Text style={[styles.financeValue, { color: COLORS.success }]}>
-                                ₹{(() => {
-                                    const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-                                    const moveIn = tenant.move_in_date || daily?.move_in_date;
-                                    const vacate = tenant.vacate_date || daily?.vacate_date;
-                                    const rentPerDay = daily?.rent_per_day || tenant.rent_per_day || 0;
-                                    const maintenance = daily?.maintenance_amount || tenant.maintenance_amount || 0;
 
-                                    if (moveIn && vacate) {
-                                        const start = new Date(moveIn);
-                                        const end = new Date(vacate);
-                                        let diffDays = 1;
-                                        if (end > start) {
-                                            diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                                        }
-                                        return (diffDays * Number(rentPerDay)) + Number(maintenance);
-                                    }
-                                    return Number(tenant.total_rent || daily?.total_rent || 0);
-                                })().toLocaleString()}
-                            </Text>
-                        </View>
-                    )}
                     <View style={styles.financeItem}>
                         <View>
-                            <Text style={styles.financeLabel}>Balance Due</Text>
-                            <Text style={styles.financeSubLabel}>Pending collection</Text>
+                            <Text style={styles.financeLabel}>Outstanding Balance</Text>
+                            <Text style={styles.financeSubLabel}>Invoice-based total due</Text>
                         </View>
-                        <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{Number(tenant.balance || 0).toLocaleString()}</Text>
+                        <Text style={[styles.financeValue, { color: COLORS.danger }]}>
+                            {outstandingBalance !== null ? `₹${outstandingBalance.toLocaleString()}` : "..."}
+                        </Text>
                     </View>
+                    {tenantCredit > 0 && (
+                        <View style={styles.financeItem}>
+                            <View>
+                                <Text style={styles.financeLabel}>Tenant Credit</Text>
+                                <Text style={styles.financeSubLabel}>Available for future invoices</Text>
+                            </View>
+                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{tenantCredit.toLocaleString()}</Text>
+                        </View>
+                    )}
                     <View style={styles.financeItem}>
                         <View>
                             <Text style={styles.financeLabel}>Maintenance Charge</Text>
                             <Text style={styles.financeSubLabel}>Property amenities fee</Text>
                         </View>
-                        <Text style={[styles.financeValue, { color: COLORS.warning }]}>₹{Number(tenant.maintenance_amount || 0).toLocaleString()}</Text>
+                        <Text style={[styles.financeValue, { color: COLORS.warning }]}>₹{Number(tenant.maintenance_amount || tenant.maintenance || 0).toLocaleString()}</Text>
                     </View>
                     <View style={styles.financeItem}>
                         <View>
                             <Text style={styles.financeLabel}>Security Deposit</Text>
                             <Text style={styles.financeSubLabel}>Refundable on checkout</Text>
                         </View>
-                        <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{Number(tenant.security_deposit || tenant.rooms?.deposit || 0).toLocaleString()}</Text>
+                        <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{Number(tenant.deposit_amount || tenant.security_deposit || tenant.rooms?.deposit || 0).toLocaleString()}</Text>
                     </View>
+                </DetailCard>
+
+                {/* Ledger / Invoices Section */}
+                <DetailCard title="Recent Invoices" icon="list" color={COLORS.primary}>
+                    {loadingBilling ? (
+                        <ActivityIndicator color={COLORS.primary} size="small" />
+                    ) : invoices.length > 0 ? (
+                        [...invoices].sort((a, b) => new Date(b.billing_period_start).getTime() - new Date(a.billing_period_start).getTime()).map((inv: any) => {
+                            const renderInvoiceTitle = () => {
+                                switch (inv.type?.toUpperCase()) {
+                                    case 'RENT':
+                                        const date = new Date(inv.billing_period_start);
+                                        return `Rent – ${date.toLocaleDateString([], { month: 'short', year: 'numeric' })}`;
+                                    case 'DEPOSIT':
+                                        return "Security Deposit";
+                                    case 'OPENING_BALANCE':
+                                        return "Opening Balance";
+                                    default:
+                                        return new Date(inv.billing_period_start).toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+                                }
+                            };
+
+                            return (
+                                <View key={inv.id} style={styles.invoiceItem}>
+                                    <View style={styles.invoiceMain}>
+                                        <Text style={styles.invoiceDate}>
+                                            {renderInvoiceTitle()}
+                                        </Text>
+                                        <View style={[styles.statusBadgeSmall, { backgroundColor: getInvoiceStatusColor(inv.status) + "20" }]}>
+                                            <Text style={[styles.statusBadgeTextSmall, { color: getInvoiceStatusColor(inv.status) }]}>{inv.status}</Text>
+                                        </View>
+                                    </View>
+                                    <View style={styles.invoiceAmounts}>
+                                        <Text style={styles.invoiceTotal}>₹{inv.total_amount.toLocaleString()}</Text>
+                                        <Text style={styles.invoicePaid}>Paid: ₹{inv.paid_amount.toLocaleString()}</Text>
+                                    </View>
+                                </View>
+                            );
+                        })
+                    ) : (
+                        <Text style={styles.emptyLedger}>No invoices generated yet.</Text>
+                    )}
                 </DetailCard>
 
                 <View style={{ height: 40 }} />
@@ -370,7 +436,25 @@ const createStyles = (COLORS: ThemePalette) =>
         },
         financeLabel: { fontSize: 14, fontWeight: "700", color: COLORS.text },
         financeSubLabel: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-        financeValue: { fontSize: 18, fontWeight: "900" }
+        financeValue: { fontSize: 18, fontWeight: "900" },
+
+        // Invoice Item Styles
+        invoiceItem: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            paddingVertical: 12,
+            borderBottomWidth: 1,
+            borderBottomColor: COLORS.border + '30'
+        },
+        invoiceMain: { gap: 4 },
+        invoiceDate: { fontSize: 14, fontWeight: '700', color: COLORS.text },
+        statusBadgeSmall: { paddingHorizontal: 6, paddingVertical: 2, borderRadius: 4, alignSelf: 'flex-start' },
+        statusBadgeTextSmall: { fontSize: 9, fontWeight: '900' },
+        invoiceAmounts: { alignItems: 'flex-end', gap: 2 },
+        invoiceTotal: { fontSize: 15, fontWeight: '800', color: COLORS.text },
+        invoicePaid: { fontSize: 11, color: COLORS.textMuted, fontWeight: '600' },
+        emptyLedger: { fontSize: 13, color: COLORS.textMuted, textAlign: 'center', paddingVertical: 10, fontStyle: 'italic' }
     });
 
 export default ResidentDetailScreen;

@@ -6,9 +6,9 @@ import { supabase } from "../api/supabaseClient";
 
 export const tenantService = {
     createTenant: async (formData: any, paidNow: number) => {
-        const { stayType, rentAmount, maintenanceAmount, maintenanceType, joinedDate, vacateDate, ...rest } = formData;
+        const { stayType, rentAmount, maintenanceAmount, maintenanceType, joinedDate, vacateDate } = formData;
 
-        // 1. Calculate Initial Total Rent and Balance
+        // 1. Calculate Initial Total Rent and Balance (Only for DAILY logic/details)
         let totalRent = null;
         let balanceAmount = null;
 
@@ -24,14 +24,12 @@ export const tenantService = {
             const maintenanceBase = Number(maintenanceAmount || 0);
             totalRent = rentBase + maintenanceBase;
             balanceAmount = Math.max(0, totalRent - paidNow);
-        } else if (stayType === "MONTHLY") {
-            const baseCharge = (Number(rentAmount) || 0) + (maintenanceType === "monthly" ? Number(maintenanceAmount || 0) : (maintenanceType === "one_time" ? Number(maintenanceAmount || 0) : 0));
-            balanceAmount = Math.max(0, baseCharge - paidNow);
         }
 
         const { data: { user } } = await supabase.auth.getUser();
 
-        // 2. Prepare Identity Payload
+        // 2. Prepare Identity Payload (tenants table)
+        // WE NO LONGER POPULATE THE 'balance' COLUMN HERE.
         const identityPayload = {
             full_name: formData.fullName,
             email: formData.email,
@@ -53,7 +51,6 @@ export const tenantService = {
             maintenance_amount: Number(maintenanceAmount) || 0,
             maintenance_type: maintenanceType || null,
             total_rent: totalRent,
-            balance: balanceAmount,
             security_deposit: Number(formData.securityDeposit) || 0,
             pg_id: formData.pgId,
             room_id: formData.roomId,
@@ -105,11 +102,33 @@ export const tenantService = {
     },
 
     updateTenant: async (tenantId: string, formData: any, initialData: any, paidNow: number) => {
-        // Basic logic port from UnifiedStayManager.jsx handleUpdate...
-        // To keep it concise, we update identity, bed assignment, and record payment.
+        const { stayType, rentAmount, maintenanceAmount, maintenanceType, joinedDate, vacateDate } = formData;
+        const { data: { user } } = await supabase.auth.getUser();
 
-        // ... calculate balances similar to create (omitted for brevity, but follows exact DB updates)
-        const payload = {
+        // 1. Calculate Updated Rent and Balances (DAILY logic)
+        let totalRent = null;
+        let balanceAmount = null;
+
+        if (stayType === "DAILY") {
+            const start = new Date(joinedDate);
+            const end = new Date(vacateDate);
+            let diffDays = 1;
+            if (end > start) {
+                diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+            }
+
+            const rentBase = diffDays * Number(rentAmount || 0);
+            const maintenanceBase = Number(maintenanceAmount || 0);
+            totalRent = rentBase + maintenanceBase;
+
+            // Get previous paid amount for daily details consistency
+            const { data: currentDaily } = await supabase.from("daily_stay_details").select("paid_amount").eq("tenant_id", tenantId).maybeSingle();
+            const prevPaid = Number(currentDaily?.paid_amount || 0);
+            balanceAmount = Math.max(0, totalRent - (prevPaid + paidNow));
+        }
+
+        // 2. Prepare Identity Payload (tenants table)
+        const payload: any = {
             full_name: formData.fullName,
             email: formData.email,
             phone: formData.phone,
@@ -123,19 +142,65 @@ export const tenantService = {
             pg_id: formData.pgId,
             room_id: formData.roomId,
             bed_id: formData.bedId,
+            stay_type: stayType,
+            move_in_date: joinedDate,
+            vacate_date: stayType === "DAILY" ? vacateDate : (initialData?.vacate_date || null),
+            rent_per_month: stayType === "MONTHLY" ? Number(rentAmount) : null,
+            rent_per_day: stayType === "DAILY" ? Number(rentAmount) : null,
+            custom_rent: stayType === "MONTHLY" ? Number(rentAmount) : (initialData?.custom_rent || null),
+            maintenance_amount: Number(maintenanceAmount) || 0,
+            maintenance_type: maintenanceType || null,
+            total_rent: totalRent,
+            security_deposit: Number(formData.securityDeposit) || 0,
+            updated_at: new Date().toISOString()
         };
 
+        // 3. Update Identity
         await tenantAPI.updateIdentity(tenantId, payload);
 
-        if (initialData.bed_id && initialData.bed_id !== formData.bedId) {
-            await bedAPI.update(initialData.bed_id, { status: "AVAILABLE", tenant_id: null });
-            await bedAPI.update(formData.bedId, { status: "OCCUPIED", tenant_id: tenantId });
-            await roomService.recalculateOccupancy(initialData.room_id);
-        } else if (!initialData.bed_id && formData.bedId) {
-            await bedAPI.update(formData.bedId, { status: "OCCUPIED", tenant_id: tenantId });
+        // 4. Update Daily Details
+        if (stayType === "DAILY") {
+            const { data: currentDaily } = await supabase.from("daily_stay_details").select("paid_amount").eq("tenant_id", tenantId).maybeSingle();
+            const prevPaid = Number(currentDaily?.paid_amount || 0);
+
+            await tenantAPI.updateDailyDetails(tenantId, {
+                move_in_date: joinedDate,
+                vacate_date: vacateDate,
+                rent_per_day: Number(rentAmount) || 0,
+                total_rent: totalRent || 0,
+                paid_amount: prevPaid + paidNow,
+                balance_amount: balanceAmount,
+                maintenance_amount: Number(maintenanceAmount) || 0,
+                maintenance_type: maintenanceType || null
+            });
         }
 
-        await roomService.recalculateOccupancy(formData.roomId);
+        // 5. Handle Room Changes if necessary
+        if (formData.bedId !== initialData.bedId) {
+            // Free old bed
+            await bedAPI.update(initialData.bedId, { status: "AVAILABLE", tenant_id: null });
+            // Occupy new bed
+            await bedAPI.update(formData.bedId, { status: "OCCUPIED", tenant_id: tenantId });
+            // Recalculate occupancy for both rooms
+            await roomService.recalculateOccupancy(initialData.roomId);
+            await roomService.recalculateOccupancy(formData.roomId);
+        }
+
+        // 6. Record New Payment if any
+        if (paidNow > 0) {
+            await paymentAPI.create({
+                tenant_id: tenantId,
+                pg_id: formData.pgId,
+                amount: paidNow,
+                payment_date: new Date().toISOString().split('T')[0],
+                status: "COMPLETED",
+                type: "RENT",
+                payment_method: formData.paymentMethod || "CASH",
+                billing_month: `${joinedDate.slice(0, 7)}-01`,
+                notes: `Update-time payment of ₹${paidNow}`,
+                owner_id: user?.id
+            });
+        }
 
         return { id: tenantId, ...payload };
     }

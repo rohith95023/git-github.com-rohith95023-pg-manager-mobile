@@ -1,5 +1,4 @@
-
-import React, { useState, useEffect, useMemo, useCallback } from "react";
+import React, { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../context/AuthContext";
 import { useTheme } from "../../context/ThemeContext";
@@ -58,11 +57,19 @@ const Dashboard = () => {
     dailyCheckouts: 0,
     recentDailyTenants: [],
     pendingDues: 0,
+    tenantPaidMap: {},
   });
   const [loading, setLoading] = useState(true);
   const [isSyncing, setIsSyncing] = useState(false);
   const [isDailyModalOpen, setIsDailyModalOpen] = useState(false);
   const [activePanelId, setActivePanelId] = useState(null);
+  const activePanelIdRef = React.useRef(null);
+  
+  // Keep ref in sync for handleRealtime
+  useEffect(() => {
+    activePanelIdRef.current = activePanelId;
+  }, [activePanelId]);
+
   const [panelDetails, setPanelDetails] = useState([]);
   const [isPanelLoading, setIsPanelLoading] = useState(false);
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
@@ -71,8 +78,12 @@ const Dashboard = () => {
   const handleSyncAll = async () => {
     setIsSyncing(true);
     try {
-        const result = await statsAPI.reconcileAllBalances();
-        console.log("Sync Complete:", result);
+        if (!user?.id) throw new Error("Owner identification missing");
+        
+        // Use the new Invoice Generation system instead of manual reconciliation
+        const result = await statsAPI.generateMonthlyInvoices(user.id);
+        console.log("Invoice Generation Sync Complete:", result);
+        
         await fetchDashboardData(false);
     } catch (error) {
         console.error("Sync failed:", error);
@@ -98,21 +109,36 @@ const Dashboard = () => {
         return Number(clean) || 0;
       };
 
-      const dashboardStats = results[0]?.status === 'fulfilled' ? results[0].value : {};
-      const recentPayments = results[1]?.status === 'fulfilled' ? (results[1].value || []) : [];
+      const dashboardStatsRaw = results[0]?.status === 'fulfilled' ? results[0].value : {};
+      // apiClient.request() already normalizes the response (calls normalizeResponse internally),
+      // so results[0].value IS the stats object directly — no extra .data wrapper needed.
+      const dashboardStats = (dashboardStatsRaw && typeof dashboardStatsRaw === 'object' && !Array.isArray(dashboardStatsRaw))
+        ? (dashboardStatsRaw.data || dashboardStatsRaw)
+        : {};
+      const tenantPaidMap = {};
+      const allPayments = results[1].status === 'fulfilled' ? results[1].value : [];
+      allPayments.forEach(p => {
+          const s = (p.status || "").toUpperCase();
+          if (s === 'PAID' || s === 'COMPLETED' || s === 'PAID_SUCCESS') {
+              tenantPaidMap[p.tenant_id] = (tenantPaidMap[p.tenant_id] || 0) + (Number(p.amount) || 0);
+          }
+      });
 
       setStats({
+        ...dashboardStats,
+        tenantPaidMap: tenantPaidMap,
+        totalPayments: allPayments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0),
         totalPgs: dashboardStats?.totalPGs || 0,
         totalRooms: dashboardStats?.totalRooms || 0,
         activeRooms: dashboardStats?.activeRooms || 0,
         totalTenants: dashboardStats?.totalTenants || 0,
-        totalPayments: parseMoney(dashboardStats?.monthlyRevenue),
         totalExpenses: parseMoney(dashboardStats?.monthlyExpenses),
         allTimeRevenue: parseMoney(dashboardStats?.totalRevenue),
         pendingDues: parseMoney(dashboardStats?.totalPendingDues),
         totalBeds: dashboardStats?.totalBeds || 0,
         occupiedBeds: dashboardStats?.occupiedBeds || 0,
         maintenanceBeds: dashboardStats?.maintenanceBeds || 0,
+        availableBeds: dashboardStats?.availableBeds ?? 0,
         maintenanceRooms: dashboardStats?.maintenanceRooms || 0,
         netProfit: parseMoney(dashboardStats?.netProfit),
         dailyActiveTenants: dashboardStats?.dailyActiveTenants || 0,
@@ -120,19 +146,19 @@ const Dashboard = () => {
         dailyCheckouts: dashboardStats?.dailyCheckouts || 0,
         recentResidents: dashboardStats?.recentResidents || [],
         recentDailyTenants: Array.isArray(dashboardStats?.recentDailyTenants) ? dashboardStats.recentDailyTenants : [],
-        recentPayments: Array.isArray(recentPayments) ? recentPayments.slice(0, 5).map(p => {
+        recentPayments: allPayments.slice(0, 5).map(p => {
           const tenant = Array.isArray(p.tenants) ? p.tenants[0] : p.tenants;
           const booking = Array.isArray(p.bookings) ? p.bookings[0] : p.bookings;
           const bookingTenant = booking?.tenants ? (Array.isArray(booking.tenants) ? booking.tenants[0] : booking.tenants) : null;
           
           return {
             id: p.id,
-            tenant: tenant?.full_name || bookingTenant?.full_name || "Guest",
+            tenant: p.tenants?.full_name || tenant?.full_name || bookingTenant?.full_name || "Guest",
             amount: p.amount,
             date: p.payment_date || p.txnDate || p.created_at,
             status: ((p.status || "").toUpperCase() === "COMPLETED" || (p.status || "").toUpperCase() === "PAID") ? "PAID" : (p.status || "").toUpperCase(),
           };
-        }) : [],
+        }),
       });
     } catch (error) {
       console.error("Dashboard data fetch error:", error);
@@ -255,9 +281,41 @@ const Dashboard = () => {
         }
 
         case "Pending Dues": {
+          // Fetch ALL tenants (including DELETED) to include their outstanding invoices
           const { data: allTenants } = await supabase.from('tenants')
-            .select('full_name, balance, stay_type, pgs(name), daily_stay_details(move_in_date, vacate_date, rent_per_day, paid_amount, maintenance_amount)')
-            .eq('status', 'ACTIVE');
+            .select('id, full_name, stay_type, pg_id, pgs(name), daily_stay_details(move_in_date, vacate_date, rent_per_day, paid_amount, maintenance_amount)');
+
+          const tenantIds = (allTenants || []).map(t => t.id);
+          
+          if (tenantIds.length === 0) {
+            details = [];
+            break;
+          }
+
+          // Fetch real-time payments for these tenants to avoid trigger lag
+          const { data: allPayments } = await supabase.from('payments')
+            .select('tenant_id, amount, status')
+            .in('tenant_id', tenantIds);
+          
+          const paidMap = {};
+          (allPayments || []).forEach(p => {
+              const s = (p.status || "").toUpperCase();
+              if (s === 'PAID' || s === 'COMPLETED' || s === 'PAID_SUCCESS') {
+                  paidMap[p.tenant_id] = (paidMap[p.tenant_id] || 0) + Number(p.amount || 0);
+              }
+          });
+
+          // Fetch ALL invoices (including for DELETED tenants) to preserve financial records
+          const { data: invoicesData } = await supabase
+            .from("invoices")
+            .select("tenant_id, total_amount, paid_amount")
+            .in("tenant_id", tenantIds);
+            
+          const invBalances = {};
+          (invoicesData || []).forEach(inv => {
+              const amount = Number(inv.total_amount) - Number(inv.paid_amount);
+              invBalances[inv.tenant_id] = (invBalances[inv.tenant_id] || 0) + amount;
+          });
           
           details = (allTenants || [])
             .map(t => {
@@ -269,10 +327,13 @@ const Dashboard = () => {
                     const end = new Date(daily.vacate_date);
                     let diffDays = 1;
                     if (end > start) diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
-                    const totalRent = (diffDays * Number(daily.rent_per_day || 0)) + Number(daily.maintenance_amount || 0);
-                    bal = Math.max(0, totalRent - Number(daily.paid_amount || 0));
+                    const totalExpected = (diffDays * Number(daily.rent_per_day || 0)) + Number(daily.maintenance_amount || 0);
+                    
+                    // Use local real-time calculated sum
+                    const actualPaid = paidMap[t.id] || 0;
+                    bal = Math.max(0, totalExpected - actualPaid);
                 } else {
-                    bal = t.balance || 0;
+                    bal = invBalances[t.id] || 0;
                 }
                 
                 return {
@@ -340,14 +401,33 @@ const Dashboard = () => {
     }
   };
 
+  const handleRealtime = useCallback((payload) => {
+      console.log(`[Dashboard] Sync triggered by ${payload.table}:`, payload.eventType);
+      // Extended delay to allow DB settlement and ensure expansion fetches latest
+      setTimeout(() => {
+          fetchDashboardData(false);
+          const currentActive = activePanelIdRef.current;
+          if (currentActive !== null) {
+              // Note: we can't easily call handleCardClick here if it uses set state but we can trigger a refresh
+              // For now, let's just trigger another fetch to be sure
+              fetchDashboardData(false);
+          }
+      }, 1500);
+  }, [fetchDashboardData]); // Now it only depends on fetchDashboardData
+
   useEffect(() => {
+    if (!user?.id) return;
+    
+    // Auto-sync invoices in background to catch any missed nightly runs
     const initFetch = async () => {
       await fetchDashboardData(true);
       // Auto-sync dues on app refresh as requested
       try {
-        await statsAPI.reconcileAllBalances();
-        // Silently refresh data after reconciliation to show latest balances if changed
-        fetchDashboardData(false);
+        if (user?.id) {
+            await statsAPI.generateMonthlyInvoices(user.id);
+            // Silently refresh data after reconciliation to show latest balances if changed
+            fetchDashboardData(false);
+        }
       } catch (err) {
         console.warn("Auto-sync on refresh failed:", err);
       }
@@ -356,20 +436,7 @@ const Dashboard = () => {
     initFetch();
 
     // Subscribe to multiple tables for dashboard-wide dynamic updates
-    const handleRealtime = (payload) => {
-        console.log(`[Dashboard] Sync triggered by ${payload.table}:`, payload.eventType);
-        // Extended delay to allow DB settlement and ensure expansion fetches latest
-        setTimeout(() => {
-            fetchDashboardData(false);
-            if (activePanelId !== null) {
-                // Find title of current active panel to refresh it
-                const currentStat = statCards[activePanelId];
-                if (currentStat) handleCardClick(activePanelId, currentStat.title);
-            }
-        }, 1500);
-    };
-
-    const channel = supabase.channel('dashboard-realtime')
+    const channel = supabase.channel(`dashboard-sync-${user?.id || 'anon'}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'pgs' }, handleRealtime)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'rooms' }, handleRealtime)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'beds' }, handleRealtime)
@@ -382,9 +449,22 @@ const Dashboard = () => {
       });
 
     return () => { 
-        supabase.removeChannel(channel);
+        const cleanupChannels = async () => {
+      if (channel) { // Use the local 'channel' variable directly
+        try {
+          // Verify if channel is actually joined and valid before removal
+          if (channel.state === 'joined') {
+            await supabase.removeChannel(channel);
+          }
+        } catch (e) {
+          console.warn("WebSocket cleanup warning:", e);
+        }
+      }
     };
-  }, [fetchDashboardData]);
+    
+    cleanupChannels();
+    };
+  }, [fetchDashboardData, handleRealtime, user?.id]);
 
   const revenueDisplay = useMemo(() => `₹${(stats.totalPayments || 0).toLocaleString('en-IN')}`, [stats.totalPayments]);
   const expensesDisplay = useMemo(() => `₹${(stats.totalExpenses || 0).toLocaleString('en-IN')}`, [stats.totalExpenses]);
@@ -402,7 +482,7 @@ const Dashboard = () => {
     { title: "Active Rooms", value: stats.activeRooms, icon: Bed, color: "text-emerald-500", bg: "bg-emerald-500/10", border: "border-emerald-500/20" },
     { title: "Residents", value: stats.totalTenants, icon: Users, color: "text-amber-500", bg: "bg-amber-500/10", border: "border-amber-500/20" },
     { title: "Active Beds", value: stats.totalBeds - stats.maintenanceBeds, icon: Bed, color: "text-indigo-500", bg: "bg-indigo-500/10", border: "border-indigo-500/20" },
-    { title: "Available Beds", value: Math.max(0, stats.totalBeds - stats.occupiedBeds - stats.maintenanceBeds), icon: Bed, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
+    { title: "Available Beds", value: stats.availableBeds, icon: Bed, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
     { title: "Occupancy Rate", value: (stats.totalBeds - stats.maintenanceBeds) > 0 ? `${Math.round((stats.occupiedBeds / (stats.totalBeds - stats.maintenanceBeds)) * 100)}%` : "0%", icon: Layers, color: "text-teal-500", bg: "bg-teal-500/10", border: "border-teal-500/20" },
     { title: "Monthly Revenue", value: revenueDisplay, icon: TrendingUp, color: "text-rose-500", bg: "bg-rose-500/10", border: "border-rose-500/20" },
     { title: "All-time Revenue", value: `₹${(stats.allTimeRevenue || 0).toLocaleString('en-IN')}`, icon: IndianRupee, color: "text-blue-500", bg: "bg-blue-500/10", border: "border-blue-500/20" },
@@ -480,6 +560,7 @@ const Dashboard = () => {
         {/* Daily Stay Tenants Review Card (New) */}
         <DailyStayCard 
             tenants={stats.recentDailyTenants} 
+            paidMap={stats.tenantPaidMap}
             onExpand={() => setIsDailyModalOpen(true)}
             isDark={isDark}
         />

@@ -14,6 +14,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import { paymentAPI, pgAPI, tenantAPI, statsAPI } from "../services/api";
+import { billingService } from "../services/billing.service";
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
@@ -54,6 +55,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const [isModalVisible, setModalVisible] = useState(false);
     const [editingPayment, setEditingPayment] = useState<any>(null);
     const [initialTenantId, setInitialTenantId] = useState<string | undefined>(undefined);
+    const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
     const handleAddPayment = () => {
         setEditingPayment(null);
@@ -77,12 +79,18 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 tenantAPI.getActive()
             ]);
 
+            const tenants = tenantsRes || [];
+            // V2: Fetch real-time balances from the engine
+            const balances = await Promise.all(
+                tenants.map((t: any) => billingService.getOutstandingBalance(t.id).catch(() => 0))
+            );
+
+            tenants.forEach((t: any, i: number) => {
+                t.outstanding_balance = balances[i] || 0;
+            });
+
             const getTenantBalance = (tenant: any) => {
-                if (tenant.stay_type === 'DAILY') {
-                    const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-                    return Number(daily?.balance_amount || tenant.balance_amount || tenant.balance || 0);
-                }
-                return Number(tenant.balance || 0);
+                return Number(tenant.outstanding_balance || 0);
             };
 
             const outstandingDues = (tenantsRes || [])
@@ -130,6 +138,8 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         }
     }, [animatedProgress]);
 
+
+
     useEffect(() => {
         if (route?.params?.tenantId) {
             setInitialTenantId(route.params.tenantId);
@@ -168,6 +178,8 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     matchesStatus = statusValue === "PAID" || statusValue === "COMPLETED";
                 } else if (filters.status === "PENDING") {
                     matchesStatus = statusValue === "PENDING" || statusValue === "PENDING_DUE";
+                } else if (filters.status === "PARTIAL") {
+                    matchesStatus = true; // Handled at group level
                 } else {
                     matchesStatus = statusValue === filters.status;
                 }
@@ -182,6 +194,36 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         });
     }, [payments, searchTerm, filters]);
 
+    const groupedPayments = useMemo(() => {
+        const groups: { [key: string]: any[] } = {};
+        filteredPayments.forEach((p: any) => {
+            const tId = p.tenant_id;
+            if (!tId) return;
+            if (!groups[tId]) groups[tId] = [];
+            groups[tId].push(p);
+        });
+
+        let result = Object.entries(groups).map(([tenantId, items]) => ({
+            tenantId,
+            tenant: items[0].tenants,
+            pg: items[0].pgs,
+            totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
+            items,
+            hasVirtual: items.some(item => item.isVirtual)
+        }));
+
+        if (filters.status === "PARTIAL") {
+            result = result.filter(g => g.hasVirtual && g.items.length > 1);
+        }
+
+        return result.sort((a, b) => {
+            // Virtual/Pending dues first
+            if (a.hasVirtual && !b.hasVirtual) return -1;
+            if (!a.hasVirtual && b.hasVirtual) return 1;
+            return 0;
+        });
+    }, [filteredPayments, filters.status]);
+
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
             case 'PAID':
@@ -191,6 +233,24 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             case 'FAILED': return COLORS.danger;
             default: return COLORS.textMuted;
         }
+    };
+
+    const getInvoiceLabel = (item: any) => {
+        if (item.isVirtual) return "Outstanding Balance";
+        const type = (item.type || 'RENT').toUpperCase();
+        if (type === 'RENT' && (item.billing_month || item.payment_date)) {
+            const dateStr = item.billing_month || item.payment_date;
+            try {
+                const date = new Date(dateStr);
+                return `Rent – ${date.toLocaleDateString([], { month: 'short', year: 'numeric' })}`;
+            } catch (e) {
+                return "Rent Payment";
+            }
+        }
+        if (type === 'DEPOSIT') return "Security Deposit";
+        if (type === 'MAINTENANCE') return "Maintenance Payment";
+        if (type === 'OPENING_BALANCE') return "Opening Balance";
+        return item.type || "Payment";
     };
 
     const SummarySection = () => (
@@ -245,63 +305,149 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         </View>
     );
 
-    const renderPaymentItem = ({ item }: { item: any }) => (
-        <TouchableOpacity
-            style={styles.paymentCard}
-            activeOpacity={0.7}
-            onPress={() => item.isVirtual ? {} : handleEditPayment(item)}
-        >
-            <View style={styles.paymentCardHeader}>
-                <View style={styles.cardHeaderLeft}>
-                    <Text style={styles.residentName} numberOfLines={1}>{item.tenants?.full_name || "Unknown Resident"}</Text>
-                    <View style={[styles.statusPill, { backgroundColor: getStatusColor(item.status) + "12" }]}>
-                        <Text style={[styles.statusPillText, { color: getStatusColor(item.status) }]}>
-                            {item.status === 'PENDING_DUE' ? 'OUTSTANDING' : item.status}
-                        </Text>
-                    </View>
-                </View>
-                <View style={styles.cardHeaderRight}>
-                    <Text style={[styles.paymentAmount, { color: item.isVirtual ? COLORS.danger : COLORS.text }]}>
-                        ₹{Number(item.amount || 0).toLocaleString()}
-                    </Text>
-                </View>
-            </View>
+    const renderPaymentItem = ({ item: group }: { item: any }) => {
+        const isExpanded = expandedGroups.includes(group.tenantId);
+        const hasMultiple = group.items.length > 1;
 
-            <View style={styles.cardDetails}>
-                <View style={styles.detailRow}>
-                    <Feather name="home" size={12} color={COLORS.textMuted} />
-                    <Text style={styles.detailText} numberOfLines={1}>
-                        {item.pgs?.name || "N/A"} • Room {item.tenants?.rooms?.room_number || "N/A"}
-                    </Text>
-                </View>
-                <View style={styles.detailRow}>
-                    <Feather name="calendar" size={12} color={COLORS.textMuted} />
-                    <Text style={styles.detailText}>
-                        {item.billing_month ? `Billing: ${item.billing_month}` : `Joined: ${new Date(item.tenants?.move_in_date).toLocaleDateString()}`}
-                    </Text>
-                </View>
-            </View>
-
-            {item.isVirtual ? (
+        return (
+            <View style={styles.groupContainer}>
                 <TouchableOpacity
-                    style={[styles.payButton, { backgroundColor: COLORS.primary }]}
+                    style={styles.paymentCard}
+                    activeOpacity={0.7}
                     onPress={() => {
-                        setEditingPayment(null);
-                        setInitialTenantId(item.tenant_id);
-                        setModalVisible(true);
+                        if (hasMultiple) {
+                            setExpandedGroups(prev =>
+                                prev.includes(group.tenantId)
+                                    ? prev.filter(id => id !== group.tenantId)
+                                    : [...prev, group.tenantId]
+                            );
+                        } else {
+                            const firstItem = group.items[0];
+                            if (firstItem.isVirtual) {
+                                setEditingPayment(null);
+                                setInitialTenantId(firstItem.tenant_id);
+                                setModalVisible(true);
+                            } else {
+                                handleEditPayment(firstItem);
+                            }
+                        }
                     }}
                 >
-                    <MaterialCommunityIcons name="currency-inr" size={18} color="#fff" />
-                    <Text style={styles.payButtonText}>Pay Due Amount</Text>
+                    <View style={styles.paymentCardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <Text style={styles.residentName} numberOfLines={1}>{group.tenant?.full_name || "Unknown Resident"}</Text>
+                            <View style={[styles.statusPill, {
+                                backgroundColor: (group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.success) + "12"
+                            }]}>
+                                <Text style={[styles.statusPillText, {
+                                    color: group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.success
+                                }]}>
+                                    {group.hasVirtual ? (group.items.length > 1 ? 'PARTIAL' : 'OUTSTANDING') : 'TRANSACTION COMPLETED'}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.cardHeaderRight}>
+                            <Text style={[styles.paymentAmount, {
+                                color: group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.text
+                            }]}>
+                                ₹{group.totalAmount.toLocaleString()}
+                            </Text>
+                            {hasMultiple && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                    <Text style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: '700' }}>
+                                        {group.items.length} TRANSACTIONS
+                                    </Text>
+                                    <Feather
+                                        name={isExpanded ? "chevron-up" : "chevron-down"}
+                                        size={14}
+                                        color={COLORS.textMuted}
+                                        style={{ marginLeft: 4 }}
+                                    />
+                                </View>
+                            )}
+                        </View>
+                    </View>
+
+                    <View style={styles.cardDetails}>
+                        <View style={styles.detailRow}>
+                            <Feather name="home" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.detailText} numberOfLines={1}>
+                                {group.pg?.name || "N/A"} • Room {group.tenant?.rooms?.room_number || "N/A"}
+                            </Text>
+                        </View>
+                        {!hasMultiple && (
+                            <View style={styles.detailRow}>
+                                <Feather name="calendar" size={12} color={COLORS.textMuted} />
+                                <Text style={styles.detailText}>
+                                    {group.items[0].payment_date || group.items[0].billing_month || `Joined: ${new Date(group.tenant?.move_in_date).toLocaleDateString()}`}
+                                </Text>
+                            </View>
+                        )}
+                    </View>
+
+                    {hasMultiple && !isExpanded && (
+                        <View style={styles.groupInfoBadge}>
+                            <Feather name="layers" size={12} color={COLORS.primary} />
+                            <Text style={styles.groupInfoText}>Tap to view individual transactions</Text>
+                        </View>
+                    )}
+
+                    {!hasMultiple && group.items[0].isVirtual && (
+                        <View style={[styles.payButton, { backgroundColor: COLORS.primary, marginTop: 10 }]}>
+                            <MaterialCommunityIcons name="currency-inr" size={18} color="#fff" />
+                            <Text style={styles.payButtonText}>Pay Due Amount</Text>
+                        </View>
+                    )}
                 </TouchableOpacity>
-            ) : (
-                <View style={styles.paidBadge}>
-                    <Feather name="check-circle" size={14} color={COLORS.success} />
-                    <Text style={[styles.paidText, { color: COLORS.success }]}>Transaction Recorded</Text>
-                </View>
-            )}
-        </TouchableOpacity>
-    );
+
+                {/* Expanded Transactions */}
+                {isExpanded && group.items.map((subItem: any, idx: number) => (
+                    <TouchableOpacity
+                        key={subItem.id || idx}
+                        style={[styles.paymentCard, styles.nestedItem, { marginBottom: idx === group.items.length - 1 ? 16 : 4 }]}
+                        activeOpacity={0.8}
+                        onPress={() => {
+                            if (subItem.isVirtual) {
+                                setEditingPayment(null);
+                                setInitialTenantId(subItem.tenant_id);
+                                setModalVisible(true);
+                            } else {
+                                handleEditPayment(subItem);
+                            }
+                        }}
+                    >
+                        <View style={styles.nestedIndicator} />
+                        <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <View>
+                                <Text style={{ fontSize: 13, fontWeight: '700', color: COLORS.text }}>
+                                    {getInvoiceLabel(subItem)}
+                                </Text>
+                                <Text style={{ fontSize: 11, color: COLORS.textMuted }}>
+                                    {subItem.payment_date || subItem.billing_month || 'Recent Record'}
+                                </Text>
+                            </View>
+                            <View style={{ alignItems: 'flex-end' }}>
+                                <Text style={{ fontSize: 14, fontWeight: '800', color: subItem.isVirtual ? COLORS.danger : COLORS.text }}>
+                                    ₹{Number(subItem.amount || 0).toLocaleString()}
+                                </Text>
+                                <View style={[styles.statusPill, {
+                                    backgroundColor: (subItem.status === 'PENDING_DUE' && group.items.length > 1 ? COLORS.warning : getStatusColor(subItem.status)) + "12",
+                                    marginTop: 4
+                                }]}>
+                                    <Text style={[styles.statusPillText, {
+                                        color: subItem.status === 'PENDING_DUE' && group.items.length > 1 ? COLORS.warning : getStatusColor(subItem.status),
+                                        fontSize: 8
+                                    }]}>
+                                        {subItem.status === 'PENDING_DUE' ? (group.items.length > 1 ? 'PARTIAL' : 'PENDING') : subItem.status}
+                                    </Text>
+                                </View>
+                            </View>
+                        </View>
+                    </TouchableOpacity>
+                ))}
+            </View>
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -317,8 +463,8 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             </View>
 
             <FlatList
-                data={filteredPayments}
-                keyExtractor={item => item.id}
+                data={groupedPayments}
+                keyExtractor={item => item.tenantId}
                 renderItem={renderPaymentItem}
                 ListHeaderComponent={
                     <View>
@@ -558,6 +704,43 @@ const createStyles = (COLORS: any) =>
         },
         emptyView: { marginTop: 60, alignItems: 'center' },
         emptyText: { color: COLORS.textMuted, fontSize: 15, fontWeight: '600', marginTop: 12 },
+        groupContainer: {
+            marginBottom: 4,
+        },
+        nestedItem: {
+            marginLeft: 32,
+            marginRight: 16,
+            padding: 12,
+            borderLeftWidth: 2,
+            borderLeftColor: COLORS.border + '30',
+            backgroundColor: COLORS.card,
+            flexDirection: 'row',
+            alignItems: 'center',
+            elevation: 1,
+        },
+        nestedIndicator: {
+            position: 'absolute',
+            left: -2,
+            top: '50%',
+            width: 12,
+            height: 2,
+            backgroundColor: COLORS.border + '30',
+        },
+        groupInfoBadge: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: COLORS.primary + '10',
+            paddingHorizontal: 10,
+            paddingVertical: 6,
+            borderRadius: 8,
+            marginTop: 8,
+        },
+        groupInfoText: {
+            fontSize: 11,
+            fontWeight: '700',
+            color: COLORS.primary,
+        },
     });
 
 export default PaymentsScreen;

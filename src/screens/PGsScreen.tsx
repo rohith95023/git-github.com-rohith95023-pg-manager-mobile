@@ -283,9 +283,6 @@ const PGsScreen = ({ navigation }: any) => {
                             <Text style={styles.locationText} numberOfLines={1}>{item.city || "No location"}</Text>
                         </View>
                     </View>
-                    <TouchableOpacity style={styles.menuBtn} onPress={() => showPropertyOptions(item)}>
-                        <Feather name="more-horizontal" size={20} color={COLORS.textMuted} />
-                    </TouchableOpacity>
                 </View>
 
                 <View style={styles.statsGrid}>
@@ -311,8 +308,46 @@ const PGsScreen = ({ navigation }: any) => {
                         <View style={[styles.miniBadge, { backgroundColor: COLORS.success + "10" }]}>
                             <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>{item.total_floors || 0} Floors</Text>
                         </View>
+                        {item.status === 'ACTIVE' ? (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.miniBadge, { backgroundColor: COLORS.primary + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                                    onPress={() => handleEdit(item)}
+                                >
+                                    <Feather name="edit-2" size={10} color={COLORS.primary} />
+                                    <Text style={[styles.miniBadgeText, { color: COLORS.primary }]}>Edit</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.miniBadge, { backgroundColor: COLORS.warning + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                                    onPress={() => handleArchive(item.id, item.name)}
+                                >
+                                    <Feather name="archive" size={10} color={COLORS.warning} />
+                                    <Text style={[styles.miniBadgeText, { color: COLORS.warning }]}>Archive</Text>
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.miniBadge, { backgroundColor: COLORS.success + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                                    onPress={() => handleRestore(item.id, item.name)}
+                                >
+                                    <Feather name="refresh-ccw" size={10} color={COLORS.success} />
+                                    <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>Restore</Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.miniBadge, { backgroundColor: COLORS.danger + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
+                                    onPress={() => handleDelete(item.id, item.name)}
+                                >
+                                    <Feather name="trash-2" size={10} color={COLORS.danger} />
+                                    <Text style={[styles.miniBadgeText, { color: COLORS.danger }]}>Delete</Text>
+                                </TouchableOpacity>
+                            </>
+                        )}
                     </View>
-                    <View style={[styles.statusIndicator, { backgroundColor: item.status === "ACTIVE" ? COLORS.success : COLORS.warning }]} />
+
+                    {item.status === 'ACTIVE' && (
+                        <View style={[styles.statusIndicator, { backgroundColor: COLORS.success }]} />
+                    )}
                 </View>
             </TouchableOpacity>
         );

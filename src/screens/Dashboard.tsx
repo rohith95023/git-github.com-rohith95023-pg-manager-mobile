@@ -14,6 +14,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useAuth } from "../context/AuthContext";
 import { statsAPI, paymentAPI, tenantAPI } from "../services/api";
+import { billingService } from "../services/billing.service";
 import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
@@ -31,24 +32,27 @@ const Dashboard = ({ navigation, route }: any) => {
     const [stats, setStats] = useState<any>(null);
     const [recentPayments, setRecentPayments] = useState<any[]>([]);
     const [dailyTenants, setDailyTenants] = useState<any[]>([]);
+    const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
 
     const fetchData = useCallback(async () => {
         try {
-            // Balance reconciliation
+            // Sync Monthly Invoices on load (Billing Engine V2)
             try {
-                await statsAPI.reconcileAllBalances();
+                if (user?.id) {
+                    await billingService.generateMonthlyInvoices(user.id);
+                }
             } catch (err) {
-                console.warn("Auto-reconciliation failed:", err);
+                console.warn("Monthly invoice generation failed:", err);
             }
 
-            const [statsRes, paymentsRes, tenantsRes]: any = await Promise.all([
+            const [statsRes, tenantsRes]: any = await Promise.all([
                 statsAPI.getDashboardStats(),
-                paymentAPI.getAll(),
                 tenantAPI.getActive()
             ]);
 
-            if (statsRes) setStats(statsRes.data || statsRes);
-            setRecentPayments((paymentsRes?.data || paymentsRes || []).slice(0, 5));
+            const statsData = statsRes.data || statsRes;
+            if (statsRes) setStats(statsData);
+            setRecentPayments(statsData?.recentPayments || []);
             setDailyTenants((tenantsRes?.data || tenantsRes || []).filter((t: any) => t.stay_type === 'DAILY').slice(0, 5));
         } catch (error) {
             console.error("Failed to fetch dashboard data:", error);
@@ -57,6 +61,35 @@ const Dashboard = ({ navigation, route }: any) => {
             setRefreshing(false);
         }
     }, [user]);
+
+    const groupedInvoices = useMemo(() => {
+        const groups: { [key: string]: any[] } = {};
+        (stats?.upcomingInvoices || []).forEach((inv: any) => {
+            const tId = inv.tenant_id;
+            if (!groups[tId]) groups[tId] = [];
+            groups[tId].push(inv);
+        });
+        return Object.entries(groups).map(([tenantId, items]) => ({
+            tenantId,
+            tenant: items[0].tenants,
+            totalDue: items.reduce((sum, current) => sum + (Number(current.total_amount) - Number(current.paid_amount || 0)), 0),
+            items
+        }));
+    }, [stats?.upcomingInvoices]);
+
+    const getInvoiceLabel = (inv: any) => {
+        switch (inv.type?.toUpperCase()) {
+            case 'RENT':
+                const date = new Date(inv.billing_period_start);
+                return `Rent – ${date.toLocaleDateString([], { month: 'short', year: 'numeric' })}`;
+            case 'DEPOSIT':
+                return "Security Deposit";
+            case 'OPENING_BALANCE':
+                return "Opening Balance";
+            default:
+                return "Invoice";
+        }
+    };
 
     useEffect(() => {
         if (route.params?.refresh) {
@@ -150,9 +183,31 @@ const Dashboard = ({ navigation, route }: any) => {
                     </View>
                 </View>
 
+                {/* Today's Activity Summary (New) */}
+                <View style={styles.activityRow}>
+                    <View style={styles.activityItem}>
+                        <View style={[styles.dot, { backgroundColor: COLORS.success }]} />
+                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.todayActivity?.payments || 0}</Text> Payments</Text>
+                    </View>
+                    <View style={styles.activityItem}>
+                        <View style={[styles.dot, { backgroundColor: COLORS.primary }]} />
+                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.todayActivity?.newTenants || 0}</Text> New</Text>
+                    </View>
+                    <View style={styles.activityItem}>
+                        <View style={[styles.dot, { backgroundColor: COLORS.warning }]} />
+                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.todayActivity?.expenses || 0}</Text> Expenses</Text>
+                    </View>
+                </View>
+
                 {/* Financial Overview Card */}
                 <View style={styles.financialSummary}>
-                    <Text style={styles.sectionTitle}>Financials</Text>
+                    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+                        <Text style={styles.sectionTitle}>Financials</Text>
+                        <View style={styles.creditBadge}>
+                            <Text style={styles.creditValue}>Credits: ₹{(stats?.totalCredits || 0).toLocaleString()}</Text>
+                        </View>
+                    </View>
+
                     <View style={styles.financeGrid}>
                         <View style={styles.financeItem}>
                             <Text style={styles.financeLabel}>Revenue</Text>
@@ -173,6 +228,17 @@ const Dashboard = ({ navigation, route }: any) => {
                             <Text style={styles.detailsBtnText}>Analysis</Text>
                             <Feather name="arrow-right" size={12} color={COLORS.textMuted} />
                         </TouchableOpacity>
+                    </View>
+
+                    {/* Monthly Collection Progress Bar */}
+                    <View style={styles.progressSection}>
+                        <View style={styles.progressHeader}>
+                            <Text style={styles.progressLabel}>Monthly Collection</Text>
+                            <Text style={styles.progressValue}>{stats?.collectionRatePercentage || 0}%</Text>
+                        </View>
+                        <View style={styles.progressBarBg}>
+                            <View style={[styles.progressBarFill, { width: `${stats?.collectionRatePercentage || 0}%`, backgroundColor: COLORS.success }]} />
+                        </View>
                     </View>
                 </View>
 
@@ -205,6 +271,82 @@ const Dashboard = ({ navigation, route }: any) => {
                     </View>
                 )}
 
+                {/* Upcoming Dues (Grouped) */}
+                {groupedInvoices.length > 0 && (
+                    <View style={styles.listSection}>
+                        <View style={styles.listHeader}>
+                            <Text style={styles.sectionTitle}>Upcoming Dues (Next 7d)</Text>
+                            <Feather name="bell" size={14} color={COLORS.danger} />
+                        </View>
+                        {groupedInvoices.map((group: any) => {
+                            const isExpanded = expandedGroups.includes(group.tenantId);
+                            const hasMultiple = group.items.length > 1;
+
+                            return (
+                                <View key={group.tenantId} style={styles.groupContainer}>
+                                    <TouchableOpacity
+                                        style={styles.summaryItem}
+                                        activeOpacity={0.7}
+                                        onPress={() => {
+                                            if (hasMultiple) {
+                                                setExpandedGroups(prev =>
+                                                    prev.includes(group.tenantId)
+                                                        ? prev.filter(id => id !== group.tenantId)
+                                                        : [...prev, group.tenantId]
+                                                );
+                                            } else {
+                                                navigation.navigate("ResidentDetail", { tenant: group.tenant });
+                                            }
+                                        }}
+                                    >
+                                        <View style={[styles.avatarMini, { backgroundColor: COLORS.danger + "10" }]}>
+                                            <MaterialCommunityIcons
+                                                name={hasMultiple ? (isExpanded ? "chevron-down" : "chevron-right") : "calendar-clock"}
+                                                size={16}
+                                                color={COLORS.danger}
+                                            />
+                                        </View>
+                                        <View style={styles.itemMain}>
+                                            <Text style={styles.itemTitle}>{group.tenant?.full_name}</Text>
+                                            <Text style={styles.itemSub}>
+                                                {hasMultiple ? `${group.items.length} Invoices • ` : `${getInvoiceLabel(group.items[0])} • `}
+                                                Due {new Date(group.items[0].billing_period_end).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                                            </Text>
+                                        </View>
+                                        <View style={{ alignItems: 'flex-end' }}>
+                                            <Text style={[styles.itemPrice, { color: COLORS.danger }]}>₹{group.totalDue.toLocaleString()}</Text>
+                                            {hasMultiple && !isExpanded && (
+                                                <Text style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: '700' }}>VIEW ALL</Text>
+                                            )}
+                                        </View>
+                                    </TouchableOpacity>
+
+                                    {isExpanded && group.items.map((inv: any) => (
+                                        <TouchableOpacity
+                                            key={inv.id}
+                                            style={[styles.summaryItem, styles.nestedItem, { backgroundColor: COLORS.bg + '50' }]}
+                                            onPress={() => navigation.navigate("ResidentDetail", { tenant: group.tenant })}
+                                        >
+                                            <View style={styles.nestedIndicator} />
+                                            <View style={styles.itemMain}>
+                                                <Text style={[styles.itemTitle, { fontSize: 13, color: COLORS.text }]}>
+                                                    {getInvoiceLabel(inv)}
+                                                </Text>
+                                                <Text style={styles.itemSub}>
+                                                    Due {new Date(inv.billing_period_end).toLocaleDateString([], { month: 'short', day: 'numeric' })}
+                                                </Text>
+                                            </View>
+                                            <Text style={[styles.itemPrice, { fontSize: 13, color: COLORS.danger }]}>
+                                                ₹{(inv.total_amount - inv.paid_amount).toLocaleString()}
+                                            </Text>
+                                        </TouchableOpacity>
+                                    ))}
+                                </View>
+                            );
+                        })}
+                    </View>
+                )}
+
                 {/* Recent Payments (Modern density) */}
                 <View style={styles.listSection}>
                     <View style={styles.listHeader}>
@@ -213,22 +355,35 @@ const Dashboard = ({ navigation, route }: any) => {
                             <Text style={styles.seeAllText}>See all</Text>
                         </TouchableOpacity>
                     </View>
-                    {recentPayments.map((p: any) => (
-                        <TouchableOpacity
-                            key={p.id}
-                            style={styles.summaryItem}
-                            activeOpacity={0.7}
-                        >
-                            <View style={[styles.avatarMini, { backgroundColor: COLORS.success + "20" }]}>
-                                <Feather name="check" size={12} color={COLORS.success} />
-                            </View>
-                            <View style={styles.itemMain}>
-                                <Text style={styles.itemTitle} numberOfLines={1}>{p.tenants?.full_name}</Text>
-                                <Text style={styles.itemSub}>{p.type} • {p.payment_method}</Text>
-                            </View>
-                            <Text style={styles.itemPrice}>+₹{p.amount?.toLocaleString()}</Text>
-                        </TouchableOpacity>
-                    ))}
+                    {recentPayments.map((p: any) => {
+                        const getDescriptiveType = () => {
+                            if (p.type?.toUpperCase() === 'RENT' && p.billing_month) {
+                                const date = new Date(p.billing_month);
+                                return `Rent – ${date.toLocaleDateString([], { month: 'short', year: 'numeric' })}`;
+                            }
+                            return p.type || "Payment";
+                        };
+
+                        return (
+                            <TouchableOpacity
+                                key={p.id}
+                                style={styles.summaryItem}
+                                activeOpacity={0.7}
+                                onPress={() => navigation.navigate("Finance", { payment: p })}
+                            >
+                                <View style={[styles.avatarMini, { backgroundColor: COLORS.success + "20" }]}>
+                                    <Feather name="check" size={12} color={COLORS.success} />
+                                </View>
+                                <View style={styles.itemMain}>
+                                    <Text style={styles.itemTitle} numberOfLines={1}>
+                                        {p.tenants?.full_name || p.tenant?.full_name || "Unknown Resident"}
+                                    </Text>
+                                    <Text style={styles.itemSub}>{getDescriptiveType()} • {p.payment_method}</Text>
+                                </View>
+                                <Text style={styles.itemPrice}>+₹{Number(p.amount || 0).toLocaleString()}</Text>
+                            </TouchableOpacity>
+                        );
+                    })}
                 </View>
 
                 <View style={{ height: 40 }} />
@@ -331,7 +486,96 @@ const createStyles = (COLORS: any) =>
         itemMain: { flex: 1 },
         itemTitle: { fontSize: 14, fontWeight: '700', color: COLORS.text },
         itemSub: { fontSize: 11, color: COLORS.textMuted, marginTop: 2 },
-        itemPrice: { fontSize: 14, fontWeight: '800', color: COLORS.success }
+        itemPrice: { fontSize: 14, fontWeight: '800', color: COLORS.success },
+
+        // Enhanced Dashboard Styles
+        activityRow: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            marginBottom: 24,
+            paddingHorizontal: 4
+        },
+        activityItem: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6
+        },
+        dot: {
+            width: 6,
+            height: 6,
+            borderRadius: 3
+        },
+        activityText: {
+            fontSize: 11,
+            color: COLORS.textMuted,
+            fontWeight: '600'
+        },
+        bold: {
+            color: COLORS.text,
+            fontWeight: '800'
+        },
+        creditBadge: {
+            backgroundColor: COLORS.success + '10',
+            paddingHorizontal: 8,
+            paddingVertical: 4,
+            borderRadius: 8
+        },
+        creditValue: {
+            fontSize: 10,
+            fontWeight: '800',
+            color: COLORS.success
+        },
+        progressSection: {
+            marginTop: 20,
+            paddingTop: 16,
+            borderTopWidth: 1,
+            borderTopColor: COLORS.border + '30'
+        },
+        progressHeader: {
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: 8
+        },
+        progressLabel: {
+            fontSize: 11,
+            fontWeight: '700',
+            color: COLORS.textMuted
+        },
+        progressValue: {
+            fontSize: 12,
+            fontWeight: '800',
+            color: COLORS.text
+        },
+        progressBarBg: {
+            height: 6,
+            backgroundColor: COLORS.bg,
+            borderRadius: 3,
+            overflow: 'hidden'
+        },
+        progressBarFill: {
+            height: '100%',
+            borderRadius: 3
+        },
+        groupContainer: {
+            marginBottom: 4,
+        },
+        nestedItem: {
+            height: 54,
+            marginLeft: 10,
+            paddingLeft: 40,
+            borderBottomWidth: 0,
+            borderLeftWidth: 2,
+            borderLeftColor: COLORS.border + '30',
+        },
+        nestedIndicator: {
+            position: 'absolute',
+            left: -2,
+            top: '50%',
+            width: 12,
+            height: 2,
+            backgroundColor: COLORS.border + '30',
+        }
     });
 
 export default Dashboard;

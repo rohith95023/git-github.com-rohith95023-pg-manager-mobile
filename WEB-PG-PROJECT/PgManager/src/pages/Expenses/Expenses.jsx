@@ -190,10 +190,12 @@ const Expenses = () => {
                     <td className="px-5 py-4">
                       <div className="flex flex-col">
                         <span className={cn("font-bold text-xs truncate max-w-[120px]", isDark ? "text-slate-200" : "text-slate-800")}>
-                          {expense.pgs?.name || "All PGs"}
+                          {expense.pgs?.name ?? (expense.pg_id ? "Deleted Property" : "All PGs")}
                         </span>
                         <span className={cn("text-slate-400 text-[10px] font-medium mt-0.5", isDark ? "text-slate-500" : "text-slate-400")}>
-                          {expense.pg_id ? "Property" : "Account Context"}
+                          {expense.pg_id && !expense.pgs ? (
+                            <span className="text-amber-500 font-black uppercase tracking-tighter text-[9px]">Property Deleted</span>
+                          ) : expense.pg_id ? "Property" : "Account Context"}
                         </span>
                       </div>
                     </td>
@@ -265,7 +267,7 @@ const Expenses = () => {
                 <div className={cn("px-3 py-2 rounded-lg border", isDark ? "bg-slate-950 border-slate-800" : "bg-slate-50 border-slate-200")}>
                   <div className={cn("flex items-center gap-2 text-[11px]", isDark ? "text-slate-300" : "text-slate-600")}>
                     <Building2 size={12} className="text-blue-500" />
-                    <span className="font-bold">{expense.pgs?.name || "General Ledger"}</span>
+                    <span className="font-bold">{expense.pgs?.name ?? (expense.pg_id ? "Deleted Property" : "General Ledger")}</span>
                     <span className="text-slate-400 font-normal">context</span>
                   </div>
                   {expense.notes && (

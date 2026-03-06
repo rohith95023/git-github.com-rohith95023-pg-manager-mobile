@@ -11,6 +11,7 @@ import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
 import ConfirmationModal from "../common/ConfirmationModal";
 import { paymentAPI, pgAPI, tenantAPI } from "../../services/api";
+import { billingService } from "../../services/billing.service";
 import { supabase } from "../../lib/supabaseClient";
 
 const paymentSchema = z.object({
@@ -91,31 +92,22 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
 
     const selectedTenant = useMemo(() => tenants.find(t => t.id === watchTenantId), [tenants, watchTenantId]);
 
-    const outstandingBalance = useMemo(() => {
-        if (!selectedTenant) return 0;
-        if (selectedTenant.stay_type === 'DAILY') {
-            const daily = Array.isArray(selectedTenant.daily_stay_details) ? selectedTenant.daily_stay_details[0] : selectedTenant.daily_stay_details;
-            return Number(daily?.balance_amount || selectedTenant.balance_amount || 0);
+    const [v2Balance, setV2Balance] = useState<number>(0);
+
+    useEffect(() => {
+        if (watchTenantId) {
+            billingService.getOutstandingBalance(watchTenantId).then(setV2Balance);
         }
-        return Number(selectedTenant.balance || 0);
-    }, [selectedTenant]);
+    }, [watchTenantId]);
+
+    const outstandingBalance = v2Balance;
 
     const remainingBalance = useMemo(() => {
         const amt = Number(watchAmount) || 0;
-        if (watchType === 'RENT') {
-            return Math.max(0, outstandingBalance - amt);
-        }
-        return outstandingBalance;
+        return Math.max(0, outstandingBalance - amt);
     }, [outstandingBalance, watchAmount, watchType]);
 
-    const getTenantBalance = (tenant: any) => {
-        if (!tenant) return 0;
-        if (tenant.stay_type === 'DAILY') {
-            const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-            return Number(daily?.balance_amount || tenant.balance_amount || 0);
-        }
-        return Number(tenant.balance || 0);
-    };
+
 
     useEffect(() => {
         if (visible) {
@@ -221,46 +213,6 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                 await paymentAPI.update(editingPayment.id, payload);
             } else {
                 await paymentAPI.create(payload);
-
-                // Financial Side Effects
-                if (data.status === "COMPLETED" || data.status === "PAID") {
-                    const tenant = tenants.find(t => t.id === data.tenant_id);
-                    if (tenant) {
-                        if (data.type === "DEPOSIT") {
-                            const currentDeposit = Number(tenant.security_deposit || 0);
-                            await tenantAPI.update(tenant.id, { security_deposit: currentDeposit + data.amount });
-                        } else if (data.type === "RENT") {
-                            if (tenant.stay_type === 'DAILY') {
-                                const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-                                const currentPaid = Number(daily?.paid_amount || tenant.paid_amount || 0);
-                                const totalRent = Number(daily?.total_rent || tenant.total_rent || 0);
-                                const newPaid = currentPaid + data.amount;
-                                const newBalance = Math.max(0, totalRent - newPaid);
-                                await tenantAPI.update(tenant.id, {
-                                    paid_amount: newPaid,
-                                    balance_amount: newBalance
-                                });
-                            } else {
-                                const currentBalance = Number(tenant.balance || 0);
-                                await tenantAPI.update(tenant.id, { balance: currentBalance - data.amount });
-                            }
-                        } else if (data.type === "REFUND") {
-                            const currentDeposit = Number(tenant.security_deposit || 0);
-                            await tenantAPI.update(tenant.id, { security_deposit: Math.max(0, currentDeposit - data.amount) });
-                        }
-
-                        // Maintenance Status
-                        const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-                        const maintAmt = tenant.stay_type === 'DAILY' ? (daily?.maintenance_amount || 0) : (tenant.maintenance_amount || 0);
-                        const maintType = tenant.stay_type === 'DAILY' ? daily?.maintenance_type : tenant.maintenance_type;
-
-                        if (maintType === 'one_time' && !tenant.maintenance_paid) {
-                            if (data.type === 'MAINTENANCE' || data.amount >= maintAmt || (data.type === 'RENT' && data.amount > 0)) {
-                                await tenantAPI.update(tenant.id, { maintenance_paid: true });
-                            }
-                        }
-                    }
-                }
             }
 
             setConfirmState({

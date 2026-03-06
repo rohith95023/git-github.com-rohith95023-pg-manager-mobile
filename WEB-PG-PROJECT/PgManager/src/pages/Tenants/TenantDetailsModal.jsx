@@ -1,11 +1,30 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Phone, Mail, MapPin, X, Calendar, Building2, ChevronRight, CheckCircle2, Briefcase, Shield } from 'lucide-react';
 import { SectionHeader, InfoPill, DocCard, FinanceRow } from './TenantFinderComponents';
 import { cn } from '../../lib/utils'; // Adjust if wrong path
+import { supabase } from '../../lib/supabaseClient';
 
-export const TenantDetailsModal = ({ selectedTenant, setSelectedTenant, isDark, syncMonthlyBalance }) => {
+export const TenantDetailsModal = ({ selectedTenant, setSelectedTenant, isDark, syncMonthlyBalance, invoiceBalance, dailyPaidSum }) => {
+  const [paidInvoices, setPaidInvoices] = useState([]);
+
+  useEffect(() => {
+    if (selectedTenant && selectedTenant.stay_type === 'MONTHLY') {
+        const fetchPaidItems = async () => {
+            const { data } = await supabase
+                .from('invoices')
+                .select('type, status')
+                .eq('tenant_id', selectedTenant.id)
+                .in('status', ['PAID']);
+            setPaidInvoices(data || []);
+        };
+        fetchPaidItems();
+    } else {
+        setPaidInvoices([]);
+    }
+  }, [selectedTenant]);
+
   if (!selectedTenant) return null;
 
   return createPortal(
@@ -208,11 +227,14 @@ export const TenantDetailsModal = ({ selectedTenant, setSelectedTenant, isDark, 
                                                         const rentBase = diffDays * Number(daily?.rent_per_day || selectedTenant.rent_per_day || 0);
                                                         const maintBase = Number(daily?.maintenance_amount || selectedTenant.maintenance_amount || 0);
                                                         const totRent = rentBase + maintBase;
-                                                        return Math.max(0, totRent - Number(daily?.paid_amount || 0));
+                                                        return Math.max(0, totRent - Number(dailyPaidSum || 0));
                                                     }
-                                                    return daily?.balance_amount || selectedTenant.balance_amount || 0;
+                                                    const dbBalance = Number(daily?.balance_amount || selectedTenant.balance_amount || 0);
+                                                    const dbPaid = Number(daily?.paid_amount || selectedTenant.paid_amount || 0);
+                                                    return Math.max(0, (dbBalance + dbPaid) - (dailyPaidSum || 0));
                                                 }
-                                                return selectedTenant.balance || 0;
+                                                // Use the injected invoice balance for Monthly residents
+                                                return invoiceBalance || 0;
                                             })()} 
                                             isDark={isDark}
                                             action={
@@ -235,19 +257,10 @@ export const TenantDetailsModal = ({ selectedTenant, setSelectedTenant, isDark, 
                                             label="Maintenance Charge" 
                                             amount={
                                                 selectedTenant.stay_type === "DAILY" 
-                                                  ? (selectedTenant.daily_stay_details?.[0]?.maintenance_amount || selectedTenant.maintenance_amount || 0)
+                                                  ? (Array.isArray(selectedTenant.daily_stay_details) ? selectedTenant.daily_stay_details[0]?.maintenance_amount : selectedTenant.daily_stay_details?.maintenance_amount || selectedTenant.maintenance_amount || 0)
                                                   : (selectedTenant.maintenance_amount || 0)
                                             } 
                                             isDark={isDark}
-                                            action={
-                                                (() => {
-                                                    const daily = Array.isArray(selectedTenant.daily_stay_details) ? selectedTenant.daily_stay_details[0] : selectedTenant.daily_stay_details;
-                                                    const isPaid = selectedTenant.stay_type === 'DAILY' ? (daily?.maintenance_paid) : selectedTenant.maintenance_paid;
-                                                    return isPaid && (
-                                                        <span className="text-[10px] font-bold text-emerald-500 uppercase">Paid</span>
-                                                    );
-                                                })()
-                                            }
                                             sub="Property amenities fee"
                                         />
                                         <FinanceRow 

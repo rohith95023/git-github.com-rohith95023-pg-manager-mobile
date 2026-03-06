@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useSearchParams, useNavigate } from "react-router-dom";
-import { tenantAPI, bedAPI, roomAPI, pgAPI, floorAPI } from "../../services/api";
+import { tenantAPI, bedAPI, roomAPI, pgAPI } from "../../services/api";
 import { Plus, Pencil, Trash2, X, Search, User, Users, Mail, Phone, MapPin, Calendar, CreditCard, ChevronRight, CheckCircle2, AlertCircle, BedDouble, FileText, Building2, RefreshCw, Bug, Filter, ChevronLeft, Check, AlertTriangle, ChevronDown, Layers, SortAsc, Briefcase, DoorOpen } from "lucide-react";
 import { clsx } from "clsx";
 import { twMerge } from "tailwind-merge";
@@ -54,6 +54,8 @@ const Tenants = () => {
   const [editingTenant, setEditingTenant] = useState(null);
   const [searchTerm, setSearchTerm] = useState("");
   const [toast, setToast] = useState(null);
+  const [invoiceBalances, setInvoiceBalances] = useState({});
+  const [dailyPaidSums, setDailyPaidSums] = useState({});
 
 
   // Check for auto-open draft
@@ -204,6 +206,39 @@ const Tenants = () => {
       setPgs(pgsData || []);
       setRooms(roomsData || []);
       setBeds(bedsData || []);
+
+      // Fetch outstanding balances for the current tenants from the Invoices system
+      if (data && data.length > 0) {
+          const tenantIds = data.map(t => t.id);
+          // Also fetch all successful payments to ensure real-time balance for daily stays
+          const [ { data: dailyPayments }, { data: invoices } ] = await Promise.all([
+            supabase
+              .from("payments")
+              .select("tenant_id, amount, status")
+              .in("tenant_id", tenantIds),
+            supabase
+              .from("invoices")
+              .select("tenant_id, total_amount, paid_amount")
+              .in("tenant_id", tenantIds)
+              .in("status", ["UNPAID", "PARTIAL"])
+          ]);
+            
+          const dailySums = {};
+          (dailyPayments || []).forEach(p => {
+              const s = (p.status || "").toUpperCase();
+              if (s === 'PAID' || s === 'COMPLETED' || s === 'PAID_SUCCESS') {
+                   dailySums[p.tenant_id] = (dailySums[p.tenant_id] || 0) + Number(p.amount || 0);
+              }
+          });
+          setDailyPaidSums(dailySums);
+          
+          const balances = {};
+          (invoices || []).forEach(inv => {
+              const amount = Number(inv.total_amount) - Number(inv.paid_amount);
+              balances[inv.tenant_id] = (balances[inv.tenant_id] || 0) + amount;
+          });
+          setInvoiceBalances(balances);
+      }
     } catch (error) {
       console.error("Error fetching data:", error);
     } finally {
@@ -258,23 +293,27 @@ const Tenants = () => {
     let due = 0;
     if (tenant.stay_type === 'DAILY') {
         const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
-        if (daily?.move_in_date && daily?.vacate_date) {
-            const start = new Date(daily.move_in_date);
-            const end = new Date(daily.vacate_date);
-            let diffDays = 1;
-            if (end > start) {
-                diffDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+            if (daily?.move_in_date && daily?.vacate_date) {
+                const start = new Date(daily.move_in_date);
+                const end = new Date(daily.vacate_date);
+                let diffDays = 1;
+                if (end > start) {
+                    diffDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                }
+                const rentBase = diffDays * Number(daily.rent_per_day || tenant.rent_per_day || 0);
+                const maintenanceBase = Number(daily.maintenance_amount || tenant.maintenance_amount || 0);
+                const totalRent = rentBase + maintenanceBase;
+                due = Math.max(0, totalRent - (dailyPaidSums[tenant.id] || 0));
+            } else {
+                const dbBalance = Number(tenant.daily_stay_details?.balance_amount || tenant.balance_amount || 0);
+                const dbPaid = Number(tenant.daily_stay_details?.paid_amount || tenant.paid_amount || 0);
+                due = Math.max(0, (dbBalance + dbPaid) - (dailyPaidSums[tenant.id] || 0));
             }
-            const rentBase = diffDays * Number(daily.rent_per_day || tenant.rent_per_day || 0);
-            const maintenanceBase = Number(daily.maintenance_amount || tenant.maintenance_amount || 0);
-            const totalRent = rentBase + maintenanceBase;
-            due = Math.max(0, totalRent - Number(daily.paid_amount || 0));
+            if (due < 1) due = 0;
         } else {
-            due = Number(tenant.daily_stay_details?.balance_amount || tenant.balance_amount || 0);
+            due = Math.max(0, Number(invoiceBalances[tenant.id] || 0));
+            if (due < 1) due = 0;
         }
-    } else {
-        due = Number(tenant.balance || 0);
-    }
     
     if (due > 0) {
         showToast(`Cannot delete "${tenant.full_name}" because they have an outstanding balance of ₹${due.toLocaleString()}. Please clear all dues first.`, "error", {
@@ -356,16 +395,18 @@ const Tenants = () => {
                 }
                 const rentBase = diffDays * Number(daily.rent_per_day || t.rent_per_day || 0);
                 const maintenanceBase = Number(daily.maintenance_amount || t.maintenance_amount || 0);
-                const totalRent = rentBase + maintenanceBase;
-                due = Math.max(0, totalRent - Number(daily.paid_amount || 0));
+                const totalRent = Math.round(rentBase + maintenanceBase);
+                due = Math.max(0, totalRent - (dailyPaidSums[t.id] || 0));
             } else {
-                due = Number(t.daily_stay_details?.balance_amount || t.balance_amount || 0);
+                const dbBalance = Number(t.daily_stay_details?.balance_amount || t.balance_amount || 0);
+                const dbPaid = Number(t.daily_stay_details?.paid_amount || t.paid_amount || 0);
+                due = Math.max(0, Math.round(dbBalance + dbPaid) - (dailyPaidSums[t.id] || 0));
             }
         } else {
-            due = Number(t.balance || 0);
+            due = Math.max(0, Math.round(Number(invoiceBalances[t.id] || 0)));
         }
         return { ...t, calculatedDue: due };
-    }).filter(t => t.calculatedDue > 0);
+    }).filter(t => t.calculatedDue > 5); // Lenient threshold for floating point (₹5)
 
     if (withDues.length > 0) {
         showToast(`Cannot delete ${withDues.length} residents who have outstanding dues (₹${withDues.reduce((sum, t) => sum + t.calculatedDue, 0).toLocaleString()}). Please clear all dues first.`, "error");
@@ -883,17 +924,25 @@ const Tenants = () => {
                                                 const end = new Date(daily.vacate_date);
                                                 let diffDays = 1;
                                                 if (end > start) {
-                                                    diffDays = Math.floor((end - start) / (1000 * 60 * 60 * 24)) + 1;
+                                                    diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
                                                 }
                                                 const rentBase = diffDays * Number(daily.rent_per_day || tenant.rent_per_day || 0);
                                                 const maintenanceBase = Number(daily.maintenance_amount || tenant.maintenance_amount || 0);
-                                                const totalRent = rentBase + maintenanceBase;
-                                                due = Math.max(0, totalRent - Number(daily.paid_amount || 0));
+                                                const totalExpected = rentBase + maintenanceBase;
+                                                
+                                                // Real-time local calculated paid amount
+                                                const actualPaid = dailyPaidSums[tenant.id] || 0;
+                                                due = Math.max(0, totalExpected - actualPaid);
                                             } else {
-                                                due = Number(tenant.daily_stay_details?.balance_amount || tenant.balance_amount || 0);
+                                                // If dates missing, use DB values but still favor local payment sum if possible
+                                                const dbBalance = Number(tenant.daily_stay_details?.balance_amount || tenant.balance_amount || 0);
+                                                const dbPaid = Number(tenant.daily_stay_details?.paid_amount || tenant.paid_amount || 0);
+                                                const totalExpected = dbBalance + dbPaid;
+                                                due = Math.max(0, totalExpected - (dailyPaidSums[tenant.id] || 0));
                                             }
                                         } else {
-                                            due = Number(tenant.balance || 0);
+                                            // Unified Invoice System for Monthly residents
+                                            due = Number(invoiceBalances[tenant.id] || 0);
                                         }
                                         return due > 0 ? (
                                             <span className="text-[9px] font-black uppercase text-rose-500 flex items-center gap-1 mt-1 bg-rose-500/10 w-fit px-1.5 py-0.5 rounded-md border border-rose-500/20">
@@ -915,7 +964,7 @@ const Tenants = () => {
                             <td className="px-6 py-4">
                                 {tenant.rooms ? (
                                     <div className="flex flex-col">
-                                        <span className="font-bold text-xs text-blue-600">{tenant.pgs?.name}</span>
+                                        <span className="font-bold text-xs text-blue-600">{tenant.pgs?.name ?? "Deleted Property"}</span>
                                             <span className={cn("text-base font-black", isDark ? "text-slate-200" : "text-slate-900")}>
                                                 {tenant.rooms?.room_number || tenant.rooms?.roomNumber ? `Room ${tenant.rooms.room_number || tenant.rooms.roomNumber}` : "Room N/A"}
                                                 {(tenant.beds?.bed_number || tenant.beds?.bedNumber) && (
@@ -941,20 +990,46 @@ const Tenants = () => {
                                                         </span>
                                                     );
                                                 })()}
+                                                {Number(tenant.security_deposit || 0) > 0 && (
+                                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                                        <span className="text-slate-500 text-[9px] flex items-center gap-1">
+                                                            📦 Deposit: ₹{Number(tenant.security_deposit).toLocaleString()}
+                                                        </span>
+                                                        {(() => {
+                                                            // Logic for Deposit Paid: 
+                                                            // If balance is 0 and they have a deposit, they've likely paid it
+                                                            // For Monthly, check overall invoice balance
+                                                            const isPaid = tenant.stay_type === 'DAILY' 
+                                                                ? (dailyPaidSums[tenant.id] >= (tenant.daily_stay_details?.total_rent || 0))
+                                                                : (invoiceBalances[tenant.id] <= 0);
+                                                            
+                                                            return isPaid ? (
+                                                                <span className="bg-emerald-500/10 text-emerald-500 text-[8px] font-black px-1 rounded border border-emerald-500/20 uppercase tracking-tighter">Paid</span>
+                                                            ) : null;
+                                                        })()}
+                                                    </div>
+                                                )}
                                                 {(() => {
                                                     const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
                                                     const maintAmt = tenant.stay_type === 'DAILY' ? (daily?.maintenance_amount || 0) : (tenant.maintenance_amount || 0);
                                                     const maintType = tenant.stay_type === 'DAILY' ? daily?.maintenance_type : tenant.maintenance_type;
-                                                    const isPaid = tenant.stay_type === 'DAILY' ? daily?.maintenance_paid : tenant.maintenance_paid;
-
-                                                    if (maintAmt > 0) return (
-                                                        <span className="text-blue-500 text-[9px] flex items-center gap-1">
-                                                            + ₹{Number(maintAmt).toLocaleString()} Maint ({maintType})
-                                                            {isPaid && (
-                                                                <span className="bg-emerald-500/10 text-emerald-500 text-[8px] font-black px-1 rounded border border-emerald-500/20 uppercase tracking-tighter ml-1 animate-in fade-in">Paid</span>
-                                                            )}
-                                                        </span>
-                                                    );
+                                                    
+                                                     if (maintAmt > 0) {
+                                                        const isMaintPaid = tenant.stay_type === 'DAILY' 
+                                                            ? (Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0]?.maintenance_paid : tenant.daily_stay_details?.maintenance_paid)
+                                                            : (tenant.maintenance_paid);
+                                                        
+                                                        return (
+                                                            <div className="flex items-center gap-1.5">
+                                                                <span className="text-blue-500 text-[9px] flex items-center gap-1">
+                                                                    + ₹{Number(maintAmt).toLocaleString()} Maint ({maintType})
+                                                                </span>
+                                                                {isMaintPaid && (
+                                                                    <span className="bg-emerald-500/10 text-emerald-500 text-[8px] font-black px-1 rounded border border-emerald-500/20 uppercase tracking-tighter">Paid</span>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    }
                                                     return null;
                                                 })()}
                                             </span>
@@ -1080,9 +1155,18 @@ const Tenants = () => {
                                     <p className="text-[9px] text-slate-400 font-medium">🪪 {maskAadhaar(tenant.id_number)}</p>
                                     {/* Mobile Real-time Pending Dues */}
                                     {(() => {
-                                        const due = tenant.stay_type === 'DAILY' 
-                                            ? Number(tenant.daily_stay_details?.balance_amount || tenant.balance_amount || 0)
-                                            : Number(tenant.balance || 0);
+                                        let due = 0;
+                                        if (tenant.stay_type === 'DAILY') {
+                                            const daily = Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0] : tenant.daily_stay_details;
+                                            const start = new Date(daily?.move_in_date || tenant.move_in_date || tenant.check_in_date || tenant.created_at);
+                                            const end = new Date(daily?.vacate_date || tenant.vacate_date);
+                                            let days = 1;
+                                            if (end > start) days = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                            const totalExpected = (days * Number(daily?.rent_per_day || tenant.rent_per_day || 0)) + Number(daily?.maintenance_amount || tenant.maintenance_amount || 0);
+                                            due = Math.max(0, totalExpected - (dailyPaidSums[tenant.id] || 0));
+                                        } else {
+                                            due = Number(invoiceBalances[tenant.id] || 0);
+                                        }
                                         return due > 0 ? (
                                             <span className="text-[9px] font-black uppercase text-rose-500 flex items-center gap-1 mt-1 bg-rose-500/10 w-fit px-1.5 py-0.5 rounded-md border border-rose-500/20">
                                                 Due: ₹{due.toLocaleString('en-IN')}
@@ -1101,17 +1185,38 @@ const Tenants = () => {
                                 <p className="text-[9px] font-bold text-slate-500 uppercase tracking-tight">Assignment</p>
                                 {tenant.rooms ? (
                                     <div className="flex flex-col mt-1">
-                                        <span className="font-bold text-[10px] text-blue-500 truncate">{tenant.pgs?.name}</span>
+                                        <span className="font-bold text-[10px] text-blue-500 truncate">{tenant.pgs?.name ?? "Deleted Property"}</span>
                                         <span className={cn("text-xs font-bold", isDark ? "text-slate-200" : "text-slate-800")}>
                                             {tenant.rooms?.room_number || tenant.rooms?.roomNumber ? `Room ${tenant.rooms.room_number || tenant.rooms.roomNumber}` : "Room N/A"}
                                             {(tenant.beds?.bed_number || tenant.beds?.bedNumber) && ` - Bed ${tenant.beds.bed_number || tenant.beds.bedNumber}`}
                                         </span>
                                         <span className="text-[10px] font-bold text-emerald-600 mt-0.5 uppercase flex flex-col">
                                             <span>₹{(tenant.custom_rent || tenant.rent_per_month || tenant.rent_per_day || 0).toLocaleString()} Rent</span>
+                                            {Number(tenant.security_deposit || 0) > 0 && (
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-slate-500 text-[8px]">
+                                                         📦 ₹{Number(tenant.security_deposit).toLocaleString()} Deposit
+                                                    </span>
+                                                    {(() => {
+                                                        const isPaid = tenant.stay_type === 'DAILY' 
+                                                            ? (dailyPaidSums[tenant.id] >= (tenant.daily_stay_details?.total_rent || 0))
+                                                            : (invoiceBalances[tenant.id] <= 0);
+                                                        return isPaid && <span className="bg-emerald-500/10 text-emerald-500 text-[7px] font-black px-1 rounded border border-emerald-500/10 uppercase tracking-tighter">Paid</span>;
+                                                    })()}
+                                                </div>
+                                            )}
                                             {tenant.maintenance_amount > 0 && (
-                                                <span className="text-blue-500 text-[8px]">
-                                                    + ₹{Number(tenant.maintenance_amount).toLocaleString()} Maint ({tenant.maintenance_type})
-                                                </span>
+                                                <div className="flex items-center gap-1.5">
+                                                    <span className="text-blue-500 text-[8px]">
+                                                        + ₹{Number(tenant.maintenance_amount).toLocaleString()} Maint ({tenant.maintenance_type})
+                                                    </span>
+                                                    {(() => {
+                                                        const isMaintPaid = tenant.stay_type === 'DAILY' 
+                                                            ? (Array.isArray(tenant.daily_stay_details) ? tenant.daily_stay_details[0]?.maintenance_paid : tenant.daily_stay_details?.maintenance_paid)
+                                                            : (tenant.maintenance_paid);
+                                                        return isMaintPaid && <span className="bg-emerald-500/10 text-emerald-500 text-[7px] font-black px-1 rounded border border-emerald-500/10 uppercase tracking-tighter">Paid</span>;
+                                                    })()}
+                                                </div>
                                             )}
                                         </span>
                                     </div>

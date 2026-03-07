@@ -1,21 +1,21 @@
+import { Feather } from "@expo/vector-icons";
 import React, { useState } from "react";
 import {
-    View,
-    Text,
-    TextInput,
-    TouchableOpacity,
-    StyleSheet,
+    ActivityIndicator,
+    Alert,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
-    Alert,
-    ActivityIndicator,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import ForgotPasswordModal from "../components/modals/ForgotPasswordModal";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
-import { Feather } from "@expo/vector-icons";
-import { supabase } from "../lib/supabaseClient";
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
@@ -48,6 +48,7 @@ const AuthScreen = ({ navigation }: any) => {
     const [dob, setDob] = useState("");
     const [gender, setGender] = useState("");
     const [showPassword, setShowPassword] = useState(false);
+    const [showForgotPassword, setShowForgotPassword] = useState(false);
 
     const handleAuth = async () => {
         if (!email || !password) {
@@ -56,8 +57,37 @@ const AuthScreen = ({ navigation }: any) => {
         }
 
         if (isSignUp) {
-            if (!fullName || !phone || !gender || !dob) {
+            const nameRegex = /^[a-zA-Z]+(\s[a-zA-Z]+)*$/;
+            const emailRegex = /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/;
+            const phoneRegex = /^\d{10}$/;
+            const dobRegex = /^\d{4}-\d{2}-\d{2}$/;
+
+            if (!fullName.trim() || !phone.trim() || !gender || !dob) {
                 Alert.alert("Error", "Please fill in all fields for signup.");
+                return;
+            }
+            if (!dobRegex.test(dob)) {
+                Alert.alert("Error", "Please enter Date of Birth in YYYY-MM-DD format.");
+                return;
+            }
+            if (fullName.trim().length < 4 || fullName.trim().length > 40) {
+                Alert.alert("Error", "Name must be between 4 and 40 characters.");
+                return;
+            }
+            if (!nameRegex.test(fullName.trim())) {
+                Alert.alert("Error", "Only alphabets and spaces are allowed in Name.");
+                return;
+            }
+            if (!phoneRegex.test(phone.trim())) {
+                Alert.alert("Error", "Phone number must be exactly 10 digits.");
+                return;
+            }
+            if (!emailRegex.test(email.trim())) {
+                Alert.alert("Error", "Please enter a valid email address.");
+                return;
+            }
+            if (password.length < 6 || password.length > 16) {
+                Alert.alert("Error", "Password must be between 6 and 16 characters.");
                 return;
             }
             if (password !== confirmPassword) {
@@ -211,6 +241,17 @@ const AuthScreen = ({ navigation }: any) => {
                             </View>
                         )}
 
+                        {!isSignUp && (
+                            <TouchableOpacity
+                                style={{ alignSelf: 'flex-end', marginTop: -8, marginBottom: 16 }}
+                                onPress={() => setShowForgotPassword(true)}
+                            >
+                                <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
+                                    Forgot Password?
+                                </Text>
+                            </TouchableOpacity>
+                        )}
+
                         <TouchableOpacity
                             style={[styles.authButton, { backgroundColor: colors.primary }]}
                             onPress={handleAuth}
@@ -236,6 +277,11 @@ const AuthScreen = ({ navigation }: any) => {
                     </View>
                 </ScrollView>
             </KeyboardAvoidingView>
+
+            <ForgotPasswordModal
+                visible={showForgotPassword}
+                onClose={() => setShowForgotPassword(false)}
+            />
         </SafeAreaView>
     );
 };

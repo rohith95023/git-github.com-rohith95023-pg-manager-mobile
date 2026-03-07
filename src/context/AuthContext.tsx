@@ -1,6 +1,6 @@
-import React, { createContext, useContext, useState, useEffect, ReactNode } from "react";
-import { supabase } from "../lib/supabaseClient";
-import { Session, User as SupabaseUser } from "@supabase/supabase-js";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import React, { createContext, ReactNode, useContext, useEffect, useState } from "react";
+import { authClient } from "../services/apiClient";
 
 interface UserProfile {
     id: string;
@@ -16,12 +16,11 @@ interface UserProfile {
 
 interface AuthContextType {
     user: UserProfile | null;
-    session: Session | null;
     loading: boolean;
-    login: (email: string, password: string) => Promise<{ success: boolean; error?: string; user?: SupabaseUser }>;
-    signup: (email: string, password: string, metadata: any) => Promise<{ success: boolean; error?: string; user?: SupabaseUser }>;
+    login: (email: string, password: string) => Promise<{ success: boolean; error?: string; user?: any }>;
+    signup: (email: string, password: string, metadata: any) => Promise<{ success: boolean; error?: string; user?: any }>;
     logout: () => Promise<void>;
-    fetchProfile: (userId: string) => Promise<void>;
+    fetchProfile: () => Promise<void>;
     isAuthenticated: boolean;
     isAdmin: boolean;
     isTenant: boolean;
@@ -32,164 +31,98 @@ const AuthContext = createContext<AuthContextType | null>(null);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const [user, setUser] = useState<UserProfile | null>(null);
-    const [session, setSession] = useState<Session | null>(null);
     const [loading, setLoading] = useState(true);
 
     useEffect(() => {
-        let mounted = true;
-
-        // 1. Subscribe to auth changes
-        const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, s) => {
-            if (!mounted) return;
-            console.log("Auth Event:", event);
-            setSession(s);
-            if (s) fetchProfile(s.user.id);
-            else setUser(null);
-            setLoading(false);
-        });
-
-        // 2. Initial session check
-        supabase.auth.getSession().then(({ data: { session: s } }) => {
-            if (mounted) {
-                setSession(s);
-                if (s) fetchProfile(s.user.id);
+        const checkAuth = async () => {
+            try {
+                // Only attempt session restore if a token exists in storage
+                const token = await AsyncStorage.getItem('auth_token');
+                if (!token) {
+                    // No token — user is not logged in, skip API call
+                    return;
+                }
+                const userData: any = await authClient.getUser();
+                if (userData) {
+                    // The backend returns the profile directly (no wrapper)
+                    setUser(userData);
+                }
+            } catch (error) {
+                // Token exists but is invalid/expired — clear it
+                await AsyncStorage.removeItem('auth_token');
+                console.log("Session expired, please log in again.");
+            } finally {
                 setLoading(false);
             }
-        });
-
-        return () => {
-            mounted = false;
-            subscription.unsubscribe();
         };
+
+        checkAuth();
     }, []);
 
-    const fetchProfile = async (userId: string) => {
+    const fetchProfile = async () => {
         try {
-            const { data, error } = await supabase
-                .from('profiles')
-                .select('*')
-                .eq('id', userId)
-                .single();
-
-            if (error) {
-                console.warn('Error fetching profile:', error.message);
-            }
-
-            if (data) {
-                setUser(data);
-            } else {
-                // Auto-repair profile if missing
-                const { data: { user: authUser } } = await supabase.auth.getUser();
-                if (authUser) {
-                    const repairData = {
-                        id: authUser.id,
-                        email: authUser.email || '',
-                        full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || '',
-                        role: (authUser.user_metadata?.role || 'TENANT').toUpperCase(),
-                        phone: authUser.user_metadata?.phone || '',
-                        gender: authUser.user_metadata?.gender || ''
-                    };
-
-                    const { error: repairError, data: newProfile } = await supabase
-                        .from('profiles')
-                        .upsert(repairData, { onConflict: 'id' })
-                        .select()
-                        .single();
-
-                    if (!repairError && newProfile) {
-                        setUser(newProfile as UserProfile);
-                    } else {
-                        setUser({
-                            id: authUser.id,
-                            email: authUser.email || '',
-                            full_name: repairData.full_name,
-                            role: repairData.role
-                        } as UserProfile);
-                    }
-                }
+            const profile: any = await authClient.getUser();
+            if (profile?.id) {
+                setUser(profile);
             }
         } catch (error) {
-            console.error('Unexpected error fetching profile:', error);
+            console.error('Error fetching profile:', error);
         }
     };
 
     const login = async (email: string, password: string) => {
         try {
-            const { data, error } = await supabase.auth.signInWithPassword({
-                email,
-                password,
+            const response: any = await authClient.signIn(email, password);
+            if (response.access_token) {
+                // Fetch fresh profile after login — backend returns flat profile object
+                const profile: any = await authClient.getUser();
+                if (profile?.id) {
+                    setUser(profile);
+                    return { success: true, user: profile };
+                }
+                return { success: true };
+            }
+            return { success: false, error: "Invalid login response" };
+        } catch (err: any) {
+            return { success: false, error: err.message || 'Login failed' };
+        }
+    };
+
+    const signup = async (email: string, password: string, metadata: any) => {
+        try {
+            const response: any = await authClient.signUp(email, password, {
+                full_name: metadata.fullName,
+                phone: metadata.phone,
+                role: metadata.role || 'TENANT',
+                gender: metadata.gender,
+                dob: metadata.dob
             });
-
-            if (error) return { success: false, error: error.message };
-
-            setSession(data.session);
-            if (data.session) await fetchProfile(data.session.user.id);
-
-            return { success: true, user: data.user };
+            // Handle both response.user and response.profile patterns
+            const userData = response.user || response.profile || response;
+            return { success: true, user: userData };
         } catch (err: any) {
             return { success: false, error: err.message };
         }
     };
 
-    const signup = async (email: string, password: string, metadata: any) => {
-        const { data, error } = await supabase.auth.signUp({
-            email,
-            password,
-            options: {
-                data: {
-                    full_name: metadata.fullName,
-                    phone: metadata.phone,
-                    role: metadata.role || 'TENANT',
-                    gender: metadata.gender,
-                    dob: metadata.dob
-                }
-            }
-        });
-
-        if (error) return { success: false, error: error.message };
-
-        if (data.user && data.session) {
-            await supabase
-                .from('profiles')
-                .upsert({
-                    id: data.user.id,
-                    full_name: metadata.fullName,
-                    role: metadata.role || 'TENANT',
-                    phone: metadata.phone,
-                    gender: metadata.gender,
-                    dob: metadata.dob,
-                    email: email
-                }, { onConflict: 'id' });
-        }
-
-        return { success: true, user: data.user || undefined };
-    };
-
     const logout = async () => {
         setLoading(true);
-        await supabase.auth.signOut();
+        await authClient.signOut();
         setUser(null);
-        setSession(null);
         setLoading(false);
     };
 
     const value = {
-        user: user || (session?.user ? {
-            id: session.user.id,
-            email: session.user.email || null,
-            full_name: session.user.user_metadata?.full_name || '',
-            role: session.user.user_metadata?.role || 'TENANT'
-        } : null),
-        session,
+        user,
         loading,
         login,
         signup,
         logout,
         fetchProfile,
-        isAuthenticated: !!session,
-        isAdmin: user?.role === "ADMIN" || session?.user?.user_metadata?.role === "ADMIN",
-        isTenant: user?.role === "TENANT" || session?.user?.user_metadata?.role === "TENANT",
-        isManager: user?.role === "MANAGER" || session?.user?.user_metadata?.role === "MANAGER",
+        isAuthenticated: !!user,
+        isAdmin: user?.role === "ADMIN",
+        isTenant: user?.role === "TENANT",
+        isManager: user?.role === "MANAGER",
     };
 
     return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -1,80 +1,52 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import React, { useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    ScrollView,
-    RefreshControl,
     ActivityIndicator,
     Dimensions,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
     TouchableOpacity,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { pnlAPI } from "../services/api";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-// import {
-//     VictoryBar,
-//     VictoryChart,
-//     VictoryAxis,
-//     VictoryGroup,
-//     VictoryPie,
-//     VictoryTheme,
-//     VictoryContainer,
-// } from "victory-native";
-import useThemePalette from "../hooks/useThemePalette";
+import {
+    VictoryAxis,
+    VictoryBar,
+    VictoryChart,
+    VictoryGroup,
+    VictoryPie,
+    VictoryTheme
+} from "victory-native";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import { useData } from "../context/DataContext";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
 const ProfitLossScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [summary, setSummary] = useState<any[]>([]);
-    const [categoryStats, setCategoryStats] = useState<any[]>([]);
+    const { pnlSummary, pnlCategories, loading, refreshing, refresh } = useData();
+
+    const summary = pnlSummary;
+    const categoryStats = pnlCategories;
+
     const [selectedTimeFilter, setSelectedTimeFilter] = useState("Monthly");
 
     // Filter bottom sheet state
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
     const [pendingTimeFilter, setPendingTimeFilter] = useState("Monthly");
-    const [availableMonths, setAvailableMonths] = useState<string[]>([]);
     const [selectedMonth, setSelectedMonth] = useState("all");
     const [pendingMonth, setPendingMonth] = useState("all");
 
-    const fetchData = useCallback(async () => {
-        try {
-            setLoading(true);
-            const [summaryRes, categoryRes]: any = await Promise.all([
-                pnlAPI.getSummary(),
-                pnlAPI.getCategoryStats()
-            ]);
+    const availableMonths = useMemo(() => {
+        const months = summary.map((item: any) => item.month).filter(Boolean) as string[];
+        return [...new Set(months)].sort((a, b) => new Date(b).getTime() - new Date(a).getTime());
+    }, [summary]);
 
-            setSummary(summaryRes || []);
-            setCategoryStats(categoryRes || []);
-
-            // Extract available months from summary data
-            const months = (summaryRes || []).map((item: any) => item.month).filter(Boolean) as string[];
-            const uniqueMonths = [...new Set(months)].sort((a, b) =>
-                new Date(b).getTime() - new Date(a).getTime()
-            );
-            setAvailableMonths(uniqueMonths);
-        } catch (error) {
-            console.error("Failed to fetch P&L data:", error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        fetchData();
-    }, [fetchData]);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchData();
-    };
+    const onRefresh = () => refresh();
 
     const stats = useMemo(() => {
         const rev = summary.reduce((sum, item) => sum + (Number(item.total_revenue) || 0), 0);
@@ -179,7 +151,7 @@ const ProfitLossScreen = ({ navigation }: any) => {
                         <View>
                             <Text style={styles.mainLabel}>NET PROFIT</Text>
                             <Text style={[styles.mainValue, { color: stats.netProfit >= 0 ? COLORS.success : COLORS.danger }]}>
-                                ₹{stats.netProfit.toLocaleString()}
+                                ₹{Number(stats.netProfit || 0).toLocaleString()}
                             </Text>
                         </View>
                         <View style={[styles.mainIcon, { backgroundColor: (stats.netProfit >= 0 ? COLORS.success : COLORS.danger) + '10' }]}>
@@ -195,11 +167,11 @@ const ProfitLossScreen = ({ navigation }: any) => {
                     <View style={styles.statGrid}>
                         <View style={styles.statCell}>
                             <Text style={styles.statLabel}>REVENUE</Text>
-                            <Text style={[styles.statValue, { color: COLORS.success }]}>₹{stats.totalRevenue.toLocaleString()}</Text>
+                            <Text style={[styles.statValue, { color: COLORS.success }]}>₹{Number(stats.totalRevenue || 0).toLocaleString()}</Text>
                         </View>
                         <View style={styles.statCell}>
                             <Text style={styles.statLabel}>EXPENSES</Text>
-                            <Text style={[styles.statValue, { color: COLORS.danger }]}>₹{stats.totalExpenses.toLocaleString()}</Text>
+                            <Text style={[styles.statValue, { color: COLORS.danger }]}>₹{Number(stats.totalExpenses || 0).toLocaleString()}</Text>
                         </View>
                         <View style={styles.statCell}>
                             <Text style={styles.statLabel}>MARGIN</Text>
@@ -227,18 +199,76 @@ const ProfitLossScreen = ({ navigation }: any) => {
                 </View>
 
                 {/* Monthly Performance Chart */}
-                <View style={[styles.chartCard, { height: 200, justifyContent: 'center' }]}>
-                    <Feather name="bar-chart-2" size={48} color={COLORS.primary + "40"} />
-                    <Text style={{ color: COLORS.textMuted, marginTop: 12 }}>Analytics Chart Placeholder</Text>
+                <View style={styles.chartCard}>
+                    {chartData.length > 0 ? (
+                        <VictoryChart
+                            theme={VictoryTheme.material}
+                            domainPadding={{ x: 20 }}
+                            width={width - 32}
+                            height={220}
+                            padding={{ top: 20, bottom: 40, left: 50, right: 30 }}
+                        >
+                            <VictoryAxis
+                                tickValues={chartData.map(d => d.month)}
+                                style={{
+                                    tickLabels: { fontSize: 10, fill: COLORS.textMuted, fontWeight: '700' },
+                                    axis: { stroke: COLORS.border }
+                                }}
+                            />
+                            <VictoryAxis
+                                dependentAxis
+                                tickFormat={(x) => `₹${x / 1000}k`}
+                                style={{
+                                    tickLabels: { fontSize: 10, fill: COLORS.textMuted, fontWeight: '700' },
+                                    axis: { stroke: COLORS.border },
+                                    grid: { stroke: COLORS.border, strokeDasharray: "4, 4" }
+                                }}
+                            />
+                            <VictoryGroup offset={12} colorScale={[COLORS.success, COLORS.danger]}>
+                                <VictoryBar
+                                    data={chartData}
+                                    x="month"
+                                    y="revenue"
+                                    cornerRadius={{ top: 4 }}
+                                />
+                                <VictoryBar
+                                    data={chartData}
+                                    x="month"
+                                    y="expense"
+                                    cornerRadius={{ top: 4 }}
+                                />
+                            </VictoryGroup>
+                        </VictoryChart>
+                    ) : (
+                        <View style={{ height: 200, justifyContent: 'center', alignItems: 'center' }}>
+                            <ActivityIndicator color={COLORS.primary} />
+                        </View>
+                    )}
                 </View>
 
                 {/* Expense Distribution */}
                 <View style={styles.sectionHeaderRow}>
                     <Text style={styles.sectionTitle}>Expense Breakup</Text>
                 </View>
-                <View style={[styles.chartCard, { height: 200, justifyContent: 'center' }]}>
-                    <Feather name="pie-chart" size={48} color={COLORS.success + "40"} />
-                    <Text style={{ color: COLORS.textMuted, marginTop: 12 }}>Distribution Chart Placeholder</Text>
+                <View style={styles.chartCard}>
+                    {pieData.length > 0 ? (
+                        <VictoryPie
+                            data={pieData}
+                            colorScale={[COLORS.primary, COLORS.success, COLORS.warning, COLORS.danger, COLORS.primary]}
+                            width={width - 32}
+                            height={220}
+                            innerRadius={60}
+                            padding={{ top: 20, bottom: 20, left: 80, right: 80 }}
+                            labels={({ datum }: any) => `${datum.x}\n₹${(datum.y / 1000).toFixed(1)}k`}
+                            style={{
+                                labels: { fontSize: 10, fontWeight: '700', fill: COLORS.text }
+                            }}
+                        />
+                    ) : (
+                        <View style={{ height: 200, justifyContent: 'center', alignItems: 'center' }}>
+                            <Text style={{ color: COLORS.textMuted }}>No Categorized Data</Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Detailed Breakdown */}

@@ -1,29 +1,29 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    FlatList,
-    TextInput,
-    ScrollView,
-    RefreshControl,
     ActivityIndicator,
+    Alert,
     Dimensions,
-    Alert
+    FlatList,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { roomAPI, bedAPI, pgAPI } from "../services/api";
-import { supabase } from "../lib/supabaseClient";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import { generateDeleteCode } from "../utils/security";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
-import DropdownSelector from "../components/common/DropdownSelector";
-import RoomFormModal from "../components/modals/RoomFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import MaintenanceModal from "../components/modals/MaintenanceModal";
+import RoomFormModal from "../components/modals/RoomFormModal";
+import { useData } from "../context/DataContext";
+import useThemePalette from "../hooks/useThemePalette";
+import { roomAPI } from "../services/api";
+import { generateDeleteCode } from "../utils/security";
 
 const { width } = Dimensions.get("window");
 
@@ -38,20 +38,16 @@ const RoomsScreen = ({ navigation }: any) => {
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [viewMode, setViewMode] = useState<"ROOMS" | "BEDS">("ROOMS");
-    const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [filters, setFilters] = useState(createDefaultRoomFilters());
     const [pendingFilters, setPendingFilters] = useState(createDefaultRoomFilters());
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
-
-    const [rooms, setRooms] = useState<any[]>([]);
-    const [beds, setBeds] = useState<any[]>([]);
-    const [pgs, setPgs] = useState<any[]>([]);
-
     const [searchTerm, setSearchTerm] = useState("");
 
     // Modal State
     const [roomModalVisible, setRoomModalVisible] = useState(false);
+    const [maintenanceModalVisible, setMaintenanceModalVisible] = useState(false);
+    const [selectedEntity, setSelectedEntity] = useState<any>(null);
     const [editingRoom, setEditingRoom] = useState<any>(null);
 
     const [confirmState, setConfirmState] = useState<{
@@ -81,37 +77,17 @@ const RoomsScreen = ({ navigation }: any) => {
         setPendingFilters(prev => ({ ...prev, showArchived: value }));
     };
 
-    const fetchData = useCallback(async () => {
-        try {
-            setLoading(true);
-            const [roomsData, bedsData, pgsData] = await Promise.all([
-                roomAPI.getAll(),
-                bedAPI.getAll(),
-                pgAPI.getAll()
-            ]);
-            setRooms(Array.isArray(roomsData) ? roomsData : []);
-            setBeds(Array.isArray(bedsData) ? bedsData : []);
-            setPgs(Array.isArray(pgsData) ? pgsData : []);
-        } catch (error) {
-            console.error("Failed to fetch Rooms/Beds data:", error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, []);
+    // ─── DataContext ─────────────────────────────────────────────────────
+    const { rooms: ctxRooms, beds: ctxBeds, pgs: ctxPgs, loading, refresh } = useData();
+    const [rooms, setRooms] = useState<any[]>(ctxRooms);
+    const [beds, setBeds] = useState<any[]>(ctxBeds);
+    const [pgs, setPgs] = useState<any[]>(ctxPgs);
+    const onRefresh = () => refresh();
 
-    useEffect(() => {
-        if (isFocused) {
-            fetchData();
-        }
-    }, [fetchData, isFocused]);
-
-    useRefreshOnForeground(fetchData, isFocused);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchData();
-    };
+    // Sync local state with context data
+    useEffect(() => { setRooms(ctxRooms); }, [ctxRooms]);
+    useEffect(() => { setBeds(ctxBeds); }, [ctxBeds]);
+    useEffect(() => { setPgs(ctxPgs); }, [ctxPgs]);
 
     const handleAddRoom = () => {
         setEditingRoom(null);
@@ -125,16 +101,8 @@ const RoomsScreen = ({ navigation }: any) => {
 
     const handleDeleteRoom = async (id: string, roomNumber: string) => {
         try {
-            setLoading(true);
-            const { count, error } = await supabase
-                .from("beds")
-                .select("id", { count: "exact", head: true })
-                .eq("room_id", id)
-                .not("tenant_id", "is", null);
-
-            setLoading(false);
-
-            if (error) throw error;
+            const room = rooms.find((r: any) => r.id === id);
+            const count = room?.current_occupancy || 0;
 
             if (count && count > 0) {
                 setConfirmState({
@@ -165,7 +133,7 @@ const RoomsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         await roomAPI.delete(id);
-                        await fetchData();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
@@ -176,7 +144,6 @@ const RoomsScreen = ({ navigation }: any) => {
                 }
             });
         } catch (error: any) {
-            setLoading(false);
             console.error("Delete room check error:", error);
             Alert.alert("Error", "Error checking room occupancy: " + error.message);
         }
@@ -310,7 +277,19 @@ const RoomsScreen = ({ navigation }: any) => {
                     <Text style={styles.residentSub}>Current Resident</Text>
                 </View>
                 {item.status !== "MAINTENANCE" && (
-                    <TouchableOpacity style={styles.fixButton}>
+                    <TouchableOpacity
+                        style={styles.fixButton}
+                        onPress={() => {
+                            setSelectedEntity({
+                                id: item.id,
+                                type: 'BED',
+                                pg_id: item.rooms?.pg_id,
+                                bed_number: item.bed_number,
+                                pg_name: item.rooms?.pgs?.name
+                            });
+                            setMaintenanceModalVisible(true);
+                        }}
+                    >
                         <Feather name="tool" size={12} color={COLORS.warning} />
                         <Text style={styles.fixButtonText}>Fix</Text>
                     </TouchableOpacity>
@@ -486,9 +465,21 @@ const RoomsScreen = ({ navigation }: any) => {
             <RoomFormModal
                 visible={roomModalVisible}
                 onClose={() => setRoomModalVisible(false)}
-                onSuccess={fetchData}
+                onSuccess={refresh}
                 editingRoom={editingRoom}
                 initialPgId={filters.property || undefined}
+            />
+
+            <MaintenanceModal
+                visible={maintenanceModalVisible}
+                onClose={() => setMaintenanceModalVisible(false)}
+                onSuccess={refresh}
+                editingRequest={selectedEntity ? {
+                    entity_type: selectedEntity.type,
+                    entity_id: selectedEntity.id,
+                    pg_id: selectedEntity.pg_id,
+                    description: `Issue reported for ${selectedEntity.type} ${selectedEntity.type === 'BED' ? selectedEntity.bed_number : ''}`,
+                } : null}
             />
 
             <ConfirmationModal

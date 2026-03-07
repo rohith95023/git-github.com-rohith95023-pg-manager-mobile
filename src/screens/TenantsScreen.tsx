@@ -1,31 +1,30 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    FlatList,
-    TextInput,
-    RefreshControl,
     ActivityIndicator,
     Dimensions,
-    Linking
+    FlatList,
+    Linking,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { tenantAPI, pgAPI, roomAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
 import ConfirmationModal from "../components/common/ConfirmationModal";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
-import { supabase } from "../lib/supabaseClient";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
-import { generateDeleteCode } from "../utils/security";
-import NotificationService from "../services/NotificationService";
 import ThemeToggleButton from "../components/ThemeToggleButton";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import useThemePalette from "../hooks/useThemePalette";
+import { bedAPI, pgAPI, roomAPI, tenantAPI } from "../services/api";
+import { billingService } from "../services/billing.service";
+import NotificationService from "../services/NotificationService";
+import { generateDeleteCode } from "../utils/security";
 
 const { width } = Dimensions.get("window");
 
@@ -159,7 +158,7 @@ const TenantsScreen = ({ navigation }: any) => {
                 try {
                     setConfirmState(prev => ({ ...prev, loading: true }));
                     if (tenant.bed_id) {
-                        await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
+                        await bedAPI.update(tenant.bed_id, { status: "AVAILABLE", tenant_id: null });
                     }
                     await tenantAPI.update(tenant.id, { status: "DELETED" });
                     if (tenant.room_id) {
@@ -273,9 +272,9 @@ const TenantsScreen = ({ navigation }: any) => {
     const fetchFloors = useCallback(async (pgId: string) => {
         if (!pgId || pgId === "ALL") return [];
         try {
-            const { data, error } = await supabase.from("rooms").select("floor").eq("pg_id", pgId);
-            if (error) throw error;
-            const uniqueFloors = [...new Set(data.map((room: any) => room.floor))]
+            const data: any = await roomAPI.getByPgId(pgId);
+            const rooms = Array.isArray(data) ? data : (data?.data || []);
+            const uniqueFloors = [...new Set(rooms.map((room: any) => room.floor))]
                 .filter((f) => f !== null && f !== undefined && f !== "")
                 .sort((a: any, b: any) => Number(a) - Number(b))
                 .map((f) => ({
@@ -292,11 +291,10 @@ const TenantsScreen = ({ navigation }: any) => {
     const fetchRoomFilterList = useCallback(async (pgId: string, floor: string) => {
         if (!pgId || pgId === "ALL") return [];
         try {
-            let query = supabase.from("rooms").select("*").eq("pg_id", pgId);
-            if (floor && floor !== "ALL") query = query.eq("floor", floor);
-            const { data, error } = await query.order("floor").order("room_number");
-            if (error) throw error;
-            return data || [];
+            const data: any = await roomAPI.getByPgId(pgId);
+            let rooms = Array.isArray(data) ? data : (data?.data || []);
+            if (floor && floor !== "ALL") rooms = rooms.filter((r: any) => String(r.floor) === floor);
+            return rooms;
         } catch (error) {
             console.error("Error fetching rooms for filter sheet:", error);
             return [];
@@ -378,7 +376,7 @@ const TenantsScreen = ({ navigation }: any) => {
                     const promises = selectedTenantIds.map(async (id) => {
                         const tenant = tenants.find(t => t.id === id);
                         if (!tenant) return;
-                        if (tenant.bed_id) await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
+                        if (tenant.bed_id) await bedAPI.update(tenant.bed_id, { status: "AVAILABLE", tenant_id: null });
                         await tenantAPI.update(tenant.id, { status: "DELETED" });
                         if (tenant.room_id) await roomAPI.recalculateOccupancy(tenant.room_id);
                     });
@@ -467,7 +465,7 @@ const TenantsScreen = ({ navigation }: any) => {
 
                         {balance > 0 && (
                             <View style={styles.dueAmountRow}>
-                                <Text style={styles.dueAmountValue}>₹{balance.toLocaleString()} PENDING</Text>
+                                <Text style={styles.dueAmountValue}>₹{Number(balance || 0).toLocaleString()} PENDING</Text>
                             </View>
                         )}
 

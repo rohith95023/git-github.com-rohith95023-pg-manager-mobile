@@ -1,24 +1,23 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    Alert,
+    Dimensions,
+    RefreshControl,
     ScrollView,
     StyleSheet,
+    Text,
     TouchableOpacity,
-    RefreshControl,
-    ActivityIndicator,
-    Dimensions,
-    Pressable
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAuth } from "../context/AuthContext";
-import { statsAPI, paymentAPI, tenantAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import ThemeToggleButton from "../components/ThemeToggleButton";
+import { useAuth } from "../context/AuthContext";
+import { useData } from "../context/DataContext";
+import useThemePalette from "../hooks/useThemePalette";
+import { statsAPI } from "../services/api";
+import ExportService from "../services/ExportService";
 
 const { width } = Dimensions.get("window");
 
@@ -26,41 +25,28 @@ const Dashboard = ({ navigation, route }: any) => {
     const { user } = useAuth();
     const isFocused = useIsFocused();
     const COLORS = useThemePalette();
-    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [stats, setStats] = useState<any>(null);
-    const [recentPayments, setRecentPayments] = useState<any[]>([]);
-    const [dailyTenants, setDailyTenants] = useState<any[]>([]);
+    const { dashboardStats, dashboardKpis, tenants, payments, refresh, loading, refreshing } = useData();
+
+    const stats = dashboardStats;
+    const kpis = dashboardKpis;
+    const recentPayments = stats?.recentPayments || payments.slice(0, 5);
+    const dailyTenants = tenants.filter((t: any) => t.stay_type === 'DAILY').slice(0, 5);
+
+    const [exportRefreshing, setExportRefreshing] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
-    const fetchData = useCallback(async () => {
+    const handleExport = async () => {
         try {
-            // Sync Monthly Invoices on load (Billing Engine V2)
-            try {
-                if (user?.id) {
-                    await billingService.generateMonthlyInvoices(user.id);
-                }
-            } catch (err) {
-                console.warn("Monthly invoice generation failed:", err);
-            }
-
-            const [statsRes, tenantsRes]: any = await Promise.all([
-                statsAPI.getDashboardStats(),
-                tenantAPI.getActive()
-            ]);
-
-            const statsData = statsRes.data || statsRes;
-            if (statsRes) setStats(statsData);
-            setRecentPayments(statsData?.recentPayments || []);
-            setDailyTenants((tenantsRes?.data || tenantsRes || []).filter((t: any) => t.stay_type === 'DAILY').slice(0, 5));
+            setExportRefreshing(true);
+            await ExportService.exportToExcel();
+            Alert.alert("Success", "System data exported successfully!");
         } catch (error) {
-            console.error("Failed to fetch dashboard data:", error);
+            Alert.alert("Error", "Failed to export data");
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            setExportRefreshing(false);
         }
-    }, [user]);
+    };
 
     const groupedInvoices = useMemo(() => {
         const groups: { [key: string]: any[] } = {};
@@ -91,32 +77,8 @@ const Dashboard = ({ navigation, route }: any) => {
         }
     };
 
-    useEffect(() => {
-        if (route.params?.refresh) {
-            onRefresh();
-        }
-    }, [route.params?.refresh]);
+    const onRefresh = () => refresh();
 
-    useRefreshOnForeground(fetchData, isFocused);
-
-    useEffect(() => {
-        if (isFocused) {
-            fetchData();
-        }
-    }, [fetchData, isFocused]);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchData();
-    };
-
-    if (loading && !refreshing) {
-        return (
-            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
-            </View>
-        );
-    }
 
     return (
         <SafeAreaView style={styles.container}>
@@ -127,8 +89,11 @@ const Dashboard = ({ navigation, route }: any) => {
                 </TouchableOpacity>
                 <Text style={styles.appBarTitle}>Overview</Text>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <TouchableOpacity onPress={handleExport} style={[styles.appBarButton, { marginRight: 8 }]}>
+                        <Feather name="download" size={20} color={COLORS.text} />
+                    </TouchableOpacity>
                     <ThemeToggleButton style={{ marginRight: 12 }} />
-                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                    <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={styles.appBarButton}>
                         <Ionicons name="notifications-outline" size={20} color={COLORS.text} />
                     </TouchableOpacity>
                 </View>
@@ -140,10 +105,27 @@ const Dashboard = ({ navigation, route }: any) => {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
             >
                 {/* Modernized Welcome Section */}
-                <View style={styles.welcomeCard}>
-                    <View>
+                <View style={[styles.welcomeCard, { paddingBottom: 16 }]}>
+                    <View style={{ flex: 1 }}>
                         <Text style={styles.welcomeTitle}>Hello{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : '!'}</Text>
                         <Text style={styles.dateLabel}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Text>
+
+                        <TouchableOpacity
+                            style={styles.generateBtn}
+                            onPress={async () => {
+                                if (!user?.id) return;
+                                try {
+                                    await statsAPI.generateMonthlyInvoices();
+                                    Alert.alert("Success", "Monthly invoices generated successfully!");
+                                    refresh();
+                                } catch (err: any) {
+                                    Alert.alert("Error", err.message || "Failed to generate invoices.");
+                                }
+                            }}
+                        >
+                            <Feather name="file-text" size={14} color="#fff" />
+                            <Text style={styles.generateBtnText}>Generate Invoices</Text>
+                        </TouchableOpacity>
                     </View>
                     <View style={styles.mainKPIBox}>
                         <Text style={styles.mainKPIValue}>{stats?.occupancyRate || 0}%</Text>
@@ -157,29 +139,29 @@ const Dashboard = ({ navigation, route }: any) => {
                         <View style={[styles.iconPill, { backgroundColor: COLORS.primary + "15" }]}>
                             <Feather name="home" size={14} color={COLORS.primary} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.totalPGs || 0}</Text>
+                        <Text style={styles.statValue}>{stats?.totalPGs || kpis?.totalPgs || 0}</Text>
                         <Text style={styles.statLabel}>Properties</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.success + "15" }]}>
                             <Feather name="box" size={14} color={COLORS.success} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.activeRooms || 0}</Text>
+                        <Text style={styles.statValue}>{stats?.activeRooms || kpis?.activeRooms || 0}</Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.warning + "15" }]}>
                             <Feather name="users" size={14} color={COLORS.warning} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.totalTenants || 0}</Text>
+                        <Text style={styles.statValue}>{stats?.totalTenants || kpis?.totalTenants || 0}</Text>
                         <Text style={styles.statLabel}>Residents</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.danger + "15" }]}>
-                            <Feather name="clock" size={14} color={COLORS.danger} />
+                            <MaterialCommunityIcons name="bed-outline" size={14} color={COLORS.danger} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.dailyActiveTenants || 0}</Text>
-                        <Text style={styles.statLabel}>Daily Stays</Text>
+                        <Text style={styles.statValue}>{kpis?.availableBeds || 0}</Text>
+                        <Text style={styles.statLabel}>Free Beds</Text>
                     </View>
                 </View>
 
@@ -219,7 +201,11 @@ const Dashboard = ({ navigation, route }: any) => {
                         </View>
                         <View style={styles.financeItem}>
                             <Text style={styles.financeLabel}>Due</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.pendingDues || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.pendingDues || kpis?.pendingDues || 0).toLocaleString()}</Text>
+                        </View>
+                        <View style={styles.financeItem}>
+                            <Text style={styles.financeLabel}>All-time</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.textMuted }]}>₹{(kpis?.allTimeRevenue || 0).toLocaleString()}</Text>
                         </View>
                         <TouchableOpacity
                             style={styles.detailsBtn}
@@ -337,7 +323,7 @@ const Dashboard = ({ navigation, route }: any) => {
                                                 </Text>
                                             </View>
                                             <Text style={[styles.itemPrice, { fontSize: 13, color: COLORS.danger }]}>
-                                                ₹{(inv.total_amount - inv.paid_amount).toLocaleString()}
+                                                ₹{Number((Number(inv.total_amount) || 0) - (Number(inv.paid_amount) || 0)).toLocaleString()}
                                             </Text>
                                         </TouchableOpacity>
                                     ))}
@@ -427,6 +413,18 @@ const createStyles = (COLORS: any) =>
         mainKPIBox: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.1)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 16 },
         mainKPIValue: { fontSize: 18, fontWeight: '900', color: '#fff' },
         mainKPILabel: { fontSize: 8, fontWeight: '900', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', marginTop: 2 },
+        generateBtn: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: 'rgba(255,255,255,0.15)',
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 12,
+            marginTop: 12,
+            alignSelf: 'flex-start'
+        },
+        generateBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
         // Quick Stats
         statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },

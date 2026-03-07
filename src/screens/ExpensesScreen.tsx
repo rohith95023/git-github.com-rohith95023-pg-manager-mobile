@@ -1,27 +1,27 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    FlatList,
+    RefreshControl,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    Dimensions,
-    Alert,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { expenseAPI, pgAPI } from "../services/api";
-import { supabase } from "../lib/supabaseClient";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
-import DropdownSelector from "../components/common/DropdownSelector";
-import ExpenseFormModal from "../components/modals/ExpenseFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ExpenseFormModal from "../components/modals/ExpenseFormModal";
+import { useData } from "../context/DataContext";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import useThemePalette from "../hooks/useThemePalette";
+import { expenseAPI } from "../services/api";
 
 const { width } = Dimensions.get("window");
 
@@ -31,10 +31,10 @@ const DEFAULT_EXPENSE_FILTERS = { category: "ALL", propertyId: "ALL" };
 const ExpensesScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const isFocused = useIsFocused();
+    const { pgs, refresh: globalRefresh } = useData();
     const [loading, setLoading] = useState(false);
     const [refreshing, setRefreshing] = useState(false);
     const [expenses, setExpenses] = useState<any[]>([]);
-    const [pgs, setPgs] = useState<any[]>([]);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
@@ -113,7 +113,7 @@ const ExpensesScreen = ({ navigation }: any) => {
             if (pageNum === 1) setLoading(true);
             else setLoadingMore(true);
 
-            const [expensesRes, pgsData, sumRes]: any = await Promise.all([
+            const [expensesRes, pgsData, statsRes]: any = await Promise.all([
                 expenseAPI.search({
                     page: pageNum,
                     limit: 10,
@@ -121,11 +121,8 @@ const ExpensesScreen = ({ navigation }: any) => {
                     category: filters.category,
                     pgId: filters.propertyId,
                 }),
-                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
-                pageNum === 1 ? supabase.from("expenses").select("amount")
-                    .filter("category", filters.category === "ALL" ? "neq" : "eq", filters.category === "ALL" ? "RESERVED_FALLBACK_NONE" : filters.category.toUpperCase())
-                    .filter("pg_id", filters.propertyId === "ALL" ? "neq" : "eq", filters.propertyId === "ALL" ? "00000000-0000-0000-0000-000000000000" : filters.propertyId)
-                    .then(res => ({ sum: res.data?.reduce((s, e) => s + (Number(e.amount) || 0), 0) || 0 })) : Promise.resolve({ sum: totalOutflowSum })
+                pageNum === 1 ? Promise.resolve(pgs) : Promise.resolve(pgs),
+                pageNum === 1 ? expenseAPI.getStats({ pg_id: filters.propertyId === "ALL" ? "all" : filters.propertyId }) : Promise.resolve({ total_outflow: totalOutflowSum })
             ]);
 
             const expenseList = expensesRes?.data || [];
@@ -135,12 +132,12 @@ const ExpensesScreen = ({ navigation }: any) => {
                 setExpenses(prev => [...prev, ...expenseList]);
             } else {
                 setExpenses(expenseList);
-                setTotalOutflowSum(sumRes.sum);
+                setTotalOutflowSum(statsRes.total_outflow || 0);
             }
 
             setTotalCount(count);
             setHasMore(shouldAppend ? (expenses.length + expenseList.length < count) : (expenseList.length < count));
-            if (pageNum === 1) setPgs(pgsData || []);
+
             setPage(pageNum);
         } catch (error) {
             console.error("Failed to fetch expenses:", error);
@@ -242,7 +239,7 @@ const ExpensesScreen = ({ navigation }: any) => {
                 <View style={styles.mainStatCard}>
                     <View>
                         <Text style={styles.mainStatLabel}>TOTAL OUTFLOW</Text>
-                        <Text style={styles.mainStatValue}>₹{stats.totalOutflow.toLocaleString()}</Text>
+                        <Text style={styles.mainStatValue}>₹{Number(stats.totalOutflow || 0).toLocaleString()}</Text>
                     </View>
                     <View style={[styles.mainStatIcon, { backgroundColor: COLORS.danger + '10' }]}>
                         <MaterialCommunityIcons name="cash-remove" size={24} color={COLORS.danger} />

@@ -1,27 +1,26 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    FlatList,
+    RefreshControl,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    Dimensions,
-    Alert,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { pgAPI } from "../services/api";
-import { supabase } from "../lib/supabaseClient";
-import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import { pgAPI } from "../services/api";
 import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
-import PGFormModal from "../components/modals/PGFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import PGFormModal from "../components/modals/PGFormModal";
 import ThemeToggleButton from "../components/ThemeToggleButton";
 
 const { width } = Dimensions.get("window");
@@ -30,11 +29,21 @@ const PGsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [pgs, setPgs] = useState<any[]>([]);
+    const { pgs: allPgs, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
+    const [refreshing, setRefreshing] = useState(false);
+
+    // Filter from global data
+    const pgs = useMemo(() =>
+        allPgs.filter((p: any) => activeTab === "Active" ? p.status !== 'INACTIVE' : p.status === 'INACTIVE'),
+        [allPgs, activeTab]
+    );
+
+    const loading = globalLoading;
+
+    const onRefresh = () => refresh();
 
     // Modal State
     const [modalVisible, setModalVisible] = useState(false);
@@ -62,31 +71,8 @@ const PGsScreen = ({ navigation }: any) => {
     const [confirmInput, setConfirmInput] = useState("");
     const [confirmTargetCode, setConfirmTargetCode] = useState("");
 
-    const fetchPGs = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data: any = await pgAPI.getAllWithStats(activeTab === "Active" ? "ACTIVE" : "INACTIVE");
-            setPgs(Array.isArray(data) ? data : []);
-        } catch (error) {
-            console.error("Failed to fetch properties:", error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, [activeTab]);
-
-    useEffect(() => {
-        if (isFocused) {
-            fetchPGs();
-        }
-    }, [fetchPGs, isFocused]);
-
-    useRefreshOnForeground(fetchPGs, isFocused);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchPGs();
-    };
+    // Local loading only for mutation operations (add/edit/delete)
+    const [localLoading, setLocalLoading] = useState(false);
 
     const handleAdd = () => {
         setEditingPg(null);
@@ -108,16 +94,8 @@ const PGsScreen = ({ navigation }: any) => {
 
     const handleArchive = async (id: string, name: string) => {
         try {
-            setLoading(true);
-            const { count, error } = await supabase
-                .from("tenants")
-                .select("id", { count: "exact", head: true })
-                .eq("pg_id", id)
-                .eq("status", "ACTIVE");
-
-            setLoading(false);
-
-            if (error) throw error;
+            const pg = pgs.find(p => p.id === id);
+            const count = pg?.occupied_beds?.[0]?.count || 0;
 
             if (count && count > 0) {
                 setConfirmState({
@@ -149,7 +127,7 @@ const PGsScreen = ({ navigation }: any) => {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         const date = new Date().toISOString().split('T')[0];
                         await pgAPI.archive(id, date);
-                        await fetchPGs();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
@@ -160,7 +138,6 @@ const PGsScreen = ({ navigation }: any) => {
                 }
             });
         } catch (error: any) {
-            setLoading(false);
             console.error("Archive check error:", error);
             Alert.alert("Error", "Error checking tenants: " + error.message);
         }
@@ -194,7 +171,7 @@ const PGsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         await pgAPI.restore(id);
-                        await fetchPGs();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
@@ -231,7 +208,7 @@ const PGsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         await pgAPI.hardDelete(id);
-                        await fetchPGs();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
@@ -242,7 +219,6 @@ const PGsScreen = ({ navigation }: any) => {
                 }
             });
         } catch (error: any) {
-            setLoading(false);
             Alert.alert("Error", error.message || "Something went wrong during deletion check");
         }
     };
@@ -434,7 +410,7 @@ const PGsScreen = ({ navigation }: any) => {
             <PGFormModal
                 visible={modalVisible}
                 onClose={() => setModalVisible(false)}
-                onSuccess={fetchPGs}
+                onSuccess={refresh}
                 editingPg={editingPg}
             />
 

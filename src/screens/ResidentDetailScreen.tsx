@@ -1,19 +1,18 @@
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    ScrollView,
-    TouchableOpacity,
+    ActivityIndicator,
     Dimensions,
-    Image,
-    Linking
+    Linking,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
 import useThemePalette from "../hooks/useThemePalette";
 import { billingService } from "../services/billing.service";
-import { ActivityIndicator } from "react-native";
 
 const { width } = Dimensions.get("window");
 
@@ -252,7 +251,7 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                                 <Text style={styles.financeLabel}>Tenant Credit</Text>
                                 <Text style={styles.financeSubLabel}>Available for future invoices</Text>
                             </View>
-                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{tenantCredit.toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{Number(tenantCredit || 0).toLocaleString()}</Text>
                         </View>
                     )}
                     <View style={styles.financeItem}>
@@ -302,8 +301,8 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                                         </View>
                                     </View>
                                     <View style={styles.invoiceAmounts}>
-                                        <Text style={styles.invoiceTotal}>₹{inv.total_amount.toLocaleString()}</Text>
-                                        <Text style={styles.invoicePaid}>Paid: ₹{inv.paid_amount.toLocaleString()}</Text>
+                                        <Text style={styles.invoiceTotal}>₹{Number(inv.total_amount || 0).toLocaleString()}</Text>
+                                        <Text style={styles.invoicePaid}>Paid: ₹{Number(inv.paid_amount || 0).toLocaleString()}</Text>
                                     </View>
                                 </View>
                             );

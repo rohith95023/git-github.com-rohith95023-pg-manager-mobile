@@ -1,26 +1,27 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    ActivityIndicator,
+    Animated,
+    Dimensions,
+    FlatList,
+    RefreshControl,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    Dimensions,
-    Animated,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { paymentAPI, pgAPI, tenantAPI, statsAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import SegmentedControl from "../components/common/SegmentedControl";
 import PaymentFormModal from "../components/modals/PaymentFormModal";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import useThemePalette from "../hooks/useThemePalette";
+import { invoiceAPI, ledgerAPI, paymentAPI, pgAPI, statsAPI, tenantAPI } from "../services/api";
+import { billingService } from "../services/billing.service";
 
 const { width } = Dimensions.get("window");
 const DEFAULT_PAYMENT_FILTERS = {
@@ -44,6 +45,13 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         collectionRate: 0
     });
     const animatedProgress = React.useRef(new Animated.Value(0)).current;
+
+    // View State
+    const [activeView, setActiveView] = useState("transactions");
+    const [invoices, setInvoices] = useState<any[]>([]);
+    const [ledger, setLedger] = useState<any[]>([]);
+    const [loadingInvoices, setLoadingInvoices] = useState(false);
+    const [loadingLedger, setLoadingLedger] = useState(false);
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
@@ -148,17 +156,45 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         }
     }, [route?.params?.tenantId]);
 
+    const fetchInvoices = useCallback(async () => {
+        try {
+            setLoadingInvoices(true);
+            const res: any = await invoiceAPI.getAll();
+            setInvoices(res.data || res || []);
+        } catch (error) {
+            console.error("Failed to fetch invoices:", error);
+        } finally {
+            setLoadingInvoices(false);
+        }
+    }, []);
+
+    const fetchLedger = useCallback(async () => {
+        try {
+            setLoadingLedger(true);
+            const res: any = await ledgerAPI.getAll();
+            setLedger(res.data || res || []);
+        } catch (error) {
+            console.error("Failed to fetch ledger:", error);
+        } finally {
+            setLoadingLedger(false);
+        }
+    }, []);
+
     useEffect(() => {
         if (isFocused) {
-            fetchData();
+            if (activeView === "transactions") fetchData();
+            else if (activeView === "invoices") fetchInvoices();
+            else fetchLedger();
         }
-    }, [fetchData, isFocused]);
+    }, [activeView, fetchData, fetchInvoices, fetchLedger, isFocused]);
 
     useRefreshOnForeground(fetchData, isFocused);
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchData();
+        if (activeView === "transactions") fetchData();
+        else if (activeView === "invoices") fetchInvoices();
+        else fetchLedger();
     };
 
     const filteredPayments = useMemo(() => {
@@ -259,7 +295,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             <View style={styles.outstandingMainCard}>
                 <View>
                     <Text style={styles.outstandingLabel}>TOTAL OUTSTANDING</Text>
-                    <Text style={styles.outstandingValue}>₹{stats.outstandingDues.toLocaleString()}</Text>
+                    <Text style={styles.outstandingValue}>₹{Number(stats.outstandingDues || 0).toLocaleString()}</Text>
                 </View>
                 <View style={[styles.outstandingIcon, { backgroundColor: COLORS.danger + '10' }]}>
                     <MaterialCommunityIcons name="clock-alert-outline" size={24} color={COLORS.danger} />
@@ -270,11 +306,11 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             <View style={styles.summaryGrid}>
                 <View style={styles.summaryCell}>
                     <Text style={styles.summaryLabel}>TOTAL RECEIVED</Text>
-                    <Text style={[styles.summaryValue, { color: COLORS.success }]}>₹{stats.totalReceived.toLocaleString()}</Text>
+                    <Text style={[styles.summaryValue, { color: COLORS.success }]}>₹{Number(stats.totalReceived || 0).toLocaleString()}</Text>
                 </View>
                 <View style={styles.summaryCell}>
                     <Text style={styles.summaryLabel}>RECEIVABLE</Text>
-                    <Text style={[styles.summaryValue, { color: COLORS.primary }]}>₹{stats.totalReceivable.toLocaleString()}</Text>
+                    <Text style={[styles.summaryValue, { color: COLORS.primary }]}>₹{Number(stats.totalReceivable || 0).toLocaleString()}</Text>
                 </View>
             </View>
 
@@ -350,7 +386,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                             <Text style={[styles.paymentAmount, {
                                 color: group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.text
                             }]}>
-                                ₹{group.totalAmount.toLocaleString()}
+                                ₹{Number(group.totalAmount || 0).toLocaleString()}
                             </Text>
                             {hasMultiple && (
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
@@ -449,6 +485,68 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         );
     };
 
+    const getInvoiceStatusColor = (status: string, colors: any) => {
+        switch (status?.toUpperCase()) {
+            case 'PAID': return colors.success;
+            case 'PARTIAL': return colors.warning;
+            case 'UNPAID': return colors.danger;
+            default: return colors.textMuted;
+        }
+    };
+
+    const renderInvoiceItem = ({ item }: { item: any }) => (
+        <View style={styles.groupContainer}>
+            <View style={styles.paymentCard}>
+                <View style={styles.paymentCardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                        <Text style={styles.residentName} numberOfLines={1}>INV-{String(item.id).slice(0, 6).toUpperCase()}</Text>
+                        <View style={[styles.statusPill, { backgroundColor: getInvoiceStatusColor(item.status, COLORS) + "12" }]}>
+                            <Text style={[styles.statusPillText, { color: getInvoiceStatusColor(item.status, COLORS) }]}>{item.status}</Text>
+                        </View>
+                    </View>
+                    <View style={styles.cardHeaderRight}>
+                        <Text style={styles.paymentAmount}>₹{Number(item.total_amount || 0).toLocaleString()}</Text>
+                        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Period: {new Date(item.billing_period_start).toLocaleDateString([], { month: 'short', year: 'numeric' })}</Text>
+                    </View>
+                </View>
+                <View style={styles.cardDetails}>
+                    <View style={styles.detailRow}>
+                        <Feather name="user" size={12} color={COLORS.textMuted} />
+                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                        <Feather name="home" size={12} color={COLORS.textMuted} />
+                        <Text style={styles.detailText}>{item.tenants?.pgs?.name || "N/A"}</Text>
+                    </View>
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderLedgerItem = ({ item }: { item: any }) => (
+        <View style={styles.groupContainer}>
+            <View style={styles.paymentCard}>
+                <View style={styles.paymentCardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                        <Text style={styles.residentName} numberOfLines={1}>{item.description || "Ledger Entry"}</Text>
+                        <Text style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(item.created_at).toLocaleDateString()}</Text>
+                    </View>
+                    <View style={styles.cardHeaderRight}>
+                        <Text style={[styles.paymentAmount, { color: item.type === 'DEBIT' ? COLORS.danger : COLORS.success }]}>
+                            {item.type === 'DEBIT' ? '-' : '+'}₹{Number(item.amount || 0).toLocaleString()}
+                        </Text>
+                    </View>
+                </View>
+                <View style={styles.cardDetails}>
+                    <View style={styles.detailRow}>
+                        <Feather name="user" size={12} color={COLORS.textMuted} />
+                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
+                    </View>
+                </View>
+            </View>
+        </View>
+    );
+
     return (
         <SafeAreaView style={styles.container}>
             {/* Compact App Bar */}
@@ -463,12 +561,24 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             </View>
 
             <FlatList
-                data={groupedPayments}
-                keyExtractor={item => item.tenantId}
-                renderItem={renderPaymentItem}
+                data={activeView === "transactions" ? groupedPayments : activeView === "invoices" ? invoices : ledger}
+                keyExtractor={item => item.id || item.tenantId}
+                renderItem={activeView === "transactions" ? renderPaymentItem : activeView === "invoices" ? renderInvoiceItem : renderLedgerItem}
                 ListHeaderComponent={
                     <View>
                         <SummarySection />
+
+                        <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+                            <SegmentedControl
+                                options={[
+                                    { label: "Transactions", value: "transactions" },
+                                    { label: "Invoices", value: "invoices" },
+                                    { label: "Ledger", value: "ledger" },
+                                ]}
+                                value={activeView}
+                                onChange={setActiveView}
+                            />
+                        </View>
 
                         {/* Improved Search Section */}
                         <View style={styles.searchSection}>

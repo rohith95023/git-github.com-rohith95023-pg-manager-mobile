@@ -29,17 +29,40 @@ const PGsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const { pgs: allPgs, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+    const { pgs: allPgs, rooms: allRooms, beds: allBeds, tenants: allTenants, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
 
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
     const [refreshing, setRefreshing] = useState(false);
 
-    // Filter from global data
-    const pgs = useMemo(() =>
-        allPgs.filter((p: any) => activeTab === "Active" ? p.status !== 'INACTIVE' : p.status === 'INACTIVE'),
-        [allPgs, activeTab]
-    );
+    // Filter and enrich with stats from global data
+    const filteredPgs = useMemo(() => {
+        const basePgs = allPgs.filter((p: any) =>
+            activeTab === "Active" ? p.status !== 'INACTIVE' : p.status === 'INACTIVE'
+        );
+
+        return basePgs
+            .filter(pg =>
+            (pg.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                pg.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                pg.address?.toLowerCase().includes(searchTerm.toLowerCase()))
+            )
+            .map(pg => {
+                const pgRooms = allRooms.filter(r => r.pg_id === pg.id);
+                const pgBeds = allBeds.filter(b => b.pg_id === pg.id || pgRooms.some(r => r.id === b.room_id));
+                const pgTenants = allTenants.filter(t => t.pg_id === pg.id && t.status === 'ACTIVE');
+                const totalDue = pgTenants.reduce((sum, t) => sum + (t.outstanding_balance || 0), 0);
+
+                return {
+                    ...pg,
+                    calculated_total_rooms: pgRooms.length,
+                    calculated_total_beds: pgBeds.length,
+                    calculated_occupied_beds: pgBeds.filter(b => b.status === "OCCUPIED" || b.status === "RESERVED").length,
+                    calculated_residents: pgTenants.length,
+                    calculated_total_due: totalDue
+                };
+            });
+    }, [allPgs, allRooms, allBeds, activeTab, searchTerm]);
 
     const loading = globalLoading;
 
@@ -84,18 +107,11 @@ const PGsScreen = ({ navigation }: any) => {
         setModalVisible(true);
     };
 
-    const filteredPgs = useMemo(() => {
-        return pgs.filter(pg =>
-        (pg.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            pg.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            pg.address?.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
-    }, [pgs, searchTerm]);
 
     const handleArchive = async (id: string, name: string) => {
         try {
-            const pg = pgs.find(p => p.id === id);
-            const count = pg?.occupied_beds?.[0]?.count || 0;
+            const pg = allPgs.find(p => p.id === id);
+            const count = pg?.calculated_occupied_beds || 0;
 
             if (count && count > 0) {
                 setConfirmState({
@@ -146,7 +162,7 @@ const PGsScreen = ({ navigation }: any) => {
     const handleRestore = async (id: string, name: string) => {
         try {
             const restoredNameCandidate = name.split(" (Archived - ")[0];
-            const conflict = pgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
+            const conflict = allPgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
 
             if (conflict) {
                 setConfirmState({
@@ -240,9 +256,11 @@ const PGsScreen = ({ navigation }: any) => {
     };
 
     const PropertyCard = ({ item }: { item: any }) => {
-        const totalRooms = item.rooms?.[0]?.count || 0;
-        const occupiedBeds = item.occupied_beds?.[0]?.count || 0;
-        const totalBeds = item.beds?.[0]?.count || 0;
+        const totalRooms = item.calculated_total_rooms || 0;
+        const totalBeds = item.calculated_total_beds || 0;
+        const occupiedBeds = item.calculated_occupied_beds || 0;
+        const totalResidents = item.calculated_residents || 0;
+        const pendingDue = item.calculated_total_due || 0;
         const occupancyRate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
 
         return (
@@ -252,7 +270,40 @@ const PGsScreen = ({ navigation }: any) => {
                 activeOpacity={0.7}
             >
                 <View style={styles.cardHeader}>
-                    <View style={styles.headerLeft}>
+                    <View style={styles.headerActions}>
+                        {item.status === 'ACTIVE' ? (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.primary + "15" }]}
+                                    onPress={() => handleEdit(item)}
+                                >
+                                    <Feather name="edit-2" size={18} color={COLORS.primary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.warning + "15" }]}
+                                    onPress={() => handleArchive(item.id, item.name)}
+                                >
+                                    <Feather name="archive" size={18} color={COLORS.warning} />
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.success + "15" }]}
+                                    onPress={() => handleRestore(item.id, item.name)}
+                                >
+                                    <Feather name="refresh-ccw" size={18} color={COLORS.success} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.danger + "15" }]}
+                                    onPress={() => handleDelete(item.id, item.name)}
+                                >
+                                    <Feather name="trash-2" size={18} color={COLORS.danger} />
+                                </TouchableOpacity>
+                            </>
+                        )}
+                    </View>
+                    <View style={[styles.headerLeft, { marginLeft: 12, marginRight: 0 }]}>
                         <Text style={styles.propertyName} numberOfLines={1}>{item.name}</Text>
                         <View style={styles.locationContainer}>
                             <Feather name="map-pin" size={10} color={COLORS.textMuted} />
@@ -266,13 +317,19 @@ const PGsScreen = ({ navigation }: any) => {
                         <Text style={styles.statValue}>{totalRooms}</Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
-                    <View style={[styles.statCell, styles.statDivider]}>
-                        <Text style={styles.statValue}>{totalBeds}</Text>
-                        <Text style={styles.statLabel}>Total Beds</Text>
+                    <View style={[styles.statCell, { borderLeftWidth: 1, borderLeftColor: COLORS.border + '20' }]}>
+                        <Text style={styles.statValue}>{occupiedBeds}/{totalBeds}</Text>
+                        <Text style={styles.statLabel}>{totalBeds - occupiedBeds} Avail</Text>
                     </View>
-                    <View style={styles.statCell}>
-                        <Text style={[styles.statValue, { color: COLORS.success }]}>{occupancyRate}%</Text>
-                        <Text style={styles.statLabel}>Occupancy</Text>
+                    <View style={[styles.statCell, { borderLeftWidth: 1, borderLeftColor: COLORS.border + '20' }]}>
+                        <Text style={[styles.statValue, { color: COLORS.warning }]}>{totalResidents}</Text>
+                        <Text style={styles.statLabel}>Residents</Text>
+                    </View>
+                    <View style={[styles.statCell, { borderLeftWidth: 1, borderLeftColor: COLORS.border + '20' }]}>
+                        <Text style={[styles.statValue, { color: pendingDue > 0 ? COLORS.danger : COLORS.success }]}>
+                            ₹{pendingDue > 999 ? `${(pendingDue / 1000).toFixed(1)}k` : pendingDue}
+                        </Text>
+                        <Text style={styles.statLabel}>Pending</Text>
                     </View>
                 </View>
 
@@ -284,41 +341,6 @@ const PGsScreen = ({ navigation }: any) => {
                         <View style={[styles.miniBadge, { backgroundColor: COLORS.success + "10" }]}>
                             <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>{item.total_floors || 0} Floors</Text>
                         </View>
-                        {item.status === 'ACTIVE' ? (
-                            <>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.primary + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleEdit(item)}
-                                >
-                                    <Feather name="edit-2" size={10} color={COLORS.primary} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.primary }]}>Edit</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.warning + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleArchive(item.id, item.name)}
-                                >
-                                    <Feather name="archive" size={10} color={COLORS.warning} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.warning }]}>Archive</Text>
-                                </TouchableOpacity>
-                            </>
-                        ) : (
-                            <>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.success + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleRestore(item.id, item.name)}
-                                >
-                                    <Feather name="refresh-ccw" size={10} color={COLORS.success} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>Restore</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.danger + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleDelete(item.id, item.name)}
-                                >
-                                    <Feather name="trash-2" size={10} color={COLORS.danger} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.danger }]}>Delete</Text>
-                                </TouchableOpacity>
-                            </>
-                        )}
                     </View>
 
                     {item.status === 'ACTIVE' && (
@@ -502,6 +524,19 @@ const createStyles = (COLORS: any) =>
         },
         cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
         headerLeft: { flex: 1, marginRight: 12 },
+        headerActions: { flexDirection: 'row', gap: 8 },
+        headerActionBtn: {
+            width: 38,
+            height: 38,
+            borderRadius: 19,
+            justifyContent: 'center',
+            alignItems: 'center',
+            elevation: 1,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 2,
+        },
         propertyName: { fontSize: 18, fontWeight: '800', color: COLORS.text },
         locationContainer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
         locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: '600' },

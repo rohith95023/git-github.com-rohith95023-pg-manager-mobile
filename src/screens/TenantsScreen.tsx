@@ -22,7 +22,6 @@ import ThemeToggleButton from "../components/ThemeToggleButton";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import useThemePalette from "../hooks/useThemePalette";
 import { bedAPI, pgAPI, roomAPI, tenantAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
 import NotificationService from "../services/NotificationService";
 import { generateDeleteCode } from "../utils/security";
 
@@ -68,10 +67,13 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
+    const [rooms, setRooms] = useState<any[]>([]);
+    const [beds, setBeds] = useState<any[]>([]);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [totalCount, setTotalCount] = useState(0);
+    const loadingRef = React.useRef(false);
 
     const [searchTerm, setSearchTerm] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -199,12 +201,14 @@ const TenantsScreen = ({ navigation }: any) => {
     }, [searchTerm]);
 
     const loadTenants = useCallback(async (pageNum = 1, shouldAppend = false) => {
-        if (loading || loadingMore) return;
+        // Prevent duplicate concurrent calls using a ref (not state, to avoid re-render loops)
+        if (loadingRef.current && pageNum === 1) return;
+        loadingRef.current = true;
         if (pageNum === 1) setLoading(true);
         else setLoadingMore(true);
 
         try {
-            const [tenantResponse, pgsData]: [any, any] = await Promise.all([
+            const [tenantResponse, pgsData, roomsData, bedsData]: [any, any, any, any] = await Promise.all([
                 tenantAPI.search({
                     page: pageNum,
                     limit: 10,
@@ -217,32 +221,30 @@ const TenantsScreen = ({ navigation }: any) => {
                     sortBy: filters.sortBy,
                     sortOrder: filters.sortOrder,
                 }),
-                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs)
+                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
+                pageNum === 1 ? roomAPI.getAll() : Promise.resolve(rooms),
+                pageNum === 1 ? bedAPI.getAll() : Promise.resolve(beds)
             ]);
 
-            const tenantList = tenantResponse?.data || [];
-            const count = tenantResponse?.count || 0;
-
-            // Fetch outstanding balances from Billing Engine V2
-            const tenantsWithBalances = await Promise.all(tenantList.map(async (t: any) => {
-                try {
-                    const bal = await billingService.getOutstandingBalance(t.id);
-                    return { ...t, outstanding_balance: bal };
-                } catch (e) {
-                    console.warn(`Failed to fetch balance for ${t.id}:`, e);
-                    return { ...t, outstanding_balance: 0 };
-                }
-            }));
+            // tenantAPI.search returns { data: [...], count: N }
+            const tenantList = Array.isArray(tenantResponse)
+                ? tenantResponse
+                : (tenantResponse?.data || []);
+            const count = tenantResponse?.count ?? tenantList.length;
 
             if (shouldAppend) {
-                setTenants(prev => [...prev, ...tenantsWithBalances]);
+                setTenants(prev => [...prev, ...tenantList]);
             } else {
-                setTenants(tenantsWithBalances);
+                setTenants(tenantList);
             }
 
             setTotalCount(count);
-            setHasMore(shouldAppend ? (tenants.length + tenantsWithBalances.length < count) : (tenantsWithBalances.length < count));
-            if (pageNum === 1) setPgs(Array.isArray(pgsData) ? pgsData : []);
+            setHasMore(tenantList.length === 10 && (pageNum * 10) < count);
+            if (pageNum === 1) {
+                setPgs(Array.isArray(pgsData) ? pgsData : []);
+                setRooms(Array.isArray(roomsData) ? roomsData : []);
+                setBeds(Array.isArray(bedsData) ? bedsData : []);
+            }
             setPage(pageNum);
         } catch (error) {
             console.error("Failed to fetch Resident Directory data:", error);
@@ -250,8 +252,9 @@ const TenantsScreen = ({ navigation }: any) => {
             setLoading(false);
             setLoadingMore(false);
             setRefreshing(false);
+            loadingRef.current = false;
         }
-    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore]);
+    }, [debouncedSearch, filters]);
 
     useEffect(() => {
         if (isFocused) {
@@ -472,7 +475,7 @@ const TenantsScreen = ({ navigation }: any) => {
                         <View style={styles.assignmentRow}>
                             <Feather name="home" size={12} color={COLORS.textMuted} />
                             <Text style={styles.assignmentText} numberOfLines={1}>
-                                {item.pgs?.name || "N/A"} • {item.rooms?.room_number || "N/A"}{item.beds?.bed_number ? ` (${item.beds.bed_number})` : ""}
+                                {item.pgs?.name || pgs.find(p => p.id === item.pg_id)?.name || "N/A"} • {item.rooms?.room_number || rooms.find(r => r.id === item.room_id)?.room_number || "N/A"}{item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number ? ` (${item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number})` : ""}
                             </Text>
                         </View>
                     </View>

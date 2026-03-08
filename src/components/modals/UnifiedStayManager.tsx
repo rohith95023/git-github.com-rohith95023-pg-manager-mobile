@@ -233,7 +233,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 setRooms(roomsData);
 
                 try {
-                    const availableBedsInPg = await bedAPI.getAvailableByPg(watchPgId);
+                    const availableBedsInPg = await bedAPI.getAvailableByPg(watchPgId) as any[];
                     if (availableBedsInPg.length === 0 && !editingTenant) {
                         setConfirmState({
                             visible: true,
@@ -364,7 +364,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
 
         try {
             setLoading(true);
-            const user = await authClient.getUser();
+            const user = await authClient.getUser() as any;
 
             const payload: any = {
                 full_name: data.fullName,
@@ -404,7 +404,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     await roomAPI.recalculateOccupancy(editingTenant.room_id);
                 }
             } else {
-                const tenant = await tenantAPI.create(payload);
+                const tenant = await tenantAPI.create(payload) as any;
                 tenantId = tenant.id;
                 await bedAPI.update(data.bedId, { status: "OCCUPIED", tenant_id: tenantId });
             }
@@ -567,7 +567,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 </View>
 
                 <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>IDENTITY PROOF</Text>
+                    <Text style={[styles.label, { color: COLORS.text, marginBottom: 12, opacity: 0.8 }]}>IDENTITY PROOF</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -621,7 +621,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 </View>
 
                 <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>GUARDIAN INFO (FOR MINORS)</Text>
+                    <Text style={[styles.label, { color: COLORS.text, marginBottom: 12, opacity: 0.8 }]}>GUARDIAN INFO (FOR MINORS)</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -703,7 +703,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 </View>
 
                 <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>STAY CONFIGURATION</Text>
+                    <Text style={[styles.label, { color: COLORS.text, marginBottom: 12, opacity: 0.8 }]}>STAY CONFIGURATION</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -751,11 +751,10 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 message={confirmState.message}
                 type={confirmState.type}
                 onConfirm={confirmState.onConfirm}
-                onCancel={() => setConfirmState(prev => ({ ...prev, visible: false }))}
                 confirmText={confirmState.confirmText}
                 cancelText={confirmState.cancelText}
                 singleButton={confirmState.singleButton}
-                onClose={confirmState.onClose}
+                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
             />
         </FormModal>
     );

@@ -1,24 +1,23 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    ActivityIndicator,
+    Dimensions,
+    FlatList,
+    RefreshControl,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    Dimensions
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { tenantAPI, pgAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import useThemePalette from "../hooks/useThemePalette";
+import { pgAPI, tenantAPI } from "../services/api";
 
 const { width } = Dimensions.get("window");
 
@@ -100,13 +99,7 @@ const SmartTenantFinder = ({ navigation }: any) => {
             const tenantList = tenantsRes.data || [];
             const count = tenantsRes.count || 0;
 
-            // V2 Balance Fetching
-            const balances = await Promise.all(
-                tenantList.map((t: any) => billingService.getOutstandingBalance(t.id).catch(() => 0))
-            );
-            tenantList.forEach((t: any, i: number) => {
-                t.outstanding_balance = balances[i] || 0;
-            });
+            // Balances are already computed by the search endpoint — no extra RPC calls needed
 
             if (shouldAppend) {
                 setTenants(prev => [...prev, ...tenantList]);

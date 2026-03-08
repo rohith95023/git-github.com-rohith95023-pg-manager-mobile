@@ -2,6 +2,7 @@ import React, { createContext, ReactNode, useCallback, useContext, useEffect, us
 import {
     bedAPI,
     expenseAPI,
+    financialAPI,
     invoiceAPI,
     ledgerAPI,
     paymentAPI,
@@ -22,6 +23,7 @@ interface DataContextType {
     expenses: any[];
     invoices: any[];
     ledger: any[];
+    groupedLedger: any[];
     dashboardStats: any;
     dashboardKpis: any;
     pnlSummary: any[];
@@ -69,6 +71,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [expenses, setExpenses] = useState<any[]>([]);
     const [invoices, setInvoices] = useState<any[]>([]);
     const [ledger, setLedger] = useState<any[]>([]);
+    const [groupedLedger, setGroupedLedger] = useState<any[]>([]);
     const [dashboardStats, setDashboardStats] = useState<any>(null);
     const [dashboardKpis, setDashboardKpis] = useState<any>(null);
     const [pnlSummary, setPnlSummary] = useState<any[]>([]);
@@ -90,7 +93,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             const [
                 pgsRes, roomsRes, bedsRes, tenantsRes,
                 paymentsRes, expensesRes, invoicesRes, ledgerRes,
-                statsRes, kpisRes, pnlSumRes, pnlCatRes,
+                statsRes, kpisRes, pnlSumRes, pnlCatRes, groupedLedgerRes,
             ] = await Promise.allSettled([
                 pgAPI.getAll(),
                 roomAPI.getAll(),
@@ -104,6 +107,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 statsAPI.getDashboardKpis(),
                 pnlAPI.getSummary(),
                 pnlAPI.getCategoryStats(),
+                financialAPI.getGroupedLedger(),
             ]);
 
             const val = (r: PromiseSettledResult<any>) =>
@@ -130,6 +134,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
 
             setPnlSummary(toArray(val(pnlSumRes), 'pnlSummary'));
             setPnlCategories(toArray(val(pnlCatRes), 'pnlCategories'));
+            setGroupedLedger(toArray(val(groupedLedgerRes), 'groupedLedger'));
 
             setLastFetched(Date.now());
         } catch (err) {
@@ -150,7 +155,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
     return (
         <DataContext.Provider
             value={{
-                pgs, rooms, beds, tenants, payments, expenses, invoices, ledger,
+                pgs, rooms, beds, tenants, payments, expenses, invoices, ledger, groupedLedger,
                 dashboardStats, dashboardKpis, pnlSummary, pnlCategories,
                 loading, refreshing, lastFetched,
                 refresh,

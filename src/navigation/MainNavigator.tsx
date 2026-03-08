@@ -20,6 +20,7 @@ import { useTheme } from "../context/ThemeContext";
 // Screens
 import ChangePasswordScreen from "../screens/ChangePasswordScreen";
 import Dashboard from "../screens/Dashboard";
+import DuesScreen from "../screens/DuesScreen";
 import ExpensesScreen from "../screens/ExpensesScreen";
 import MaintenanceScreen from "../screens/MaintenanceScreen";
 import NotificationsScreen from "../screens/NotificationsScreen";
@@ -221,6 +222,15 @@ const MainNavigator = () => {
                 }}
             />
             <Drawer.Screen
+                name="Dues"
+                component={DuesScreen}
+                options={{
+                    drawerLabel: "Dues & Collections",
+                    drawerIcon: ({ color }) => <Feather name="alert-circle" size={20} color={color} />,
+                    headerTitle: "Dues & Collections"
+                }}
+            />
+            <Drawer.Screen
                 name="TenantFinder"
                 component={SmartTenantFinder}
                 options={{
@@ -278,7 +288,8 @@ const MainNavigator = () => {
                 name="Maintenance"
                 component={MaintenanceScreen}
                 options={{
-                    drawerItemStyle: { display: 'none' }, // Hidden from sidebar
+                    drawerLabel: "Maintenance",
+                    drawerIcon: ({ color }) => <Feather name="tool" size={20} color={color} />,
                     headerTitle: "Maintenance"
                 }}
             />

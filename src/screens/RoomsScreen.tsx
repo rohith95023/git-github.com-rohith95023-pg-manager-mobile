@@ -164,25 +164,42 @@ const RoomsScreen = ({ navigation }: any) => {
             b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
 
         if (viewMode === "ROOMS") {
-            return rooms.filter(r => {
+            return rooms.map(r => {
+                const pg = pgs.find(p => p.id === r.pg_id);
+                const availableCount = Math.max(0, (r.capacity || 0) - (r.current_occupancy || 0));
+                return {
+                    ...r,
+                    display_pg_name: r.pgs?.name || pg?.name || "N/A",
+                    available_count: availableCount
+                };
+            }).filter(r => {
                 const matchesSearch = (r.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (r.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
+                    (r.display_pg_name || "").toLowerCase().includes(searchTerm.toLowerCase());
                 const matchesPg = !propertyId || r.pg_id === propertyId;
                 const matchesStatus = showArchived ? isArchivedRoom(r) : !isArchivedRoom(r);
                 return matchesSearch && matchesPg && matchesStatus;
             });
         } else {
-            return beds.filter(b => {
+            return beds.map(b => {
+                const room = rooms.find(r => r.id === b.room_id);
+                const pg = pgs.find(p => p.id === (b.pg_id || room?.pg_id));
+                return {
+                    ...b,
+                    display_room_number: b.rooms?.room_number || room?.room_number || "N/A",
+                    display_pg_name: b.pgs?.name || b.rooms?.pgs?.name || room?.pgs?.name || pg?.name || "N/A"
+                };
+            }).filter(b => {
                 const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.display_room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.display_pg_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
-                const matchesPg = !propertyId || b.rooms?.pg_id === propertyId;
+                const matchesPg = !propertyId || b.rooms?.pg_id === propertyId || b.pg_id === propertyId;
                 const matchesStatus = showArchived ? isArchivedBed(b) : !isArchivedBed(b);
                 const matchesBedStatus = filters.bedStatus === "ALL" || b.status === filters.bedStatus;
                 return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
         }
-    }, [viewMode, rooms, beds, searchTerm, filters]);
+    }, [viewMode, rooms, beds, searchTerm, filters, pgs]);
 
     const stats = useMemo(() => {
         const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
@@ -221,7 +238,7 @@ const RoomsScreen = ({ navigation }: any) => {
                 <View style={styles.cardHeaderLeft}>
                     <Text style={styles.roomNumber}>Room {item.room_number}</Text>
                     <Text style={styles.pgName} numberOfLines={1}>
-                        {item.pgs?.name || "N/A"} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`}
+                        {item.display_pg_name} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`}
                     </Text>
                 </View>
                 <View style={[styles.miniBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
@@ -237,9 +254,12 @@ const RoomsScreen = ({ navigation }: any) => {
                 <View style={styles.detailDivider} />
                 <View style={styles.detailItem}>
                     <MaterialCommunityIcons name="account-group-outline" size={14} color={COLORS.textMuted} />
-                    <Text style={styles.detailValue}>{item.capacity} Sharing</Text>
+                    <Text style={styles.detailValue}>
+                        {item.capacity} Sharing • <Text style={{ color: item.available_count > 0 ? COLORS.success : COLORS.textMuted, fontWeight: '800' }}>{item.available_count} Available</Text>
+                    </Text>
                 </View>
             </View>
+
 
             <View style={styles.cardFooter}>
                 <TouchableOpacity style={styles.footerAction} onPress={() => handleEditRoom(item)}>
@@ -259,8 +279,9 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardTop}>
                 <View style={styles.cardHeaderLeft}>
                     <Text style={styles.roomNumber}>{item.bed_number}</Text>
-                    <Text style={styles.pgName}>Room {item.rooms?.room_number} • {item.rooms?.pgs?.name}</Text>
+                    <Text style={styles.pgName}>Room {item.display_room_number} • {item.display_pg_name}</Text>
                 </View>
+
                 <View style={[styles.miniBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
                     <Text style={[styles.miniBadgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
                 </View>

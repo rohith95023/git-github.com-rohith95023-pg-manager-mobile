@@ -34,17 +34,33 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
     const loadBillingData = async () => {
         setLoadingBilling(true);
         try {
-            const [balance, creditRes, invoicesRes]: any = await Promise.all([
-                billingService.getOutstandingBalance(tenant.id),
+            // Use pre-computed balance from tenant object if available (from directory)
+            // Else fall back to computing from invoices fetched below
+            const [creditRes, invoicesRes]: any = await Promise.all([
                 billingService.getCredits(tenant.id),
                 billingService.getInvoices(tenant.id)
             ]);
 
-            setOutstandingBalance(balance);
+            const invList = invoicesRes || [];
+            // Calculate balance from invoices if not pre-computed
+            if (tenant.outstanding_balance !== undefined && tenant.outstanding_balance !== null) {
+                setOutstandingBalance(Number(tenant.outstanding_balance));
+            } else {
+                const totalDue = invList
+                    .filter((inv: any) => inv.type !== 'DEPOSIT')
+                    .reduce((acc: number, inv: any) => acc + Math.max(0, (inv.total_amount || 0) - (inv.paid_amount || 0)), 0);
+                setOutstandingBalance(totalDue);
+            }
             setTenantCredit(creditRes?.amount || 0);
-            setInvoices(invoicesRes || []);
+            setInvoices(invList);
         } catch (err) {
             console.error("Failed to load billing data:", err);
+            // Graceful fallback — show pre-computed balance from tenant object
+            if (tenant.outstanding_balance !== undefined) {
+                setOutstandingBalance(Number(tenant.outstanding_balance));
+            } else {
+                setOutstandingBalance(0);
+            }
         } finally {
             setLoadingBilling(false);
         }

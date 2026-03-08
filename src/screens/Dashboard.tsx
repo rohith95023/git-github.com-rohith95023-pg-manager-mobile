@@ -25,12 +25,19 @@ const Dashboard = ({ navigation, route }: any) => {
     const { user } = useAuth();
     const isFocused = useIsFocused();
     const COLORS = useThemePalette();
-    const { dashboardStats, dashboardKpis, tenants, payments, refresh, loading, refreshing } = useData();
+    const { dashboardStats, dashboardKpis, tenants, payments, invoices, refresh, loading, refreshing } = useData();
 
     const stats = dashboardStats;
     const kpis = dashboardKpis;
     const recentPayments = stats?.recentPayments || payments.slice(0, 5);
     const dailyTenants = tenants.filter((t: any) => t.stay_type === 'DAILY').slice(0, 5);
+
+    // Build tenant lookup map for name resolution
+    const tenantMap = useMemo(() => {
+        const m: Record<string, any> = {};
+        tenants.forEach((t: any) => { m[t.id] = t; });
+        return m;
+    }, [tenants]);
 
     const [exportRefreshing, setExportRefreshing] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
@@ -48,20 +55,41 @@ const Dashboard = ({ navigation, route }: any) => {
         }
     };
 
+    // Build grouped dues from real invoices in context (unpaid/partial)
     const groupedInvoices = useMemo(() => {
-        const groups: { [key: string]: any[] } = {};
-        (stats?.upcomingInvoices || []).forEach((inv: any) => {
+        const now = new Date();
+        const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
+        // Get unpaid/partial invoices due within 7 days or overdue
+        const dueInvoices = invoices.filter((inv: any) => {
+            const status = (inv.status || '').toUpperCase();
+            if (status !== 'UNPAID' && status !== 'PARTIAL') return false;
+            const balance = Number(inv.total_amount || 0) - Number(inv.paid_amount || 0);
+            if (balance <= 0) return false;
+            // Show overdue + upcoming 7 days
+            const dueDate = inv.billing_period_end ? new Date(inv.billing_period_end) : null;
+            if (!dueDate) return true;
+            return dueDate <= sevenDaysLater;
+        });
+
+        const groups: Record<string, any> = {};
+        dueInvoices.forEach((inv: any) => {
             const tId = inv.tenant_id;
             if (!groups[tId]) groups[tId] = [];
             groups[tId].push(inv);
         });
-        return Object.entries(groups).map(([tenantId, items]) => ({
-            tenantId,
-            tenant: items[0].tenants,
-            totalDue: items.reduce((sum, current) => sum + (Number(current.total_amount) - Number(current.paid_amount || 0)), 0),
-            items
-        }));
-    }, [stats?.upcomingInvoices]);
+        return Object.entries(groups).map(([tenantId, items]) => {
+            // Resolve tenant: try nested tenants obj first, then context map
+            const tenant = (items[0] as any).tenants || tenantMap[tenantId] || null;
+            return {
+                tenantId,
+                tenant,
+                totalDue: (items as any[]).reduce((sum: number, inv: any) =>
+                    sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0),
+                items,
+            };
+        }).filter((g: any) => g.tenant && g.totalDue > 0);
+    }, [invoices, tenantMap]);
 
     const getInvoiceLabel = (inv: any) => {
         switch (inv.type?.toUpperCase()) {
@@ -190,31 +218,39 @@ const Dashboard = ({ navigation, route }: any) => {
                         </View>
                     </View>
 
+                    {/* 2×2 metrics grid */}
                     <View style={styles.financeGrid}>
-                        <View style={styles.financeItem}>
+                        <View style={[styles.financeItem, { borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Revenue</Text>
                             <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{(stats?.monthlyRevenue || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>This month</Text>
                         </View>
-                        <View style={styles.financeItem}>
-                            <Text style={styles.financeLabel}>Profit</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(stats?.netProfit || 0).toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.financeItem}>
+                        <View style={[styles.financeItem, { borderBottomWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Due</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.pendingDues || kpis?.pendingDues || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.totalPendingDues || stats?.total_pending || kpis?.total_pending || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>Outstanding</Text>
+                        </View>
+                        <View style={[styles.financeItem, { borderRightWidth: 1, borderColor: COLORS.border }]}>
+                            <Text style={styles.financeLabel}>Net Profit</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(stats?.netProfit || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>Monthly</Text>
                         </View>
                         <View style={styles.financeItem}>
                             <Text style={styles.financeLabel}>All-time</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.textMuted }]}>₹{(kpis?.allTimeRevenue || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.textMuted }]}>₹{(stats?.totalRevenue || kpis?.allTimeRevenue || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>Total earned</Text>
                         </View>
-                        <TouchableOpacity
-                            style={styles.detailsBtn}
-                            onPress={() => navigation.navigate("ProfitLoss")}
-                        >
-                            <Text style={styles.detailsBtnText}>Analysis</Text>
-                            <Feather name="arrow-right" size={12} color={COLORS.textMuted} />
-                        </TouchableOpacity>
                     </View>
+
+                    {/* Analysis button */}
+                    <TouchableOpacity
+                        style={styles.detailsBtn}
+                        onPress={() => navigation.navigate("ProfitLoss")}
+                    >
+                        <Feather name="bar-chart-2" size={14} color={COLORS.primary} />
+                        <Text style={styles.detailsBtnText}>View Full Analysis</Text>
+                        <Feather name="arrow-right" size={13} color={COLORS.primary} />
+                    </TouchableOpacity>
 
                     {/* Monthly Collection Progress Bar */}
                     <View style={styles.progressSection}>
@@ -449,21 +485,34 @@ const createStyles = (COLORS: any) =>
             borderColor: COLORS.border,
             marginBottom: 24,
         },
-        sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text, marginBottom: 16 },
-        financeGrid: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-        financeItem: { flex: 1 },
-        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase' },
-        financeValue: { fontSize: 15, fontWeight: '900', color: COLORS.text, marginTop: 4 },
+        sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text, marginBottom: 0 },
+        financeGrid: {
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            borderRadius: 16,
+            overflow: 'hidden',
+            marginBottom: 14,
+        },
+        financeItem: {
+            width: '50%',
+            paddingVertical: 16,
+            paddingHorizontal: 18,
+        },
+        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
+        financeValue: { fontSize: 20, fontWeight: '900', color: COLORS.text, marginTop: 6 },
+        financeSubLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '600', marginTop: 3 },
         detailsBtn: {
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 6,
-            backgroundColor: COLORS.bg,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 12
+            justifyContent: 'center',
+            gap: 8,
+            backgroundColor: COLORS.primary + '12',
+            paddingVertical: 12,
+            borderRadius: 14,
         },
-        detailsBtnText: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted },
+        detailsBtnText: { fontSize: 13, fontWeight: '800', color: COLORS.primary },
 
         // List Sections
         listSection: { marginBottom: 24 },

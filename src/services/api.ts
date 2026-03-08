@@ -95,12 +95,14 @@ export const bedAPI = {
         }, `DELETE beds/${id}`);
     },
     getStats: (params: any = {}) => apiClient.get('beds/stats', params),
+    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}/available`),
 };
 
 // Tenant APIs — backend: /api/tenants/
 export const tenantAPI = {
     getAll: () => apiClient.get('tenants/'),
     getActive: () => apiClient.get('tenants/active'),
+    getDaily: () => apiClient.get('tenants/daily'),
     getById: (id: string) => apiClient.getById('tenants', id),
     create: async (data: any) => {
         return apiClient.post('tenants/', data);
@@ -121,6 +123,9 @@ export const tenantAPI = {
     },
     search: async (params: any) => {
         return apiClient.get('tenants/search', params);
+    },
+    checkDuplicateId: async (idType: string, idNumber: string, excludeId?: string) => {
+        return apiClient.get('tenants/check-duplicate', { id_type: idType, id_number: idNumber, exclude_id: excludeId });
     },
 };
 
@@ -157,6 +162,7 @@ export const expenseAPI = {
         return apiClient.get('expenses/', params);
     },
     getStats: (params: any = {}) => apiClient.get('expenses/stats', params),
+    getCategories: () => apiClient.get('expenses/categories'),
 };
 
 // Dashboard Stats — backend: /api/dashboard/
@@ -169,6 +175,9 @@ export const statsAPI = {
     },
     generateMonthlyInvoices: async () => {
         return apiClient.post('dashboard/generate-invoices', {});
+    },
+    getDrilldownDetails: async (title: string) => {
+        return apiClient.get('dashboard/details', { title });
     },
 };
 
@@ -237,3 +246,9 @@ export const maintenanceAPI = {
         url: `/api/maintenance/${id}`,
     }, `DELETE maintenance/${id}`),
 };
+
+// Financial APIs — backend: /api/financial/
+export const financialAPI = {
+    getGroupedLedger: () => apiClient.get('financial/grouped-ledger'),
+};
+

@@ -146,7 +146,7 @@ const apiClient = {
         // Function names use underscores as-is — backend matches on exact fn_name
         return apiClient.request({
             method: 'post',
-            url: `/rpc/${functionName}`,
+            url: `/api/rpc/${functionName}`,
             data: params,
         }, `RPC ${functionName}`);
     }

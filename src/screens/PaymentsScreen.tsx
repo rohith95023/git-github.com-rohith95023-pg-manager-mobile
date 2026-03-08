@@ -21,7 +21,6 @@ import PaymentFormModal from "../components/modals/PaymentFormModal";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import useThemePalette from "../hooks/useThemePalette";
 import { invoiceAPI, ledgerAPI, paymentAPI, pgAPI, statsAPI, tenantAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
 
 const { width } = Dimensions.get("window");
 const DEFAULT_PAYMENT_FILTERS = {
@@ -84,24 +83,29 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 paymentAPI.getAll(),
                 pgAPI.getAll(),
                 statsAPI.getDashboardStats(),
-                tenantAPI.getActive()
+                tenantAPI.getAll()
             ]);
 
-            const tenants = tenantsRes || [];
-            // V2: Fetch real-time balances from the engine
-            const balances = await Promise.all(
-                tenants.map((t: any) => billingService.getOutstandingBalance(t.id).catch(() => 0))
-            );
+            const tenantsArr = Array.isArray(tenantsRes) ? tenantsRes : (tenantsRes?.data || []);
+            const pgsArr = Array.isArray(pgsRes) ? pgsRes : [];
+            const paymentsArr = Array.isArray(paymentsRes) ? paymentsRes : [];
 
-            tenants.forEach((t: any, i: number) => {
-                t.outstanding_balance = balances[i] || 0;
-            });
+            // Build lookup maps: tenant_id -> tenant obj, pg_id -> pg obj
+            const tenantMap: Record<string, any> = {};
+            tenantsArr.forEach((t: any) => { tenantMap[t.id] = t; });
+            const pgMap: Record<string, any> = {};
+            pgsArr.forEach((pg: any) => { pgMap[pg.id] = pg; });
 
-            const getTenantBalance = (tenant: any) => {
-                return Number(tenant.outstanding_balance || 0);
-            };
+            // Enrich payment records with tenant/pg lookup
+            const enrichedPayments = paymentsArr.map((p: any) => ({
+                ...p,
+                tenants: p.tenants || tenantMap[p.tenant_id] || null,
+                pgs: p.pgs || pgMap[p.pg_id] || null,
+            }));
 
-            const outstandingDues = (tenantsRes || [])
+            const getTenantBalance = (tenant: any) => Number(tenant.outstanding_balance || 0);
+
+            const outstandingDues = tenantsArr
                 .filter((t: any) => getTenantBalance(t) > 0)
                 .map((t: any) => ({
                     id: `virtual_${t.id}`,
@@ -112,24 +116,27 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     tenants: t,
                     type: 'RENT',
                     payment_date: null,
-                    pgs: t.pgs,
+                    pgs: pgMap[t.pg_id] || null,
                     isVirtual: true,
                     billing_month: t.move_in_date || null
                 }));
 
-            setPayments([...(paymentsRes || []), ...outstandingDues]);
-            setPgs(pgsRes || []);
+            setPayments([...enrichedPayments, ...outstandingDues]);
+            setPgs(pgsArr);
 
             const ds = dashboardStatsRes;
             if (ds) {
-                const totalReceivable = ds.monthlyRevenue + ds.pendingDues;
-                const collectionRate = totalReceivable > 0 ? Math.round((ds.monthlyRevenue / totalReceivable) * 100) : 0;
+                // Backend returns: monthlyRevenue, totalPendingDues
+                const totalReceived = Number(ds.monthlyRevenue || ds.totalRevenue || 0);
+                const outstandingDuesAmt = Number(ds.totalPendingDues || ds.pendingDues || ds.total_pending || 0);
+                const totalReceivable = totalReceived + outstandingDuesAmt;
+                const collectionRate = totalReceivable > 0 ? Math.round((totalReceived / totalReceivable) * 100) : 0;
 
                 setStats({
-                    totalReceived: ds.totalRevenue,
-                    outstandingDues: ds.pendingDues,
-                    totalReceivable: totalReceivable,
-                    collectionRate: collectionRate
+                    totalReceived,
+                    outstandingDues: outstandingDuesAmt,
+                    totalReceivable,
+                    collectionRate
                 });
 
                 Animated.timing(animatedProgress, {
@@ -160,7 +167,9 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         try {
             setLoadingInvoices(true);
             const res: any = await invoiceAPI.getAll();
-            setInvoices(res.data || res || []);
+            // Backend returns array directly or wrapped
+            const items = Array.isArray(res) ? res : (res?.items || res?.data || []);
+            setInvoices(items);
         } catch (error) {
             console.error("Failed to fetch invoices:", error);
         } finally {
@@ -172,7 +181,9 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         try {
             setLoadingLedger(true);
             const res: any = await ledgerAPI.getAll();
-            setLedger(res.data || res || []);
+            // Backend returns { items: [...], summary: {...} }
+            const items = Array.isArray(res) ? res : (res?.items || res?.data || []);
+            setLedger(items);
         } catch (error) {
             console.error("Failed to fetch ledger:", error);
         } finally {
@@ -200,10 +211,12 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const filteredPayments = useMemo(() => {
         return payments.filter(p => {
             const lowerSearch = searchTerm.toLowerCase();
-            const matchesSearch =
-                (p.tenants?.full_name || "").toLowerCase().includes(lowerSearch) ||
-                (p.pgs?.name || "").toLowerCase().includes(lowerSearch) ||
-                (p.billing_month || "").toLowerCase().includes(lowerSearch);
+            if (!lowerSearch) return true; // skip search check if empty
+            // p.tenants is enriched in fetchData via tenantMap
+            const name = (p.tenants?.full_name || p.tenant_name || "").toLowerCase();
+            const pg = (p.pgs?.name || p.pg_name || "").toLowerCase();
+            const month = (p.billing_month || "").toLowerCase();
+            const matchesSearch = name.includes(lowerSearch) || pg.includes(lowerSearch) || month.includes(lowerSearch);
 
             const matchesPg = filters.propertyId === "ALL" || p.pg_id === filters.propertyId;
 
@@ -215,7 +228,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 } else if (filters.status === "PENDING") {
                     matchesStatus = statusValue === "PENDING" || statusValue === "PENDING_DUE";
                 } else if (filters.status === "PARTIAL") {
-                    matchesStatus = true; // Handled at group level
+                    matchesStatus = true;
                 } else {
                     matchesStatus = statusValue === filters.status;
                 }
@@ -223,7 +236,6 @@ const PaymentsScreen = ({ route, navigation }: any) => {
 
             return matchesSearch && matchesPg && matchesStatus;
         }).sort((a, b) => {
-            // Virtual/Pending dues first, then by date
             if (a.isVirtual && !b.isVirtual) return -1;
             if (!a.isVirtual && b.isVirtual) return 1;
             return 0;
@@ -239,21 +251,27 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             groups[tId].push(p);
         });
 
-        let result = Object.entries(groups).map(([tenantId, items]) => ({
-            tenantId,
-            tenant: items[0].tenants,
-            pg: items[0].pgs,
-            totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
-            items,
-            hasVirtual: items.some(item => item.isVirtual)
-        }));
+        let result = Object.entries(groups).map(([tenantId, items]) => {
+            // p.tenants and p.pgs are enriched in fetchData via tenantMap/pgMap
+            const tenant = items[0].tenants || null;
+            const pg = items[0].pgs || null;
+            return {
+                tenantId,
+                tenant,
+                pg,
+                tenantName: tenant?.full_name || items[0].tenant_name || "Resident",
+                pgName: pg?.name || items[0].pg_name || "—",
+                totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
+                items,
+                hasVirtual: items.some(item => item.isVirtual)
+            };
+        });
 
         if (filters.status === "PARTIAL") {
             result = result.filter(g => g.hasVirtual && g.items.length > 1);
         }
 
         return result.sort((a, b) => {
-            // Virtual/Pending dues first
             if (a.hasVirtual && !b.hasVirtual) return -1;
             if (!a.hasVirtual && b.hasVirtual) return 1;
             return 0;
@@ -371,7 +389,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 >
                     <View style={styles.paymentCardHeader}>
                         <View style={styles.cardHeaderLeft}>
-                            <Text style={styles.residentName} numberOfLines={1}>{group.tenant?.full_name || "Unknown Resident"}</Text>
+                            <Text style={styles.residentName} numberOfLines={1}>{group.tenantName || "Resident"}</Text>
                             <View style={[styles.statusPill, {
                                 backgroundColor: (group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.success) + "12"
                             }]}>
@@ -408,7 +426,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                         <View style={styles.detailRow}>
                             <Feather name="home" size={12} color={COLORS.textMuted} />
                             <Text style={styles.detailText} numberOfLines={1}>
-                                {group.pg?.name || "N/A"} • Room {group.tenant?.rooms?.room_number || "N/A"}
+                                {group.pgName} • Room {group.tenant?.rooms?.room_number || "N/A"}
                             </Text>
                         </View>
                         {!hasMultiple && (

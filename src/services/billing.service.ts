@@ -8,16 +8,12 @@ import apiClient from "./apiClient";
 export const billingService = {
     /**
      * Fetch current outstanding balance for a tenant.
-     * Calls GET /api/tenants/{tenantId}/balance
+     * Calls GET /api/tenants/{tenantId} and uses the balance field.
      */
     getOutstandingBalance: async (tenantId: string): Promise<number> => {
         try {
-            const res: any = await apiClient.request({
-                method: 'get',
-                url: `/api/tenants/${tenantId}/balance`,
-            }, `GET tenants/${tenantId}/balance`);
-            // Backend returns { balance: number }
-            return typeof res === 'number' ? res : (res?.balance ?? 0);
+            const tenant: any = await apiClient.get(`tenants/${tenantId}`);
+            return tenant?.balance || 0;
         } catch (e) {
             return 0;
         }
@@ -51,17 +47,11 @@ export const billingService = {
     },
 
     /**
-     * Fetch total remaining credit for a tenant
+     * Fetch total remaining credit for a tenant.
+     * Note: Credits endpoint /api/tenant_credits/ is not available.
      */
-    getCredits: async (tenantId: string) => {
-        try {
-            const res: any = await apiClient.get(`tenant_credits/`, { tenant_id: tenantId });
-            const credits = Array.isArray(res) ? res : [];
-            const total = credits.reduce((sum: number, c: any) => sum + (c.amount || 0), 0);
-            return { amount: total, items: credits };
-        } catch (e) {
-            return { amount: 0, items: [] };
-        }
+    getCredits: async (_tenantId: string) => {
+        return { amount: 0, items: [] };
     },
 
     /**

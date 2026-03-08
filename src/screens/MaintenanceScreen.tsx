@@ -12,6 +12,7 @@ import {
     View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import ScreenHeader from "../components/common/ScreenHeader";
 import MaintenanceModal from "../components/modals/MaintenanceModal";
 import useThemePalette from "../hooks/useThemePalette";
 import { maintenanceAPI } from "../services/api";
@@ -29,8 +30,9 @@ const MaintenanceScreen = ({ navigation }: any) => {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const data = await maintenanceAPI.getAll();
-            setRequests(Array.isArray(data) ? data : []);
+            const data: any = await maintenanceAPI.getAll();
+            const items = Array.isArray(data) ? data : (data?.items || data?.data || []);
+            setRequests(items);
         } catch (error) {
             console.error("Failed to fetch maintenance requests:", error);
             Alert.alert("Error", "Could not load maintenance data.");
@@ -111,18 +113,7 @@ const MaintenanceScreen = ({ navigation }: any) => {
 
     const styles = StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text },
 
         filterRow: {
             flexDirection: 'row',
@@ -216,15 +207,15 @@ const MaintenanceScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Maintenance</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Maintenance"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             <View style={styles.filterRow}>
                 {(['ALL', 'PENDING', 'IN_PROGRESS', 'RESOLVED'] as const).map(f => (

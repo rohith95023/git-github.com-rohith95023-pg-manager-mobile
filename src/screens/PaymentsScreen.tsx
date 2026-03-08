@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DropdownSelector from "../components/common/DropdownSelector";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import SegmentedControl from "../components/common/SegmentedControl";
 import PaymentFormModal from "../components/modals/PaymentFormModal";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
@@ -79,16 +80,18 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const [paymentsRes, pgsRes, dashboardStatsRes, tenantsRes]: any = await Promise.all([
-                paymentAPI.getAll(),
-                pgAPI.getAll(),
-                statsAPI.getDashboardStats(),
-                tenantAPI.getAll()
+            const [paymentsRes, pgsRes, dashboardStatsRes, tenantsRes, invoicesRes]: any = await Promise.all([
+                paymentAPI.getAll().catch(() => []),
+                pgAPI.getAll().catch(() => []),
+                statsAPI.getDashboardStats().catch(() => ({})),
+                tenantAPI.getAll().catch(() => []),
+                invoiceAPI.getAll().catch(() => [])
             ]);
 
-            const tenantsArr = Array.isArray(tenantsRes) ? tenantsRes : (tenantsRes?.data || []);
-            const pgsArr = Array.isArray(pgsRes) ? pgsRes : [];
-            const paymentsArr = Array.isArray(paymentsRes) ? paymentsRes : [];
+            const tenantsArr = Array.isArray(tenantsRes) ? tenantsRes : (tenantsRes?.items || tenantsRes?.data || []);
+            const pgsArr = Array.isArray(pgsRes) ? pgsRes : (pgsRes?.items || pgsRes?.data || []);
+            const paymentsArr = Array.isArray(paymentsRes) ? paymentsRes : (paymentsRes?.items || paymentsRes?.data || []);
+            const invoicesArr = Array.isArray(invoicesRes) ? invoicesRes : (invoicesRes?.items || invoicesRes?.data || []);
 
             // Build lookup maps: tenant_id -> tenant obj, pg_id -> pg obj
             const tenantMap: Record<string, any> = {};
@@ -103,7 +106,16 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 pgs: p.pgs || pgMap[p.pg_id] || null,
             }));
 
-            const getTenantBalance = (tenant: any) => Number(tenant.outstanding_balance || 0);
+            const getTenantBalance = (tenant: any) => {
+                const base = Number(tenant.balance || tenant.outstanding_balance || 0);
+                if (base > 0) return base;
+                // If base is 0, verify against invoices we just fetched
+                const unpaid = invoicesArr.filter((inv: any) =>
+                    inv.tenant_id === tenant.id &&
+                    (inv.status?.toUpperCase() === 'UNPAID' || inv.status?.toUpperCase() === 'PARTIAL')
+                );
+                return unpaid.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0);
+            };
 
             const outstandingDues = tenantsArr
                 .filter((t: any) => getTenantBalance(t) > 0)
@@ -124,27 +136,25 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             setPayments([...enrichedPayments, ...outstandingDues]);
             setPgs(pgsArr);
 
-            const ds = dashboardStatsRes;
-            if (ds) {
-                // Backend returns: monthlyRevenue, totalPendingDues
-                const totalReceived = Number(ds.monthlyRevenue || ds.totalRevenue || 0);
-                const outstandingDuesAmt = Number(ds.totalPendingDues || ds.pendingDues || ds.total_pending || 0);
-                const totalReceivable = totalReceived + outstandingDuesAmt;
-                const collectionRate = totalReceivable > 0 ? Math.round((totalReceived / totalReceivable) * 100) : 0;
+            // Backend might wrap stats in a data envelope
+            const ds = dashboardStatsRes?.data || dashboardStatsRes;
+            const totalReceived = Number(ds.monthlyRevenue || ds.totalRevenue || 0);
+            const outstandingDuesAmt = Number(ds.totalPendingDues || ds.pendingDues || ds.total_pending || 0);
+            const totalReceivable = totalReceived + outstandingDuesAmt;
+            const collectionRate = totalReceivable > 0 ? Math.round((totalReceived / totalReceivable) * 100) : 0;
 
-                setStats({
-                    totalReceived,
-                    outstandingDues: outstandingDuesAmt,
-                    totalReceivable,
-                    collectionRate
-                });
+            setStats({
+                totalReceived,
+                outstandingDues: outstandingDuesAmt,
+                totalReceivable,
+                collectionRate
+            });
 
-                Animated.timing(animatedProgress, {
-                    toValue: collectionRate,
-                    duration: 1000,
-                    useNativeDriver: false
-                }).start();
-            }
+            Animated.timing(animatedProgress, {
+                toValue: collectionRate,
+                duration: 1000,
+                useNativeDriver: false
+            }).start();
         } catch (error) {
             console.error("Failed to fetch financial data:", error);
         } finally {
@@ -218,7 +228,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             const month = (p.billing_month || "").toLowerCase();
             const matchesSearch = name.includes(lowerSearch) || pg.includes(lowerSearch) || month.includes(lowerSearch);
 
-            const matchesPg = filters.propertyId === "ALL" || p.pg_id === filters.propertyId;
+            const matchesPg = filters.propertyId === "ALL" || filters.propertyId === "" || p.pg_id === filters.propertyId;
 
             const statusValue = (p.status || "").toUpperCase();
             let matchesStatus = true;
@@ -567,16 +577,15 @@ const PaymentsScreen = ({ route, navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Compact App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Collections & Dues</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Financial Records"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             <FlatList
                 data={activeView === "transactions" ? groupedPayments : activeView === "invoices" ? invoices : ledger}
@@ -699,18 +708,7 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
 
         // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Summary Section
         summaryContainer: { padding: 16 },

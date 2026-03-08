@@ -20,9 +20,8 @@ import { pgAPI } from "../services/api";
 import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import ScreenHeader from "../components/common/ScreenHeader";
 import PGFormModal from "../components/modals/PGFormModal";
-import ThemeToggleButton from "../components/ThemeToggleButton";
-
 const { width } = Dimensions.get("window");
 
 const PGsScreen = ({ navigation }: any) => {
@@ -354,18 +353,15 @@ const PGsScreen = ({ navigation }: any) => {
     return (
         <SafeAreaView style={styles.container}>
             {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>PG Properties</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ThemeToggleButton style={{ marginRight: 12 }} />
-                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                        <MaterialCommunityIcons name="database-sync" size={18} color={COLORS.text} />
+            <ScreenHeader
+                title="PG Properties"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
+                        <Feather name="refresh-cw" size={20} color={COLORS.text} />
                     </TouchableOpacity>
-                </View>
-            </View>
+                }
+            />
 
             {/* Segmented Control for Tabs */}
             <View style={styles.controlsWrapper}>
@@ -469,18 +465,13 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
 
         // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
+        appBarIconButton: {
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            justifyContent: "center",
+            alignItems: "center"
         },
-        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Controls
         controlsWrapper: { padding: 16, paddingBottom: 8 },

@@ -11,7 +11,7 @@ import {
     View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import ThemeToggleButton from "../components/ThemeToggleButton";
+import ScreenHeader from "../components/common/ScreenHeader";
 import BookingModal from '../components/modals/BookingModal';
 import useThemePalette from "../hooks/useThemePalette";
 import { reservationAPI } from "../services/api";
@@ -29,7 +29,8 @@ const ReservationsScreen = ({ navigation }: any) => {
         setLoading(true);
         try {
             const data: any = await reservationAPI.getAll();
-            setBookings(Array.isArray(data) ? data : []);
+            const items = Array.isArray(data) ? data : (data?.items || data?.data || []);
+            setBookings(items);
         } catch (error) {
             console.error("Failed to fetch bookings:", error);
         } finally {
@@ -104,13 +105,10 @@ const ReservationsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={[styles.container, { backgroundColor: COLORS.bg }]}>
-            <View style={[styles.appBar, { backgroundColor: COLORS.card, borderBottomColor: COLORS.border }]}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarIconButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={[styles.appBarTitle, { color: COLORS.text }]}>Reservations</Text>
-                <ThemeToggleButton />
-            </View>
+            <ScreenHeader
+                title="Reservations"
+                onLeftPress={() => navigation.openDrawer()}
+            />
 
             <FlatList
                 data={bookings}
@@ -148,9 +146,7 @@ const ReservationsScreen = ({ navigation }: any) => {
 
 const styles = StyleSheet.create({
     container: { flex: 1 },
-    appBar: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 16, height: 60, borderBottomWidth: 1 },
-    appBarIconButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'center' },
-    appBarTitle: { fontSize: 18, fontWeight: '800' },
+    // appBar styles removed
     listContent: { padding: 16, paddingBottom: 100 },
     card: { borderRadius: 16, padding: 16, marginBottom: 12, borderWidth: 1, elevation: 2 },
     cardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12 },

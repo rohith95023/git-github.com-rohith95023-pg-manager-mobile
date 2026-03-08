@@ -17,6 +17,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ConfirmationModal from "../components/common/ConfirmationModal";
 import DropdownSelector from "../components/common/DropdownSelector";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import ExpenseFormModal from "../components/modals/ExpenseFormModal";
 import { useData } from "../context/DataContext";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
@@ -125,14 +126,15 @@ const ExpensesScreen = ({ navigation }: any) => {
                 pageNum === 1 ? expenseAPI.getStats({ pg_id: filters.propertyId === "ALL" ? "all" : filters.propertyId }) : Promise.resolve({ total_outflow: totalOutflowSum })
             ]);
 
-            const expenseList = expensesRes?.data || [];
-            const count = expensesRes?.count || 0;
+            const expenseList = Array.isArray(expensesRes) ? expensesRes : (expensesRes?.data || expensesRes?.items || []);
+            const count = expensesRes?.count ?? expensesRes?.total ?? expenseList.length;
 
             if (shouldAppend) {
                 setExpenses(prev => [...prev, ...expenseList]);
             } else {
                 setExpenses(expenseList);
-                setTotalOutflowSum(statsRes.total_outflow || 0);
+                const stats = statsRes?.data || statsRes;
+                setTotalOutflowSum(stats.total_outflow || 0);
             }
 
             setTotalCount(count);
@@ -296,16 +298,15 @@ const ExpensesScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Expense Tracker</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Expense Tracker"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             <FlatList
                 data={expenses}
@@ -397,19 +398,7 @@ const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-        // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Summary Section
         summaryContainer: { padding: 16 },

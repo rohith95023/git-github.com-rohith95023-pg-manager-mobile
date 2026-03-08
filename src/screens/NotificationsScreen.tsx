@@ -13,6 +13,7 @@ import {
     View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import ScreenHeader from "../components/common/ScreenHeader";
 import SegmentedControl from "../components/common/SegmentedControl";
 import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
@@ -33,7 +34,7 @@ const NotificationsScreen = ({ navigation }: any) => {
     const [activeTab, setActiveTab] = useState("overdue");
 
     // Pull live overdue/upcoming data from context
-    const { dashboardStats, invoices, tenants, loading: dataLoading, refresh: refreshData } = useData();
+    const { dashboardStats, invoices, tenants, pgs, loading: dataLoading, refresh: refreshData } = useData();
 
     const fetchScheduled = useCallback(async () => {
         try {
@@ -78,7 +79,12 @@ const NotificationsScreen = ({ navigation }: any) => {
         );
     };
 
-    // Build tenant lookup map from context tenants
+    const pgMap = useMemo(() => {
+        const m: Record<string, any> = {};
+        pgs.forEach((p: any) => { m[p.id] = p; });
+        return m;
+    }, [pgs]);
+
     const tenantMap = useMemo(() => {
         const m: Record<string, any> = {};
         tenants.forEach((t: any) => { m[t.id] = t; });
@@ -105,11 +111,11 @@ const NotificationsScreen = ({ navigation }: any) => {
                 if (balanceDue <= 0) return null;
                 // Resolve tenant: try nested first, then context map
                 const tenant = inv.tenants || tenantMap[inv.tenant_id] || null;
-                const pg = inv.pgs || (tenant?.pgs) || null;
+                const pg = inv.pgs || pgMap[inv.pg_id] || pgMap[tenant?.pg_id] || (tenant?.pgs) || null;
                 return {
                     id: inv.id,
-                    tenantName: tenant?.full_name || inv.tenant_name || "Unknown Resident",
-                    pgName: pg?.name || inv.pg_name || (tenant?.pgs?.name) || "—",
+                    tenantName: tenant?.full_name || inv.tenant_name || inv.tenants?.full_name || "Unknown Resident",
+                    pgName: pg?.name || inv.pg_name || inv.pgs?.name || (tenant?.pgs?.name) || "—",
                     type: inv.type || "RENT",
                     amount: balanceDue,
                     dueDate: endDate,
@@ -205,38 +211,38 @@ const NotificationsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Notifications</Text>
-                {activeTab === "scheduled" ? (
-                    <TouchableOpacity onPress={handleClearAll} style={styles.appBarButton}>
-                        <Feather name="trash-2" size={18} color={COLORS.danger} />
-                    </TouchableOpacity>
-                ) : (
-                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                    </TouchableOpacity>
-                )}
-            </View>
+            <ScreenHeader
+                title="Notifications"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    activeTab === "scheduled" ? (
+                        <TouchableOpacity onPress={handleClearAll} style={styles.appBarButton}>
+                            <Feather name="trash-2" size={18} color={COLORS.danger} />
+                        </TouchableOpacity>
+                    ) : (
+                        <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                            <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                        </TouchableOpacity>
+                    )
+                }
+            />
 
             {/* Summary pills for overdue tab */}
             {activeTab === "overdue" && (
                 <View style={styles.summaryRow}>
                     <View style={[styles.summaryPill, { borderColor: COLORS.danger + "40" }]}>
                         <View style={[styles.pillDot, { backgroundColor: COLORS.danger }]} />
-                        <Text style={styles.pillLabel}>Overdue</Text>
+                        <Text style={styles.pillLabel} numberOfLines={1} adjustsFontSizeToFit>Overdue</Text>
                         <Text style={[styles.pillValue, { color: COLORS.danger }]}>{overdueCount}</Text>
                     </View>
                     <View style={[styles.summaryPill, { borderColor: COLORS.warning + "40" }]}>
                         <View style={[styles.pillDot, { backgroundColor: COLORS.warning }]} />
-                        <Text style={styles.pillLabel}>Upcoming</Text>
+                        <Text style={styles.pillLabel} numberOfLines={1} adjustsFontSizeToFit>Upcoming</Text>
                         <Text style={[styles.pillValue, { color: COLORS.warning }]}>{upcomingCount}</Text>
                     </View>
                     <View style={[styles.summaryPill, { borderColor: COLORS.border }]}>
                         <MaterialCommunityIcons name="bell-ring-outline" size={14} color={COLORS.primary} />
-                        <Text style={styles.pillLabel}>Reminders</Text>
+                        <Text style={styles.pillLabel} numberOfLines={1} adjustsFontSizeToFit>Scheduled</Text>
                         <Text style={[styles.pillValue, { color: COLORS.primary }]}>{scheduledNotifs.length}</Text>
                     </View>
                 </View>
@@ -303,18 +309,7 @@ const NotificationsScreen = ({ navigation }: any) => {
 const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text },
 
         summaryRow: {
             flexDirection: 'row',
@@ -326,16 +321,16 @@ const createStyles = (COLORS: any) =>
             flex: 1,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 6,
+            gap: 4,
             backgroundColor: COLORS.card,
             borderRadius: 12,
             paddingVertical: 10,
-            paddingHorizontal: 10,
+            paddingHorizontal: 6,
             borderWidth: 1,
         },
         pillDot: { width: 6, height: 6, borderRadius: 3 },
-        pillLabel: { fontSize: 10, fontWeight: '700', color: COLORS.textMuted, flex: 1 },
-        pillValue: { fontSize: 14, fontWeight: '900' },
+        pillLabel: { fontSize: 10, fontWeight: '700', color: COLORS.textMuted, flex: 1, marginHorizontal: 2 },
+        pillValue: { fontSize: 13, fontWeight: '900' },
 
         segmentWrap: { padding: 16, paddingBottom: 8 },
 

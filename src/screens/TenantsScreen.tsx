@@ -17,8 +17,8 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ConfirmationModal from "../components/common/ConfirmationModal";
 import DropdownSelector from "../components/common/DropdownSelector";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
-import ThemeToggleButton from "../components/ThemeToggleButton";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import useThemePalette from "../hooks/useThemePalette";
 import { bedAPI, pgAPI, roomAPI, tenantAPI } from "../services/api";
@@ -213,11 +213,11 @@ const TenantsScreen = ({ navigation }: any) => {
                     page: pageNum,
                     limit: 10,
                     search: debouncedSearch,
-                    status: filters.status,
-                    profession: filters.profession,
-                    pgId: filters.propertyId,
-                    floor: filters.floor,
-                    roomId: filters.room,
+                    status: filters.status === "ALL" ? undefined : filters.status,
+                    profession: filters.profession === "ALL" ? undefined : filters.profession,
+                    pgId: filters.propertyId === "ALL" || filters.propertyId === "" ? undefined : filters.propertyId,
+                    floor: filters.floor === "ALL" ? undefined : filters.floor,
+                    roomId: filters.room === "ALL" ? undefined : filters.room,
                     sortBy: filters.sortBy,
                     sortOrder: filters.sortOrder,
                 }),
@@ -226,11 +226,11 @@ const TenantsScreen = ({ navigation }: any) => {
                 pageNum === 1 ? bedAPI.getAll() : Promise.resolve(beds)
             ]);
 
-            // tenantAPI.search returns { data: [...], count: N }
+            // tenantAPI.search returns { data: [...] } or { items: [...] } or direct array [...]
             const tenantList = Array.isArray(tenantResponse)
                 ? tenantResponse
-                : (tenantResponse?.data || []);
-            const count = tenantResponse?.count ?? tenantList.length;
+                : (tenantResponse?.data || tenantResponse?.items || []);
+            const count = tenantResponse?.count ?? tenantResponse?.total ?? tenantList.length;
 
             if (shouldAppend) {
                 setTenants(prev => [...prev, ...tenantList]);
@@ -535,18 +535,15 @@ const TenantsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarIconButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Resident Directory</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ThemeToggleButton style={{ marginRight: 12 }} />
+            <ScreenHeader
+                title="Resident Directory"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
                     <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
                         <Feather name="refresh-cw" size={20} color={COLORS.text} />
                     </TouchableOpacity>
-                </View>
-            </View>
+                }
+            />
 
             <FlatList
                 data={filteredTenants}
@@ -673,18 +670,13 @@ const TenantsScreen = ({ navigation }: any) => {
 
 const createStyles = (COLORS: any) => StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
-    appBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        height: 60,
-        backgroundColor: COLORS.card,
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border,
+    appBarIconButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: "center",
+        alignItems: "center"
     },
-    appBarIconButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-    appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
     searchSection: { padding: 16, paddingBottom: 8 },
     searchBox: {
         flexDirection: 'row',

@@ -16,6 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DropdownSelector from "../components/common/DropdownSelector";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import SegmentedControl from "../components/common/SegmentedControl";
 import PaymentFormModal from "../components/modals/PaymentFormModal";
 import useThemePalette from "../hooks/useThemePalette";
@@ -95,12 +96,12 @@ const DuesScreen = ({ navigation }: any) => {
                 tenantAPI.getAll().catch(() => []),
             ]);
 
-            const ledgerArr = Array.isArray(ledgerRes) ? ledgerRes : (ledgerRes?.data || []);
+            const ledgerArr = Array.isArray(ledgerRes) ? ledgerRes : (ledgerRes?.items || ledgerRes?.data || []);
             const invoicesArr = Array.isArray(invoicesRes) ? invoicesRes
                 : (invoicesRes?.items || invoicesRes?.data || []);
-            const pgsArr = Array.isArray(pgsRes) ? pgsRes : [];
+            const pgsArr = Array.isArray(pgsRes) ? pgsRes : (pgsRes?.items || pgsRes?.data || []);
             const tenantsArr = Array.isArray(tenantsRes) ? tenantsRes
-                : (tenantsRes?.data || []);
+                : (tenantsRes?.items || tenantsRes?.data || []);
 
             setGroupedLedger(ledgerArr);
             setInvoices(invoicesArr);
@@ -463,16 +464,15 @@ const DuesScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarBtn}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Dues & Collections</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarBtn}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Dues & Collections"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarBtn}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             {loading && !refreshing ? (
                 <View style={styles.loaderWrap}>
@@ -549,18 +549,13 @@ const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-        appBar: {
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
+        appBarBtn: {
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            justifyContent: "center",
+            alignItems: "center"
         },
-        appBarBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: "center", alignItems: "center" },
-        appBarTitle: { fontSize: 17, fontWeight: "800", color: COLORS.text, letterSpacing: -0.5 },
 
         loaderWrap: { flex: 1, justifyContent: "center", alignItems: "center", gap: 12 },
         loaderText: { fontSize: 14, color: COLORS.textMuted, fontWeight: "600" },

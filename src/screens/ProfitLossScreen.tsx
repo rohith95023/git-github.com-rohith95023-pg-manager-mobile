@@ -20,6 +20,7 @@ import {
     VictoryTheme
 } from "victory-native";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
 
@@ -129,16 +130,15 @@ const ProfitLossScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Profit & Loss</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Profit & Loss"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             <ScrollView
                 showsVerticalScrollIndicator={false}
@@ -241,7 +241,8 @@ const ProfitLossScreen = ({ navigation }: any) => {
                         </VictoryChart>
                     ) : (
                         <View style={{ height: 200, justifyContent: 'center', alignItems: 'center' }}>
-                            <ActivityIndicator color={COLORS.primary} />
+                            <MaterialCommunityIcons name="chart-bar" size={48} color={COLORS.textMuted + "20"} />
+                            <Text style={{ color: COLORS.textMuted, marginTop: 10, fontWeight: '700' }}>No Data Available</Text>
                         </View>
                     )}
                 </View>
@@ -356,19 +357,7 @@ const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-        // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Summary Section
         summarySection: { padding: 16 },

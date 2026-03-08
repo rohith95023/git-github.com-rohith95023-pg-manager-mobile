@@ -18,6 +18,7 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ConfirmationModal from "../components/common/ConfirmationModal";
 import DropdownSelector from "../components/common/DropdownSelector";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import MaintenanceModal from "../components/modals/MaintenanceModal";
 import RoomFormModal from "../components/modals/RoomFormModal";
 import { useData } from "../context/DataContext";
@@ -322,16 +323,15 @@ const RoomsScreen = ({ navigation }: any) => {
     return (
         <SafeAreaView style={styles.container}>
             {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Rooms & Beds</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
-
+            <ScreenHeader
+                title="Rooms & Beds"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
+                        <Feather name="refresh-cw" size={20} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
             <FlatList
                 data={filteredContent}
                 keyExtractor={(item) => item.id}
@@ -532,18 +532,13 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
 
         // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
+        appBarIconButton: {
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            justifyContent: "center",
+            alignItems: "center"
         },
-        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Controls
         controlsHeader: { padding: 16, gap: 12 },

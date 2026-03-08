@@ -61,6 +61,16 @@ const toArray = (res: any, label = ''): any[] => {
     return [];
 };
 
+/**
+ * Extracts a plain object from data envelope if needed.
+ */
+const toObject = (res: any): any => {
+    if (!res) return null;
+    if (res.data && !Array.isArray(res.data)) return res.data;
+    if (res.items && !Array.isArray(res.items)) return res.items; // less common for objects
+    return res;
+};
+
 /* ─── Provider ────────────────────────────────────────────────────── */
 export const DataProvider = ({ children }: { children: ReactNode }) => {
     const [pgs, setPgs] = useState<any[]>([]);
@@ -126,11 +136,8 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
             setLedger(toArray(val(ledgerRes), 'ledger'));
 
             // Stats/KPIs are plain objects (not arrays)
-            const rawStats = val(statsRes);
-            setDashboardStats(rawStats);
-
-            const rawKpis = val(kpisRes);
-            setDashboardKpis(rawKpis);
+            setDashboardStats(toObject(val(statsRes)));
+            setDashboardKpis(toObject(val(kpisRes)));
 
             setPnlSummary(toArray(val(pnlSumRes), 'pnlSummary'));
             setPnlCategories(toArray(val(pnlCatRes), 'pnlCategories'));

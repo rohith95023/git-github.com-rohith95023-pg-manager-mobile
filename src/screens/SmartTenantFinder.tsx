@@ -15,6 +15,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import DropdownSelector from "../components/common/DropdownSelector";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
 import useThemePalette from "../hooks/useThemePalette";
 import { pgAPI, tenantAPI } from "../services/api";
@@ -88,16 +89,18 @@ const SmartTenantFinder = ({ navigation }: any) => {
                     page: pageNum,
                     limit: 10,
                     search: debouncedSearch,
-                    status: filters.status,
-                    pgId: filters.propertyId,
-                    profession: filters.profession,
+                    status: filters.status === "ALL" ? undefined : filters.status,
+                    pgId: filters.propertyId === "ALL" ? undefined : filters.propertyId,
+                    profession: filters.profession === "ALL" ? undefined : filters.profession,
                     sortBy: filters.sortBy,
                     sortOrder: filters.sortOrder
                 })
             ]);
 
-            const tenantList = tenantsRes.data || [];
-            const count = tenantsRes.count || 0;
+            const tenantList = Array.isArray(tenantsRes)
+                ? tenantsRes
+                : (tenantsRes?.data || tenantsRes?.items || []);
+            const count = tenantsRes?.count ?? tenantsRes?.total ?? tenantList.length;
 
             // Balances are already computed by the search endpoint — no extra RPC calls needed
 
@@ -223,16 +226,15 @@ const SmartTenantFinder = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Smart Tenant Finder</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Smart Tenant Finder"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             {/* Optimized Search Section */}
             <View style={styles.searchSection}>
@@ -368,29 +370,12 @@ const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-        // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: {
             width: 40,
             height: 40,
             borderRadius: 20,
             justifyContent: 'center',
             alignItems: 'center',
-        },
-        appBarTitle: {
-            fontSize: 17,
-            fontWeight: '800',
-            color: COLORS.text,
-            letterSpacing: -0.5,
         },
 
         // Search Section

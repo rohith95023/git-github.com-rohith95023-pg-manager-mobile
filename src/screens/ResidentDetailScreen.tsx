@@ -11,6 +11,7 @@ import {
     View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import ScreenHeader from "../components/common/ScreenHeader";
 import useThemePalette from "../hooks/useThemePalette";
 import { billingService } from "../services/billing.service";
 
@@ -41,14 +42,15 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                 billingService.getInvoices(tenant.id)
             ]);
 
-            const invList = invoicesRes || [];
+            const invList = Array.isArray(invoicesRes) ? invoicesRes : (invoicesRes?.items || invoicesRes?.data || []);
             // Calculate balance from invoices if not pre-computed
-            if (tenant.outstanding_balance !== undefined && tenant.outstanding_balance !== null) {
-                setOutstandingBalance(Number(tenant.outstanding_balance));
+            const preComputedBalance = tenant.balance ?? tenant.outstanding_balance;
+            if (preComputedBalance !== undefined && preComputedBalance !== null) {
+                setOutstandingBalance(Number(preComputedBalance));
             } else {
                 const totalDue = invList
                     .filter((inv: any) => inv.type !== 'DEPOSIT')
-                    .reduce((acc: number, inv: any) => acc + Math.max(0, (inv.total_amount || 0) - (inv.paid_amount || 0)), 0);
+                    .reduce((acc: number, inv: any) => acc + Math.max(0, (Number(inv.total_amount) || 0) - (Number(inv.paid_amount) || 0)), 0);
                 setOutstandingBalance(totalDue);
             }
             setTenantCredit(creditRes?.amount || 0);
@@ -120,15 +122,16 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.navHeader}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                    <Feather name="arrow-left" size={24} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.navTitle}>Resident Profile</Text>
-                <TouchableOpacity style={styles.editBtn}>
-                    <Feather name="edit-2" size={20} color={COLORS.primary} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Resident Profile"
+                onLeftPress={() => navigation.goBack()}
+                leftIcon="arrow-left"
+                rightElement={
+                    <TouchableOpacity style={styles.editBtn}>
+                        <Feather name="edit-2" size={20} color={COLORS.primary} />
+                    </TouchableOpacity>
+                }
+            />
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollPadding}>
                 {/* Profile Header */}
@@ -339,17 +342,6 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        navHeader: {
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingHorizontal: 20,
-            paddingVertical: 15,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border
-        },
-        backBtn: { padding: 4 },
-        navTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
         editBtn: { padding: 8 },
         scrollPadding: { paddingHorizontal: 20, paddingTop: 20 },
 

@@ -1,19 +1,19 @@
+import { Feather } from "@expo/vector-icons";
+import { useNavigation } from "@react-navigation/native";
 import React, { useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    ScrollView,
-    Alert,
     Dimensions,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useAuth } from "../context/AuthContext";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import { useNavigation } from "@react-navigation/native";
-import useThemePalette from "../hooks/useThemePalette";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import ScreenHeader from "../components/common/ScreenHeader";
+import { useAuth } from "../context/AuthContext";
+import useThemePalette from "../hooks/useThemePalette";
 
 const { width } = Dimensions.get("window");
 
@@ -43,15 +43,11 @@ const ProfileScreen = () => {
     return (
         <SafeAreaView style={styles.container}>
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollContent}>
-                <View style={styles.header}>
-                    <Text style={styles.title}>My Profile</Text>
-                    <TouchableOpacity
-                        onPress={() => navigation.goBack()}
-                        style={[styles.backButton, { backgroundColor: COLORS.card, borderColor: COLORS.border }]}
-                    >
-                        <Feather name="x" size={24} color={COLORS.text} />
-                    </TouchableOpacity>
-                </View>
+                <ScreenHeader
+                    title="My Profile"
+                    onLeftPress={() => navigation.goBack()}
+                    leftIcon="arrow-left"
+                />
 
                 {/* Avatar Section */}
                 <View style={styles.avatarSection}>
@@ -148,22 +144,7 @@ const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
         scrollContent: { paddingBottom: 40 },
-        header: {
-            paddingHorizontal: 24,
-            paddingTop: 16,
-            paddingBottom: 16,
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between"
-        },
-        backButton: {
-            width: 40,
-            height: 40,
-            borderRadius: 20,
-            justifyContent: "center",
-            alignItems: "center",
-        },
-        title: { fontSize: 24, fontWeight: "900", color: COLORS.text, letterSpacing: -0.5 },
+        // header removed
 
         avatarSection: {
             alignItems: 'center',

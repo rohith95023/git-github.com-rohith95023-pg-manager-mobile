@@ -1,4 +1,4 @@
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
 import React, { useMemo, useState } from "react";
 import {
@@ -12,7 +12,7 @@ import {
     View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import ThemeToggleButton from "../components/ThemeToggleButton";
+import ScreenHeader from "../components/common/ScreenHeader";
 import { useAuth } from "../context/AuthContext";
 import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
@@ -25,7 +25,10 @@ const Dashboard = ({ navigation, route }: any) => {
     const { user } = useAuth();
     const isFocused = useIsFocused();
     const COLORS = useThemePalette();
-    const { dashboardStats, dashboardKpis, tenants, payments, invoices, refresh, loading, refreshing } = useData();
+    const {
+        dashboardStats, dashboardKpis, pgs, rooms, beds, tenants,
+        payments, invoices, refresh, loading, refreshing
+    } = useData();
 
     const stats = dashboardStats;
     const kpis = dashboardKpis;
@@ -43,6 +46,21 @@ const Dashboard = ({ navigation, route }: any) => {
     const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
+    // Live occupancy and bed counts
+    const occupancyData = useMemo(() => {
+        const totalBeds = beds.length;
+        const occupiedBeds = beds.filter(b => b.status === "OCCUPIED" || b.status === "RESERVED").length;
+        const availableBeds = totalBeds - occupiedBeds;
+        const rate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
+
+        return {
+            totalBeds,
+            occupiedBeds,
+            availableBeds,
+            rate: rate || dashboardStats?.occupancyRate || 0
+        };
+    }, [beds, dashboardStats]);
+
     const handleExport = async () => {
         try {
             setExportRefreshing(true);
@@ -58,7 +76,7 @@ const Dashboard = ({ navigation, route }: any) => {
     // Build grouped dues from real invoices in context (unpaid/partial)
     const groupedInvoices = useMemo(() => {
         const now = new Date();
-        const sevenDaysLater = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+        const thirtyDaysLater = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
 
         // Get unpaid/partial invoices due within 7 days or overdue
         const dueInvoices = invoices.filter((inv: any) => {
@@ -69,7 +87,7 @@ const Dashboard = ({ navigation, route }: any) => {
             // Show overdue + upcoming 7 days
             const dueDate = inv.billing_period_end ? new Date(inv.billing_period_end) : null;
             if (!dueDate) return true;
-            return dueDate <= sevenDaysLater;
+            return dueDate <= thirtyDaysLater;
         });
 
         const groups: Record<string, any> = {};
@@ -110,22 +128,15 @@ const Dashboard = ({ navigation, route }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Overview</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <TouchableOpacity onPress={handleExport} style={[styles.appBarButton, { marginRight: 8 }]}>
+            <ScreenHeader
+                title="Overview"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={handleExport} style={styles.appBarButton}>
                         <Feather name="download" size={20} color={COLORS.text} />
                     </TouchableOpacity>
-                    <ThemeToggleButton style={{ marginRight: 12 }} />
-                    <TouchableOpacity onPress={() => navigation.navigate('Notifications')} style={styles.appBarButton}>
-                        <Ionicons name="notifications-outline" size={20} color={COLORS.text} />
-                    </TouchableOpacity>
-                </View>
-            </View>
+                }
+            />
 
             <ScrollView
                 showsVerticalScrollIndicator={false}
@@ -156,7 +167,7 @@ const Dashboard = ({ navigation, route }: any) => {
                         </TouchableOpacity>
                     </View>
                     <View style={styles.mainKPIBox}>
-                        <Text style={styles.mainKPIValue}>{stats?.occupancyRate || 0}%</Text>
+                        <Text style={styles.mainKPIValue}>{occupancyData.rate}%</Text>
                         <Text style={styles.mainKPILabel}>Occupancy</Text>
                     </View>
                 </View>
@@ -167,28 +178,28 @@ const Dashboard = ({ navigation, route }: any) => {
                         <View style={[styles.iconPill, { backgroundColor: COLORS.primary + "15" }]}>
                             <Feather name="home" size={14} color={COLORS.primary} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.totalPGs || kpis?.totalPgs || 0}</Text>
+                        <Text style={styles.statValue}>{pgs.length > 0 ? pgs.length : (stats?.totalPGs || kpis?.totalPgs || 0)}</Text>
                         <Text style={styles.statLabel}>Properties</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.success + "15" }]}>
                             <Feather name="box" size={14} color={COLORS.success} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.activeRooms || kpis?.activeRooms || 0}</Text>
+                        <Text style={styles.statValue}>{rooms.length > 0 ? rooms.length : (stats?.activeRooms || kpis?.activeRooms || 0)}</Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.warning + "15" }]}>
                             <Feather name="users" size={14} color={COLORS.warning} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.totalTenants || kpis?.totalTenants || 0}</Text>
+                        <Text style={styles.statValue}>{tenants.length > 0 ? tenants.filter(t => t.status === 'ACTIVE').length : (stats?.totalTenants || kpis?.totalTenants || 0)}</Text>
                         <Text style={styles.statLabel}>Residents</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.danger + "15" }]}>
                             <MaterialCommunityIcons name="bed-outline" size={14} color={COLORS.danger} />
                         </View>
-                        <Text style={styles.statValue}>{kpis?.availableBeds || 0}</Text>
+                        <Text style={styles.statValue}>{beds.length > 0 ? occupancyData.availableBeds : (kpis?.availableBeds || 0)}</Text>
                         <Text style={styles.statLabel}>Free Beds</Text>
                     </View>
                 </View>
@@ -297,7 +308,7 @@ const Dashboard = ({ navigation, route }: any) => {
                 {groupedInvoices.length > 0 && (
                     <View style={styles.listSection}>
                         <View style={styles.listHeader}>
-                            <Text style={styles.sectionTitle}>Upcoming Dues (Next 7d)</Text>
+                            <Text style={styles.sectionTitle}>Upcoming Dues (Next 30d)</Text>
                             <Feather name="bell" size={14} color={COLORS.danger} />
                         </View>
                         {groupedInvoices.map((group: any) => {
@@ -398,7 +409,7 @@ const Dashboard = ({ navigation, route }: any) => {
                                 </View>
                                 <View style={styles.itemMain}>
                                     <Text style={styles.itemTitle} numberOfLines={1}>
-                                        {p.tenants?.full_name || p.tenant?.full_name || "Unknown Resident"}
+                                        {tenantMap[p.tenant_id]?.full_name || p.tenants?.full_name || p.tenant?.full_name || "Unknown Resident"}
                                     </Text>
                                     <Text style={styles.itemSub}>{getDescriptiveType()} • {p.payment_method}</Text>
                                 </View>
@@ -418,19 +429,7 @@ const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-        // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         scrollContent: { padding: 16 },
 
@@ -497,12 +496,12 @@ const createStyles = (COLORS: any) =>
         },
         financeItem: {
             width: '50%',
-            paddingVertical: 16,
-            paddingHorizontal: 18,
+            paddingVertical: 20, // Increased from 16
+            paddingHorizontal: 20, // Increased from 18
         },
-        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.5 },
-        financeValue: { fontSize: 20, fontWeight: '900', color: COLORS.text, marginTop: 6 },
-        financeSubLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '600', marginTop: 3 },
+        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+        financeValue: { fontSize: 22, fontWeight: '900', color: COLORS.text, marginTop: 8 }, // Increased font size and margin
+        financeSubLabel: { fontSize: 11, color: COLORS.textMuted, fontWeight: '600', marginTop: 4 },
         detailsBtn: {
             flexDirection: 'row',
             alignItems: 'center',

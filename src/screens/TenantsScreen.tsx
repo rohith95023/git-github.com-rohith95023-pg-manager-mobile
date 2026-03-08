@@ -1,31 +1,29 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    FlatList,
-    TextInput,
-    RefreshControl,
     ActivityIndicator,
     Dimensions,
-    Linking
+    FlatList,
+    Linking,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { tenantAPI, pgAPI, roomAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
 import ConfirmationModal from "../components/common/ConfirmationModal";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
-import { supabase } from "../lib/supabaseClient";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
 import UnifiedStayManager from "../components/modals/UnifiedStayManager";
-import { generateDeleteCode } from "../utils/security";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import useThemePalette from "../hooks/useThemePalette";
+import { bedAPI, pgAPI, roomAPI, tenantAPI } from "../services/api";
 import NotificationService from "../services/NotificationService";
-import ThemeToggleButton from "../components/ThemeToggleButton";
+import { generateDeleteCode } from "../utils/security";
 
 const { width } = Dimensions.get("window");
 
@@ -69,10 +67,13 @@ const TenantsScreen = ({ navigation }: any) => {
 
     const [tenants, setTenants] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
+    const [rooms, setRooms] = useState<any[]>([]);
+    const [beds, setBeds] = useState<any[]>([]);
     const [page, setPage] = useState(1);
     const [hasMore, setHasMore] = useState(true);
     const [loadingMore, setLoadingMore] = useState(false);
     const [totalCount, setTotalCount] = useState(0);
+    const loadingRef = React.useRef(false);
 
     const [searchTerm, setSearchTerm] = useState("");
     const [debouncedSearch, setDebouncedSearch] = useState("");
@@ -159,7 +160,7 @@ const TenantsScreen = ({ navigation }: any) => {
                 try {
                     setConfirmState(prev => ({ ...prev, loading: true }));
                     if (tenant.bed_id) {
-                        await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
+                        await bedAPI.update(tenant.bed_id, { status: "AVAILABLE", tenant_id: null });
                     }
                     await tenantAPI.update(tenant.id, { status: "DELETED" });
                     if (tenant.room_id) {
@@ -200,50 +201,50 @@ const TenantsScreen = ({ navigation }: any) => {
     }, [searchTerm]);
 
     const loadTenants = useCallback(async (pageNum = 1, shouldAppend = false) => {
-        if (loading || loadingMore) return;
+        // Prevent duplicate concurrent calls using a ref (not state, to avoid re-render loops)
+        if (loadingRef.current && pageNum === 1) return;
+        loadingRef.current = true;
         if (pageNum === 1) setLoading(true);
         else setLoadingMore(true);
 
         try {
-            const [tenantResponse, pgsData]: [any, any] = await Promise.all([
+            const [tenantResponse, pgsData, roomsData, bedsData]: [any, any, any, any] = await Promise.all([
                 tenantAPI.search({
                     page: pageNum,
                     limit: 10,
                     search: debouncedSearch,
-                    status: filters.status,
-                    profession: filters.profession,
-                    pgId: filters.propertyId,
-                    floor: filters.floor,
-                    roomId: filters.room,
+                    status: filters.status === "ALL" ? undefined : filters.status,
+                    profession: filters.profession === "ALL" ? undefined : filters.profession,
+                    pgId: filters.propertyId === "ALL" || filters.propertyId === "" ? undefined : filters.propertyId,
+                    floor: filters.floor === "ALL" ? undefined : filters.floor,
+                    roomId: filters.room === "ALL" ? undefined : filters.room,
                     sortBy: filters.sortBy,
                     sortOrder: filters.sortOrder,
                 }),
-                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs)
+                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
+                pageNum === 1 ? roomAPI.getAll() : Promise.resolve(rooms),
+                pageNum === 1 ? bedAPI.getAll() : Promise.resolve(beds)
             ]);
 
-            const tenantList = tenantResponse?.data || [];
-            const count = tenantResponse?.count || 0;
-
-            // Fetch outstanding balances from Billing Engine V2
-            const tenantsWithBalances = await Promise.all(tenantList.map(async (t: any) => {
-                try {
-                    const bal = await billingService.getOutstandingBalance(t.id);
-                    return { ...t, outstanding_balance: bal };
-                } catch (e) {
-                    console.warn(`Failed to fetch balance for ${t.id}:`, e);
-                    return { ...t, outstanding_balance: 0 };
-                }
-            }));
+            // tenantAPI.search returns { data: [...] } or { items: [...] } or direct array [...]
+            const tenantList = Array.isArray(tenantResponse)
+                ? tenantResponse
+                : (tenantResponse?.data || tenantResponse?.items || []);
+            const count = tenantResponse?.count ?? tenantResponse?.total ?? tenantList.length;
 
             if (shouldAppend) {
-                setTenants(prev => [...prev, ...tenantsWithBalances]);
+                setTenants(prev => [...prev, ...tenantList]);
             } else {
-                setTenants(tenantsWithBalances);
+                setTenants(tenantList);
             }
 
             setTotalCount(count);
-            setHasMore(shouldAppend ? (tenants.length + tenantsWithBalances.length < count) : (tenantsWithBalances.length < count));
-            if (pageNum === 1) setPgs(Array.isArray(pgsData) ? pgsData : []);
+            setHasMore(tenantList.length === 10 && (pageNum * 10) < count);
+            if (pageNum === 1) {
+                setPgs(Array.isArray(pgsData) ? pgsData : []);
+                setRooms(Array.isArray(roomsData) ? roomsData : []);
+                setBeds(Array.isArray(bedsData) ? bedsData : []);
+            }
             setPage(pageNum);
         } catch (error) {
             console.error("Failed to fetch Resident Directory data:", error);
@@ -251,8 +252,9 @@ const TenantsScreen = ({ navigation }: any) => {
             setLoading(false);
             setLoadingMore(false);
             setRefreshing(false);
+            loadingRef.current = false;
         }
-    }, [debouncedSearch, filters, pgs, tenants.length, loading, loadingMore]);
+    }, [debouncedSearch, filters]);
 
     useEffect(() => {
         if (isFocused) {
@@ -273,9 +275,9 @@ const TenantsScreen = ({ navigation }: any) => {
     const fetchFloors = useCallback(async (pgId: string) => {
         if (!pgId || pgId === "ALL") return [];
         try {
-            const { data, error } = await supabase.from("rooms").select("floor").eq("pg_id", pgId);
-            if (error) throw error;
-            const uniqueFloors = [...new Set(data.map((room: any) => room.floor))]
+            const data: any = await roomAPI.getByPgId(pgId);
+            const rooms = Array.isArray(data) ? data : (data?.data || []);
+            const uniqueFloors = [...new Set(rooms.map((room: any) => room.floor))]
                 .filter((f) => f !== null && f !== undefined && f !== "")
                 .sort((a: any, b: any) => Number(a) - Number(b))
                 .map((f) => ({
@@ -292,11 +294,10 @@ const TenantsScreen = ({ navigation }: any) => {
     const fetchRoomFilterList = useCallback(async (pgId: string, floor: string) => {
         if (!pgId || pgId === "ALL") return [];
         try {
-            let query = supabase.from("rooms").select("*").eq("pg_id", pgId);
-            if (floor && floor !== "ALL") query = query.eq("floor", floor);
-            const { data, error } = await query.order("floor").order("room_number");
-            if (error) throw error;
-            return data || [];
+            const data: any = await roomAPI.getByPgId(pgId);
+            let rooms = Array.isArray(data) ? data : (data?.data || []);
+            if (floor && floor !== "ALL") rooms = rooms.filter((r: any) => String(r.floor) === floor);
+            return rooms;
         } catch (error) {
             console.error("Error fetching rooms for filter sheet:", error);
             return [];
@@ -378,7 +379,7 @@ const TenantsScreen = ({ navigation }: any) => {
                     const promises = selectedTenantIds.map(async (id) => {
                         const tenant = tenants.find(t => t.id === id);
                         if (!tenant) return;
-                        if (tenant.bed_id) await supabase.from("beds").update({ status: "AVAILABLE", tenant_id: null }).eq("id", tenant.bed_id);
+                        if (tenant.bed_id) await bedAPI.update(tenant.bed_id, { status: "AVAILABLE", tenant_id: null });
                         await tenantAPI.update(tenant.id, { status: "DELETED" });
                         if (tenant.room_id) await roomAPI.recalculateOccupancy(tenant.room_id);
                     });
@@ -467,14 +468,14 @@ const TenantsScreen = ({ navigation }: any) => {
 
                         {balance > 0 && (
                             <View style={styles.dueAmountRow}>
-                                <Text style={styles.dueAmountValue}>₹{balance.toLocaleString()} PENDING</Text>
+                                <Text style={styles.dueAmountValue}>₹{Number(balance || 0).toLocaleString()} PENDING</Text>
                             </View>
                         )}
 
                         <View style={styles.assignmentRow}>
                             <Feather name="home" size={12} color={COLORS.textMuted} />
                             <Text style={styles.assignmentText} numberOfLines={1}>
-                                {item.pgs?.name || "N/A"} • {item.rooms?.room_number || "N/A"}{item.beds?.bed_number ? ` (${item.beds.bed_number})` : ""}
+                                {item.pgs?.name || pgs.find(p => p.id === item.pg_id)?.name || "N/A"} • {item.rooms?.room_number || rooms.find(r => r.id === item.room_id)?.room_number || "N/A"}{item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number ? ` (${item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number})` : ""}
                             </Text>
                         </View>
                     </View>
@@ -534,18 +535,15 @@ const TenantsScreen = ({ navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarIconButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Resident Directory</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ThemeToggleButton style={{ marginRight: 12 }} />
+            <ScreenHeader
+                title="Resident Directory"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
                     <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
                         <Feather name="refresh-cw" size={20} color={COLORS.text} />
                     </TouchableOpacity>
-                </View>
-            </View>
+                }
+            />
 
             <FlatList
                 data={filteredTenants}
@@ -672,18 +670,13 @@ const TenantsScreen = ({ navigation }: any) => {
 
 const createStyles = (COLORS: any) => StyleSheet.create({
     container: { flex: 1, backgroundColor: COLORS.bg },
-    appBar: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingHorizontal: 16,
-        height: 60,
-        backgroundColor: COLORS.card,
-        borderBottomWidth: 1,
-        borderBottomColor: COLORS.border,
+    appBarIconButton: {
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        justifyContent: "center",
+        alignItems: "center"
     },
-    appBarIconButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-    appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
     searchSection: { padding: 16, paddingBottom: 8 },
     searchBox: {
         flexDirection: 'row',

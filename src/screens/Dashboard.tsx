@@ -1,24 +1,23 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    Alert,
+    Dimensions,
+    RefreshControl,
     ScrollView,
     StyleSheet,
+    Text,
     TouchableOpacity,
-    RefreshControl,
-    ActivityIndicator,
-    Dimensions,
-    Pressable
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import ScreenHeader from "../components/common/ScreenHeader";
 import { useAuth } from "../context/AuthContext";
-import { statsAPI, paymentAPI, tenantAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import ThemeToggleButton from "../components/ThemeToggleButton";
+import { statsAPI } from "../services/api";
+import ExportService from "../services/ExportService";
 
 const { width } = Dimensions.get("window");
 
@@ -26,56 +25,89 @@ const Dashboard = ({ navigation, route }: any) => {
     const { user } = useAuth();
     const isFocused = useIsFocused();
     const COLORS = useThemePalette();
-    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [stats, setStats] = useState<any>(null);
-    const [recentPayments, setRecentPayments] = useState<any[]>([]);
-    const [dailyTenants, setDailyTenants] = useState<any[]>([]);
+    const {
+        dashboardStats, dashboardKpis, pgs, rooms, beds, tenants,
+        payments, invoices, refresh, loading, refreshing
+    } = useData();
+
+    const stats = dashboardStats;
+    const kpis = dashboardKpis;
+    const recentPayments = stats?.recentPayments || payments.slice(0, 5);
+    const dailyTenants = tenants.filter((t: any) => t.stay_type === 'DAILY').slice(0, 5);
+
+    // Build tenant lookup map for name resolution
+    const tenantMap = useMemo(() => {
+        const m: Record<string, any> = {};
+        tenants.forEach((t: any) => { m[t.id] = t; });
+        return m;
+    }, [tenants]);
+
+    const [exportRefreshing, setExportRefreshing] = useState(false);
     const [expandedGroups, setExpandedGroups] = useState<string[]>([]);
+    const styles = useMemo(() => createStyles(COLORS), [COLORS]);
 
-    const fetchData = useCallback(async () => {
+    // Live occupancy and bed counts
+    const occupancyData = useMemo(() => {
+        const totalBeds = beds.length;
+        const occupiedBeds = beds.filter(b => b.status === "OCCUPIED" || b.status === "RESERVED").length;
+        const availableBeds = totalBeds - occupiedBeds;
+        const rate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
+
+        return {
+            totalBeds,
+            occupiedBeds,
+            availableBeds,
+            rate: rate || dashboardStats?.occupancyRate || 0
+        };
+    }, [beds, dashboardStats]);
+
+    const handleExport = async () => {
         try {
-            // Sync Monthly Invoices on load (Billing Engine V2)
-            try {
-                if (user?.id) {
-                    await billingService.generateMonthlyInvoices(user.id);
-                }
-            } catch (err) {
-                console.warn("Monthly invoice generation failed:", err);
-            }
-
-            const [statsRes, tenantsRes]: any = await Promise.all([
-                statsAPI.getDashboardStats(),
-                tenantAPI.getActive()
-            ]);
-
-            const statsData = statsRes.data || statsRes;
-            if (statsRes) setStats(statsData);
-            setRecentPayments(statsData?.recentPayments || []);
-            setDailyTenants((tenantsRes?.data || tenantsRes || []).filter((t: any) => t.stay_type === 'DAILY').slice(0, 5));
+            setExportRefreshing(true);
+            await ExportService.exportToExcel();
+            Alert.alert("Success", "System data exported successfully!");
         } catch (error) {
-            console.error("Failed to fetch dashboard data:", error);
+            Alert.alert("Error", "Failed to export data");
         } finally {
-            setLoading(false);
-            setRefreshing(false);
+            setExportRefreshing(false);
         }
-    }, [user]);
+    };
 
+    // Build grouped dues from real invoices in context (unpaid/partial)
     const groupedInvoices = useMemo(() => {
-        const groups: { [key: string]: any[] } = {};
-        (stats?.upcomingInvoices || []).forEach((inv: any) => {
+        const now = new Date();
+        const thirtyDaysLater = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+
+        // Get unpaid/partial invoices due within 7 days or overdue
+        const dueInvoices = invoices.filter((inv: any) => {
+            const status = (inv.status || '').toUpperCase();
+            if (status !== 'UNPAID' && status !== 'PARTIAL') return false;
+            const balance = Number(inv.total_amount || 0) - Number(inv.paid_amount || 0);
+            if (balance <= 0) return false;
+            // Show overdue + upcoming 7 days
+            const dueDate = inv.billing_period_end ? new Date(inv.billing_period_end) : null;
+            if (!dueDate) return true;
+            return dueDate <= thirtyDaysLater;
+        });
+
+        const groups: Record<string, any> = {};
+        dueInvoices.forEach((inv: any) => {
             const tId = inv.tenant_id;
             if (!groups[tId]) groups[tId] = [];
             groups[tId].push(inv);
         });
-        return Object.entries(groups).map(([tenantId, items]) => ({
-            tenantId,
-            tenant: items[0].tenants,
-            totalDue: items.reduce((sum, current) => sum + (Number(current.total_amount) - Number(current.paid_amount || 0)), 0),
-            items
-        }));
-    }, [stats?.upcomingInvoices]);
+        return Object.entries(groups).map(([tenantId, items]) => {
+            // Resolve tenant: try nested tenants obj first, then context map
+            const tenant = (items[0] as any).tenants || tenantMap[tenantId] || null;
+            return {
+                tenantId,
+                tenant,
+                totalDue: (items as any[]).reduce((sum: number, inv: any) =>
+                    sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0),
+                items,
+            };
+        }).filter((g: any) => g.tenant && g.totalDue > 0);
+    }, [invoices, tenantMap]);
 
     const getInvoiceLabel = (inv: any) => {
         switch (inv.type?.toUpperCase()) {
@@ -91,48 +123,20 @@ const Dashboard = ({ navigation, route }: any) => {
         }
     };
 
-    useEffect(() => {
-        if (route.params?.refresh) {
-            onRefresh();
-        }
-    }, [route.params?.refresh]);
+    const onRefresh = () => refresh();
 
-    useRefreshOnForeground(fetchData, isFocused);
-
-    useEffect(() => {
-        if (isFocused) {
-            fetchData();
-        }
-    }, [fetchData, isFocused]);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchData();
-    };
-
-    if (loading && !refreshing) {
-        return (
-            <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-                <ActivityIndicator size="large" color={COLORS.primary} />
-            </View>
-        );
-    }
 
     return (
         <SafeAreaView style={styles.container}>
-            {/* Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Overview</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ThemeToggleButton style={{ marginRight: 12 }} />
-                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                        <Ionicons name="notifications-outline" size={20} color={COLORS.text} />
+            <ScreenHeader
+                title="Overview"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={handleExport} style={styles.appBarButton}>
+                        <Feather name="download" size={20} color={COLORS.text} />
                     </TouchableOpacity>
-                </View>
-            </View>
+                }
+            />
 
             <ScrollView
                 showsVerticalScrollIndicator={false}
@@ -140,13 +144,30 @@ const Dashboard = ({ navigation, route }: any) => {
                 refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={COLORS.primary} />}
             >
                 {/* Modernized Welcome Section */}
-                <View style={styles.welcomeCard}>
-                    <View>
+                <View style={[styles.welcomeCard, { paddingBottom: 16 }]}>
+                    <View style={{ flex: 1 }}>
                         <Text style={styles.welcomeTitle}>Hello{user?.full_name ? `, ${user.full_name.split(' ')[0]}` : '!'}</Text>
                         <Text style={styles.dateLabel}>{new Date().toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' })}</Text>
+
+                        <TouchableOpacity
+                            style={styles.generateBtn}
+                            onPress={async () => {
+                                if (!user?.id) return;
+                                try {
+                                    await statsAPI.generateMonthlyInvoices();
+                                    Alert.alert("Success", "Monthly invoices generated successfully!");
+                                    refresh();
+                                } catch (err: any) {
+                                    Alert.alert("Error", err.message || "Failed to generate invoices.");
+                                }
+                            }}
+                        >
+                            <Feather name="file-text" size={14} color="#fff" />
+                            <Text style={styles.generateBtnText}>Generate Invoices</Text>
+                        </TouchableOpacity>
                     </View>
                     <View style={styles.mainKPIBox}>
-                        <Text style={styles.mainKPIValue}>{stats?.occupancyRate || 0}%</Text>
+                        <Text style={styles.mainKPIValue}>{occupancyData.rate}%</Text>
                         <Text style={styles.mainKPILabel}>Occupancy</Text>
                     </View>
                 </View>
@@ -157,29 +178,29 @@ const Dashboard = ({ navigation, route }: any) => {
                         <View style={[styles.iconPill, { backgroundColor: COLORS.primary + "15" }]}>
                             <Feather name="home" size={14} color={COLORS.primary} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.totalPGs || 0}</Text>
+                        <Text style={styles.statValue}>{pgs.length > 0 ? pgs.length : (stats?.totalPGs || kpis?.totalPgs || 0)}</Text>
                         <Text style={styles.statLabel}>Properties</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.success + "15" }]}>
                             <Feather name="box" size={14} color={COLORS.success} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.activeRooms || 0}</Text>
+                        <Text style={styles.statValue}>{rooms.length > 0 ? rooms.length : (stats?.activeRooms || kpis?.activeRooms || 0)}</Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.warning + "15" }]}>
                             <Feather name="users" size={14} color={COLORS.warning} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.totalTenants || 0}</Text>
+                        <Text style={styles.statValue}>{tenants.length > 0 ? tenants.filter(t => t.status === 'ACTIVE').length : (stats?.totalTenants || kpis?.totalTenants || 0)}</Text>
                         <Text style={styles.statLabel}>Residents</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.danger + "15" }]}>
-                            <Feather name="clock" size={14} color={COLORS.danger} />
+                            <MaterialCommunityIcons name="bed-outline" size={14} color={COLORS.danger} />
                         </View>
-                        <Text style={styles.statValue}>{stats?.dailyActiveTenants || 0}</Text>
-                        <Text style={styles.statLabel}>Daily Stays</Text>
+                        <Text style={styles.statValue}>{beds.length > 0 ? occupancyData.availableBeds : (kpis?.availableBeds || 0)}</Text>
+                        <Text style={styles.statLabel}>Free Beds</Text>
                     </View>
                 </View>
 
@@ -208,27 +229,39 @@ const Dashboard = ({ navigation, route }: any) => {
                         </View>
                     </View>
 
+                    {/* 2×2 metrics grid */}
                     <View style={styles.financeGrid}>
-                        <View style={styles.financeItem}>
+                        <View style={[styles.financeItem, { borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Revenue</Text>
                             <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{(stats?.monthlyRevenue || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>This month</Text>
                         </View>
-                        <View style={styles.financeItem}>
-                            <Text style={styles.financeLabel}>Profit</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(stats?.netProfit || 0).toLocaleString()}</Text>
-                        </View>
-                        <View style={styles.financeItem}>
+                        <View style={[styles.financeItem, { borderBottomWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Due</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.pendingDues || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.totalPendingDues || stats?.total_pending || kpis?.total_pending || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>Outstanding</Text>
                         </View>
-                        <TouchableOpacity
-                            style={styles.detailsBtn}
-                            onPress={() => navigation.navigate("ProfitLoss")}
-                        >
-                            <Text style={styles.detailsBtnText}>Analysis</Text>
-                            <Feather name="arrow-right" size={12} color={COLORS.textMuted} />
-                        </TouchableOpacity>
+                        <View style={[styles.financeItem, { borderRightWidth: 1, borderColor: COLORS.border }]}>
+                            <Text style={styles.financeLabel}>Net Profit</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(stats?.netProfit || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>Monthly</Text>
+                        </View>
+                        <View style={styles.financeItem}>
+                            <Text style={styles.financeLabel}>All-time</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.textMuted }]}>₹{(stats?.totalRevenue || kpis?.allTimeRevenue || 0).toLocaleString()}</Text>
+                            <Text style={styles.financeSubLabel}>Total earned</Text>
+                        </View>
                     </View>
+
+                    {/* Analysis button */}
+                    <TouchableOpacity
+                        style={styles.detailsBtn}
+                        onPress={() => navigation.navigate("ProfitLoss")}
+                    >
+                        <Feather name="bar-chart-2" size={14} color={COLORS.primary} />
+                        <Text style={styles.detailsBtnText}>View Full Analysis</Text>
+                        <Feather name="arrow-right" size={13} color={COLORS.primary} />
+                    </TouchableOpacity>
 
                     {/* Monthly Collection Progress Bar */}
                     <View style={styles.progressSection}>
@@ -275,7 +308,7 @@ const Dashboard = ({ navigation, route }: any) => {
                 {groupedInvoices.length > 0 && (
                     <View style={styles.listSection}>
                         <View style={styles.listHeader}>
-                            <Text style={styles.sectionTitle}>Upcoming Dues (Next 7d)</Text>
+                            <Text style={styles.sectionTitle}>Upcoming Dues (Next 30d)</Text>
                             <Feather name="bell" size={14} color={COLORS.danger} />
                         </View>
                         {groupedInvoices.map((group: any) => {
@@ -337,7 +370,7 @@ const Dashboard = ({ navigation, route }: any) => {
                                                 </Text>
                                             </View>
                                             <Text style={[styles.itemPrice, { fontSize: 13, color: COLORS.danger }]}>
-                                                ₹{(inv.total_amount - inv.paid_amount).toLocaleString()}
+                                                ₹{Number((Number(inv.total_amount) || 0) - (Number(inv.paid_amount) || 0)).toLocaleString()}
                                             </Text>
                                         </TouchableOpacity>
                                     ))}
@@ -376,7 +409,7 @@ const Dashboard = ({ navigation, route }: any) => {
                                 </View>
                                 <View style={styles.itemMain}>
                                     <Text style={styles.itemTitle} numberOfLines={1}>
-                                        {p.tenants?.full_name || p.tenant?.full_name || "Unknown Resident"}
+                                        {tenantMap[p.tenant_id]?.full_name || p.tenants?.full_name || p.tenant?.full_name || "Unknown Resident"}
                                     </Text>
                                     <Text style={styles.itemSub}>{getDescriptiveType()} • {p.payment_method}</Text>
                                 </View>
@@ -396,19 +429,7 @@ const createStyles = (COLORS: any) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
 
-        // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         scrollContent: { padding: 16 },
 
@@ -427,6 +448,18 @@ const createStyles = (COLORS: any) =>
         mainKPIBox: { alignItems: 'center', backgroundColor: 'rgba(0,0,0,0.1)', paddingHorizontal: 16, paddingVertical: 10, borderRadius: 16 },
         mainKPIValue: { fontSize: 18, fontWeight: '900', color: '#fff' },
         mainKPILabel: { fontSize: 8, fontWeight: '900', color: 'rgba(255,255,255,0.6)', textTransform: 'uppercase', marginTop: 2 },
+        generateBtn: {
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 6,
+            backgroundColor: 'rgba(255,255,255,0.15)',
+            paddingHorizontal: 12,
+            paddingVertical: 8,
+            borderRadius: 12,
+            marginTop: 12,
+            alignSelf: 'flex-start'
+        },
+        generateBtnText: { color: '#fff', fontSize: 11, fontWeight: '800' },
 
         // Quick Stats
         statsGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
@@ -451,21 +484,34 @@ const createStyles = (COLORS: any) =>
             borderColor: COLORS.border,
             marginBottom: 24,
         },
-        sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text, marginBottom: 16 },
-        financeGrid: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-        financeItem: { flex: 1 },
-        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase' },
-        financeValue: { fontSize: 15, fontWeight: '900', color: COLORS.text, marginTop: 4 },
+        sectionTitle: { fontSize: 16, fontWeight: '800', color: COLORS.text, marginBottom: 0 },
+        financeGrid: {
+            flexDirection: 'row',
+            flexWrap: 'wrap',
+            borderWidth: 1,
+            borderColor: COLORS.border,
+            borderRadius: 16,
+            overflow: 'hidden',
+            marginBottom: 14,
+        },
+        financeItem: {
+            width: '50%',
+            paddingVertical: 20, // Increased from 16
+            paddingHorizontal: 20, // Increased from 18
+        },
+        financeLabel: { fontSize: 10, color: COLORS.textMuted, fontWeight: '800', textTransform: 'uppercase', letterSpacing: 0.6 },
+        financeValue: { fontSize: 22, fontWeight: '900', color: COLORS.text, marginTop: 8 }, // Increased font size and margin
+        financeSubLabel: { fontSize: 11, color: COLORS.textMuted, fontWeight: '600', marginTop: 4 },
         detailsBtn: {
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 6,
-            backgroundColor: COLORS.bg,
-            paddingHorizontal: 12,
-            paddingVertical: 8,
-            borderRadius: 12
+            justifyContent: 'center',
+            gap: 8,
+            backgroundColor: COLORS.primary + '12',
+            paddingVertical: 12,
+            borderRadius: 14,
         },
-        detailsBtnText: { fontSize: 11, fontWeight: '700', color: COLORS.textMuted },
+        detailsBtnText: { fontSize: 13, fontWeight: '800', color: COLORS.primary },
 
         // List Sections
         listSection: { marginBottom: 24 },

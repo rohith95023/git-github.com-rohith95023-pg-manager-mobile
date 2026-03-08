@@ -1,29 +1,30 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    FlatList,
-    TextInput,
-    ScrollView,
-    RefreshControl,
     ActivityIndicator,
+    Alert,
     Dimensions,
-    Alert
+    FlatList,
+    RefreshControl,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { roomAPI, bedAPI, pgAPI } from "../services/api";
-import { supabase } from "../lib/supabaseClient";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import { generateDeleteCode } from "../utils/security";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
-import DropdownSelector from "../components/common/DropdownSelector";
-import RoomFormModal from "../components/modals/RoomFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
+import MaintenanceModal from "../components/modals/MaintenanceModal";
+import RoomFormModal from "../components/modals/RoomFormModal";
+import { useData } from "../context/DataContext";
+import useThemePalette from "../hooks/useThemePalette";
+import { roomAPI } from "../services/api";
+import { generateDeleteCode } from "../utils/security";
 
 const { width } = Dimensions.get("window");
 
@@ -38,20 +39,16 @@ const RoomsScreen = ({ navigation }: any) => {
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
     const [viewMode, setViewMode] = useState<"ROOMS" | "BEDS">("ROOMS");
-    const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
     const [filters, setFilters] = useState(createDefaultRoomFilters());
     const [pendingFilters, setPendingFilters] = useState(createDefaultRoomFilters());
     const [isFilterSheetVisible, setFilterSheetVisible] = useState(false);
-
-    const [rooms, setRooms] = useState<any[]>([]);
-    const [beds, setBeds] = useState<any[]>([]);
-    const [pgs, setPgs] = useState<any[]>([]);
-
     const [searchTerm, setSearchTerm] = useState("");
 
     // Modal State
     const [roomModalVisible, setRoomModalVisible] = useState(false);
+    const [maintenanceModalVisible, setMaintenanceModalVisible] = useState(false);
+    const [selectedEntity, setSelectedEntity] = useState<any>(null);
     const [editingRoom, setEditingRoom] = useState<any>(null);
 
     const [confirmState, setConfirmState] = useState<{
@@ -81,37 +78,17 @@ const RoomsScreen = ({ navigation }: any) => {
         setPendingFilters(prev => ({ ...prev, showArchived: value }));
     };
 
-    const fetchData = useCallback(async () => {
-        try {
-            setLoading(true);
-            const [roomsData, bedsData, pgsData] = await Promise.all([
-                roomAPI.getAll(),
-                bedAPI.getAll(),
-                pgAPI.getAll()
-            ]);
-            setRooms(Array.isArray(roomsData) ? roomsData : []);
-            setBeds(Array.isArray(bedsData) ? bedsData : []);
-            setPgs(Array.isArray(pgsData) ? pgsData : []);
-        } catch (error) {
-            console.error("Failed to fetch Rooms/Beds data:", error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, []);
+    // ─── DataContext ─────────────────────────────────────────────────────
+    const { rooms: ctxRooms, beds: ctxBeds, pgs: ctxPgs, loading, refresh } = useData();
+    const [rooms, setRooms] = useState<any[]>(ctxRooms);
+    const [beds, setBeds] = useState<any[]>(ctxBeds);
+    const [pgs, setPgs] = useState<any[]>(ctxPgs);
+    const onRefresh = () => refresh();
 
-    useEffect(() => {
-        if (isFocused) {
-            fetchData();
-        }
-    }, [fetchData, isFocused]);
-
-    useRefreshOnForeground(fetchData, isFocused);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchData();
-    };
+    // Sync local state with context data
+    useEffect(() => { setRooms(ctxRooms); }, [ctxRooms]);
+    useEffect(() => { setBeds(ctxBeds); }, [ctxBeds]);
+    useEffect(() => { setPgs(ctxPgs); }, [ctxPgs]);
 
     const handleAddRoom = () => {
         setEditingRoom(null);
@@ -125,16 +102,8 @@ const RoomsScreen = ({ navigation }: any) => {
 
     const handleDeleteRoom = async (id: string, roomNumber: string) => {
         try {
-            setLoading(true);
-            const { count, error } = await supabase
-                .from("beds")
-                .select("id", { count: "exact", head: true })
-                .eq("room_id", id)
-                .not("tenant_id", "is", null);
-
-            setLoading(false);
-
-            if (error) throw error;
+            const room = rooms.find((r: any) => r.id === id);
+            const count = room?.current_occupancy || 0;
 
             if (count && count > 0) {
                 setConfirmState({
@@ -165,7 +134,7 @@ const RoomsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         await roomAPI.delete(id);
-                        await fetchData();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
@@ -176,7 +145,6 @@ const RoomsScreen = ({ navigation }: any) => {
                 }
             });
         } catch (error: any) {
-            setLoading(false);
             console.error("Delete room check error:", error);
             Alert.alert("Error", "Error checking room occupancy: " + error.message);
         }
@@ -197,25 +165,42 @@ const RoomsScreen = ({ navigation }: any) => {
             b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
 
         if (viewMode === "ROOMS") {
-            return rooms.filter(r => {
+            return rooms.map(r => {
+                const pg = pgs.find(p => p.id === r.pg_id);
+                const availableCount = Math.max(0, (r.capacity || 0) - (r.current_occupancy || 0));
+                return {
+                    ...r,
+                    display_pg_name: r.pgs?.name || pg?.name || "N/A",
+                    available_count: availableCount
+                };
+            }).filter(r => {
                 const matchesSearch = (r.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (r.pgs?.name || "").toLowerCase().includes(searchTerm.toLowerCase());
+                    (r.display_pg_name || "").toLowerCase().includes(searchTerm.toLowerCase());
                 const matchesPg = !propertyId || r.pg_id === propertyId;
                 const matchesStatus = showArchived ? isArchivedRoom(r) : !isArchivedRoom(r);
                 return matchesSearch && matchesPg && matchesStatus;
             });
         } else {
-            return beds.filter(b => {
+            return beds.map(b => {
+                const room = rooms.find(r => r.id === b.room_id);
+                const pg = pgs.find(p => p.id === (b.pg_id || room?.pg_id));
+                return {
+                    ...b,
+                    display_room_number: b.rooms?.room_number || room?.room_number || "N/A",
+                    display_pg_name: b.pgs?.name || b.rooms?.pgs?.name || room?.pgs?.name || pg?.name || "N/A"
+                };
+            }).filter(b => {
                 const matchesSearch = (b.bed_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
-                    (b.rooms?.room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.display_room_number || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
+                    (b.display_pg_name || "").toLowerCase().includes(searchTerm.toLowerCase()) ||
                     (b.tenants?.full_name || "").toLowerCase().includes(searchTerm.toLowerCase());
-                const matchesPg = !propertyId || b.rooms?.pg_id === propertyId;
+                const matchesPg = !propertyId || b.rooms?.pg_id === propertyId || b.pg_id === propertyId;
                 const matchesStatus = showArchived ? isArchivedBed(b) : !isArchivedBed(b);
                 const matchesBedStatus = filters.bedStatus === "ALL" || b.status === filters.bedStatus;
                 return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
         }
-    }, [viewMode, rooms, beds, searchTerm, filters]);
+    }, [viewMode, rooms, beds, searchTerm, filters, pgs]);
 
     const stats = useMemo(() => {
         const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
@@ -254,7 +239,7 @@ const RoomsScreen = ({ navigation }: any) => {
                 <View style={styles.cardHeaderLeft}>
                     <Text style={styles.roomNumber}>Room {item.room_number}</Text>
                     <Text style={styles.pgName} numberOfLines={1}>
-                        {item.pgs?.name || "N/A"} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`}
+                        {item.display_pg_name} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`}
                     </Text>
                 </View>
                 <View style={[styles.miniBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
@@ -270,9 +255,12 @@ const RoomsScreen = ({ navigation }: any) => {
                 <View style={styles.detailDivider} />
                 <View style={styles.detailItem}>
                     <MaterialCommunityIcons name="account-group-outline" size={14} color={COLORS.textMuted} />
-                    <Text style={styles.detailValue}>{item.capacity} Sharing</Text>
+                    <Text style={styles.detailValue}>
+                        {item.capacity} Sharing • <Text style={{ color: item.available_count > 0 ? COLORS.success : COLORS.textMuted, fontWeight: '800' }}>{item.available_count} Available</Text>
+                    </Text>
                 </View>
             </View>
+
 
             <View style={styles.cardFooter}>
                 <TouchableOpacity style={styles.footerAction} onPress={() => handleEditRoom(item)}>
@@ -292,8 +280,9 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardTop}>
                 <View style={styles.cardHeaderLeft}>
                     <Text style={styles.roomNumber}>{item.bed_number}</Text>
-                    <Text style={styles.pgName}>Room {item.rooms?.room_number} • {item.rooms?.pgs?.name}</Text>
+                    <Text style={styles.pgName}>Room {item.display_room_number} • {item.display_pg_name}</Text>
                 </View>
+
                 <View style={[styles.miniBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
                     <Text style={[styles.miniBadgeText, { color: getStatusColor(item.status) }]}>{item.status}</Text>
                 </View>
@@ -310,7 +299,19 @@ const RoomsScreen = ({ navigation }: any) => {
                     <Text style={styles.residentSub}>Current Resident</Text>
                 </View>
                 {item.status !== "MAINTENANCE" && (
-                    <TouchableOpacity style={styles.fixButton}>
+                    <TouchableOpacity
+                        style={styles.fixButton}
+                        onPress={() => {
+                            setSelectedEntity({
+                                id: item.id,
+                                type: 'BED',
+                                pg_id: item.rooms?.pg_id,
+                                bed_number: item.bed_number,
+                                pg_name: item.rooms?.pgs?.name
+                            });
+                            setMaintenanceModalVisible(true);
+                        }}
+                    >
                         <Feather name="tool" size={12} color={COLORS.warning} />
                         <Text style={styles.fixButtonText}>Fix</Text>
                     </TouchableOpacity>
@@ -322,16 +323,15 @@ const RoomsScreen = ({ navigation }: any) => {
     return (
         <SafeAreaView style={styles.container}>
             {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Rooms & Beds</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
-
+            <ScreenHeader
+                title="Rooms & Beds"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
+                        <Feather name="refresh-cw" size={20} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
             <FlatList
                 data={filteredContent}
                 keyExtractor={(item) => item.id}
@@ -486,9 +486,21 @@ const RoomsScreen = ({ navigation }: any) => {
             <RoomFormModal
                 visible={roomModalVisible}
                 onClose={() => setRoomModalVisible(false)}
-                onSuccess={fetchData}
+                onSuccess={refresh}
                 editingRoom={editingRoom}
                 initialPgId={filters.property || undefined}
+            />
+
+            <MaintenanceModal
+                visible={maintenanceModalVisible}
+                onClose={() => setMaintenanceModalVisible(false)}
+                onSuccess={refresh}
+                editingRequest={selectedEntity ? {
+                    entity_type: selectedEntity.type,
+                    entity_id: selectedEntity.id,
+                    pg_id: selectedEntity.pg_id,
+                    description: `Issue reported for ${selectedEntity.type} ${selectedEntity.type === 'BED' ? selectedEntity.bed_number : ''}`,
+                } : null}
             />
 
             <ConfirmationModal
@@ -520,18 +532,13 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
 
         // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
+        appBarIconButton: {
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            justifyContent: "center",
+            alignItems: "center"
         },
-        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Controls
         controlsHeader: { padding: 16, gap: 12 },

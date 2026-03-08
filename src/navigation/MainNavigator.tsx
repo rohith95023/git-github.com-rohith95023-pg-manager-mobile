@@ -1,37 +1,38 @@
-import React, { useState } from "react";
-import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    Image,
-    ScrollView,
-} from "react-native";
+import { Feather, Ionicons } from "@expo/vector-icons";
 import {
     createDrawerNavigator,
     DrawerContentScrollView,
-    DrawerItemList,
-    DrawerItem,
+    DrawerItemList
 } from "@react-navigation/drawer";
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
-import { Feather, Ionicons } from "@expo/vector-icons";
-import { useTheme } from "../context/ThemeContext";
-import { useAuth } from "../context/AuthContext";
+import React, { useState } from "react";
+import {
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
+} from "react-native";
 import ThemeToggleButton from "../components/ThemeToggleButton";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import { useAuth } from "../context/AuthContext";
+import { useTheme } from "../context/ThemeContext";
 
 // Screens
-import Dashboard from "../screens/Dashboard";
-import PGsScreen from "../screens/PGsScreen";
-import RoomsScreen from "../screens/RoomsScreen";
-import TenantsScreen from "../screens/TenantsScreen";
-import PaymentsScreen from "../screens/PaymentsScreen";
-import ExpensesScreen from "../screens/ExpensesScreen";
-import ProfitLossScreen from "../screens/ProfitLossScreen";
-import ProfileScreen from "../screens/ProfileScreen";
 import ChangePasswordScreen from "../screens/ChangePasswordScreen";
-import SmartTenantFinder from "../screens/SmartTenantFinder";
+import Dashboard from "../screens/Dashboard";
+import DuesScreen from "../screens/DuesScreen";
+import ExpensesScreen from "../screens/ExpensesScreen";
+import MaintenanceScreen from "../screens/MaintenanceScreen";
+import NotificationsScreen from "../screens/NotificationsScreen";
+import PGsScreen from "../screens/PGsScreen";
+import PaymentsScreen from "../screens/PaymentsScreen";
+import ProfileScreen from "../screens/ProfileScreen";
+import ProfitLossScreen from "../screens/ProfitLossScreen";
+import ReservationsScreen from "../screens/ReservationsScreen";
 import ResidentDetailScreen from "../screens/ResidentDetailScreen";
+import RoomsScreen from "../screens/RoomsScreen";
+import SmartTenantFinder from "../screens/SmartTenantFinder";
+import TenantsScreen from "../screens/TenantsScreen";
 
 
 const Drawer = createDrawerNavigator();
@@ -213,6 +214,23 @@ const MainNavigator = () => {
                 }}
             />
             <Drawer.Screen
+                name="Reservations"
+                component={ReservationsScreen}
+                options={{
+                    drawerItemStyle: { display: 'none' }, // Hidden from sidebar
+                    headerTitle: "Reservations"
+                }}
+            />
+            <Drawer.Screen
+                name="Dues"
+                component={DuesScreen}
+                options={{
+                    drawerLabel: "Dues & Collections",
+                    drawerIcon: ({ color }) => <Feather name="alert-circle" size={20} color={color} />,
+                    headerTitle: "Dues & Collections"
+                }}
+            />
+            <Drawer.Screen
                 name="TenantFinder"
                 component={SmartTenantFinder}
                 options={{
@@ -264,6 +282,24 @@ const MainNavigator = () => {
                     ),
                     drawerIcon: ({ color }) => <Feather name="trending-up" size={20} color={color} />,
                     headerTitle: "Profit & Loss"
+                }}
+            />
+            <Drawer.Screen
+                name="Maintenance"
+                component={MaintenanceScreen}
+                options={{
+                    drawerLabel: "Maintenance",
+                    drawerIcon: ({ color }) => <Feather name="tool" size={20} color={color} />,
+                    headerTitle: "Maintenance"
+                }}
+            />
+            <Drawer.Screen
+                name="Notifications"
+                component={NotificationsScreen}
+                options={{
+                    drawerLabel: "Notifications",
+                    drawerIcon: ({ color }) => <Feather name="bell" size={20} color={color} />,
+                    headerTitle: "Notifications"
                 }}
             />
             <Drawer.Screen

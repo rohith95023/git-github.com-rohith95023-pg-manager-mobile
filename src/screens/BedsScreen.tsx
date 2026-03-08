@@ -1,24 +1,23 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    FlatList,
-    TextInput,
-    RefreshControl,
     ActivityIndicator,
+    Alert,
     Dimensions,
-    Alert
+    FlatList,
+    RefreshControl,
+    StyleSheet,
+    Text,
+    TextInput,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { bedAPI, pgAPI, roomAPI } from "../services/api";
-import { supabase } from "../lib/supabaseClient";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
-import DropdownSelector from "../components/common/DropdownSelector";
 import ConfirmationModal from "../components/common/ConfirmationModal";
+import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import useThemePalette from "../hooks/useThemePalette";
+import { bedAPI, pgAPI } from "../services/api";
 
 const { width } = Dimensions.get("window");
 
@@ -102,37 +101,14 @@ const BedsScreen = ({ navigation }: any) => {
 
     const fetchStats = useCallback(async () => {
         try {
-            let query = supabase
-                .from("beds")
-                .select("status, rooms!inner(pg_id, status, pgs!inner(status))")
-                .neq("rooms.status", "INACTIVE")
-                .neq("rooms.status", "MAINTENANCE")
-                .neq("rooms.pgs.status", "INACTIVE")
-                .neq("rooms.pgs.status", "DELETED");
+            const data: any = await bedAPI.getStats({ propertyId: filters.propertyId });
 
-            if (filters.propertyId) {
-                query = query.eq("rooms.pg_id", filters.propertyId);
-            }
-
-            const { data: bedsData, error } = await query;
-
-            if (error) {
-                console.error("Error fetching bed stats:", error);
-                return;
-            }
-
-            if (bedsData) {
-                const counts = bedsData.reduce((acc: any, curr: any) => {
-                    acc.total++;
-                    acc[curr.status.toLowerCase()] = (acc[curr.status.toLowerCase()] || 0) + 1;
-                    return acc;
-                }, { total: 0, available: 0, occupied: 0, maintenance: 0 });
-
+            if (data) {
                 setStats({
-                    totalBeds: counts.total,
-                    available: counts.available,
-                    occupied: counts.occupied,
-                    maintenance: counts.maintenance
+                    totalBeds: data.total || 0,
+                    available: data.available || 0,
+                    occupied: data.occupied || 0,
+                    maintenance: data.maintenance || 0
                 });
             }
         } catch (error) {
@@ -147,13 +123,13 @@ const BedsScreen = ({ navigation }: any) => {
             if (pageNum === 1) setLoading(true);
             else setLoadingMore(true);
 
-            const { data, count } = await bedAPI.search({
+            const { data, count } = (await bedAPI.search({
                 page: pageNum,
                 limit: 10,
                 search: debouncedSearch,
                 status: filters.status,
                 pgId: filters.propertyId
-            });
+            })) as any;
 
             const bedList = data || [];
             if (shouldAppend) {
@@ -177,25 +153,8 @@ const BedsScreen = ({ navigation }: any) => {
         }
     }, [debouncedSearch, filters, fetchStats]);
 
-    // Data Load & Real-time Subscription
     useEffect(() => {
         loadBeds(1, false);
-
-        const channel = supabase
-            .channel("beds_management_changes")
-            .on(
-                "postgres_changes",
-                { event: "*", schema: "public", table: "beds" },
-                () => {
-                    // Refresh data on any changes
-                    loadBeds(1, false);
-                }
-            )
-            .subscribe();
-
-        return () => {
-            supabase.removeChannel(channel);
-        };
     }, [debouncedSearch, filters]);
 
     const onRefresh = () => {

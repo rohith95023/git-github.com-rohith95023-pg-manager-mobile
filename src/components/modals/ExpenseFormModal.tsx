@@ -1,16 +1,15 @@
-import React, { useEffect, useState } from "react";
-import { View, StyleSheet, Text, TouchableOpacity, Alert } from "react-native";
-import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import * as z from "zod";
-import FormModal from "../common/FormModal";
-import FormField from "../common/FormField";
-import DropdownSelector from "../common/DropdownSelector";
-import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
+import { authAPI, expenseAPI, pgAPI } from "../../services/api";
 import ConfirmationModal from "../common/ConfirmationModal";
-import { expenseAPI, pgAPI } from "../../services/api";
-import { supabase } from "../../lib/supabaseClient";
+import DatePickerField from "../common/DatePickerField";
+import DropdownSelector from "../common/DropdownSelector";
+import FormField from "../common/FormField";
+import FormModal from "../common/FormModal";
 
 const expenseSchema = z.object({
     title: z.string().min(1, "Title is required"),
@@ -105,7 +104,7 @@ const ExpenseFormModal: React.FC<ExpenseFormModalProps> = ({ visible, onClose, o
     const handleFormSubmit = async (data: ExpenseFormData) => {
         try {
             setLoading(true);
-            const { data: { user } } = await supabase.auth.getUser();
+            const user: any = await authAPI.getUser();
 
             const payload = {
                 ...data,

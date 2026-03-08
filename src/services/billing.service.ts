@@ -1,31 +1,31 @@
 import apiClient from "./apiClient";
-import { supabase } from "../lib/supabaseClient";
 
 /**
  * BILLING_ENGINE_V2 Service Layer
  * Single Source of Truth for all billing operations.
- * NO local calculation logic allowed.
+ * Uses existing backend REST endpoints.
  */
 export const billingService = {
     /**
-     * Fetch current outstanding balance for a tenant via RPC
+     * Fetch current outstanding balance for a tenant.
+     * Calls GET /api/tenants/{tenantId} and uses the balance field.
      */
-    getOutstandingBalance: async (tenantId: string) => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) throw new Error("Unauthorized");
-        return apiClient.rpc<number>('get_outstanding_balance' as any, {
-            p_tenant_id: tenantId,
-            p_owner_id: user.id
-        });
+    getOutstandingBalance: async (tenantId: string): Promise<number> => {
+        try {
+            const tenant: any = await apiClient.get(`tenants/${tenantId}`);
+            return tenant?.balance || 0;
+        } catch (e) {
+            return 0;
+        }
     },
 
     /**
      * Batch generate monthly invoices for all active residents
      */
     generateMonthlyInvoices: async (ownerId: string) => {
-        return apiClient.rpc('generate_monthly_invoices' as any, {
+        return apiClient.rpc('generate_monthly_invoices', {
             p_owner_id: ownerId,
-            p_test_date: null // Added to resolve ambiguity PGRST203
+            p_test_date: null
         });
     },
 
@@ -33,41 +33,31 @@ export const billingService = {
      * Allocate a specific payment to unpaid invoices using FIFO logic
      */
     allocatePayment: async (paymentId: string, tenantId: string, _amount: number) => {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) throw new Error("Unauthorized");
-
-        // Match backend RPC name: allocate_payment
-        return apiClient.rpc('allocate_payment' as any, {
+        return apiClient.rpc('allocate_payment', {
             p_payment_id: paymentId,
             p_tenant_id: tenantId,
-            p_owner_id: user.id
         });
     },
 
     /**
-     * Fetch all invoices for a tenant ordered by period start
+     * Fetch all invoices for a tenant using the existing /invoices endpoint with filter
      */
     getInvoices: async (tenantId: string) => {
-        return apiClient.get('invoices' as any, (query: any) =>
-            query.eq('tenant_id', tenantId)
-                .order('billing_period_start', { ascending: false })
-        );
+        return apiClient.get(`invoices/`, { tenant_id: tenantId });
     },
 
     /**
-     * Fetch remaining credit for a tenant
+     * Fetch total remaining credit for a tenant.
+     * Note: Credits endpoint /api/tenant_credits/ is not available.
      */
-    getCredits: async (tenantId: string) => {
-        return apiClient.get('tenant_credits' as any, (query: any) =>
-            query.eq('tenant_id', tenantId)
-                .maybeSingle()
-        );
+    getCredits: async (_tenantId: string) => {
+        return { amount: 0, items: [] };
     },
 
     /**
      * Create a manual invoice (used during onboarding for monthly tenants)
      */
     createInvoice: async (data: any) => {
-        return apiClient.post('invoices' as any, data);
+        return apiClient.post('invoices/', data);
     }
 };

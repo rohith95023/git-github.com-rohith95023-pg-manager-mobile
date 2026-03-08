@@ -1,18 +1,17 @@
-import React, { useEffect, useState, useMemo } from "react";
-import { View, StyleSheet, Text, TouchableOpacity, Alert } from "react-native";
-import { useForm, Controller } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useEffect, useMemo, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { StyleSheet, Text, View } from "react-native";
 import * as z from "zod";
-import FormModal from "../common/FormModal";
-import FormField from "../common/FormField";
-import DropdownSelector from "../common/DropdownSelector";
-import SegmentedControl from "../common/SegmentedControl";
-import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
-import ConfirmationModal from "../common/ConfirmationModal";
-import { paymentAPI, pgAPI, tenantAPI } from "../../services/api";
+import { authAPI, paymentAPI, pgAPI, tenantAPI } from "../../services/api";
 import { billingService } from "../../services/billing.service";
-import { supabase } from "../../lib/supabaseClient";
+import ConfirmationModal from "../common/ConfirmationModal";
+import DatePickerField from "../common/DatePickerField";
+import DropdownSelector from "../common/DropdownSelector";
+import FormField from "../common/FormField";
+import FormModal from "../common/FormModal";
+import SegmentedControl from "../common/SegmentedControl";
 
 const paymentSchema = z.object({
     tenant_id: z.string().min(1, "Please select a resident"),
@@ -112,13 +111,13 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
     useEffect(() => {
         if (visible) {
             const fetchData = async () => {
-                const [pgsData, tenantsData, paymentsData]: any = await Promise.all([
+                const [pgsData, tenantsRes, paymentsData]: any = await Promise.all([
                     pgAPI.getAll(),
-                    supabase.from("tenants").select(`*, daily_stay_details(*), rooms!room_id(room_number, floor)`).neq("status", "DELETED"),
+                    tenantAPI.search({ limit: 1000 }),
                     paymentAPI.getAll()
                 ]);
                 setPgs(pgsData || []);
-                setTenants(tenantsData.data || []);
+                setTenants(tenantsRes.data || []);
                 setPayments(paymentsData || []);
             };
             fetchData();
@@ -195,7 +194,7 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
 
             setLoading(true);
             setConfirmState(prev => ({ ...prev, visible: false })); // Hide if showing
-            const { data: { user } } = await supabase.auth.getUser();
+            const user: any = await authAPI.getUser();
 
             const payload: any = {
                 ...data,
@@ -346,13 +345,13 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                 <View style={[styles.summaryCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
                     <View style={styles.summaryItem}>
                         <Text style={[styles.summaryLabel, { color: COLORS.textMuted }]}>OUTSTANDING</Text>
-                        <Text style={[styles.summaryValue, { color: COLORS.danger }]}>₹{outstandingBalance.toLocaleString()}</Text>
+                        <Text style={[styles.summaryValue, { color: COLORS.danger }]}>₹{Number(outstandingBalance || 0).toLocaleString()}</Text>
                     </View>
                     <View style={styles.summaryDivider} />
                     <View style={styles.summaryItem}>
                         <Text style={[styles.summaryLabel, { color: COLORS.textMuted }]}>NEW BALANCE</Text>
                         <Text style={[styles.summaryValue, { color: COLORS.text, opacity: watchAmount > 0 ? 1 : 0.5 }]}>
-                            ₹{remainingBalance.toLocaleString()}
+                            ₹{Number(remainingBalance || 0).toLocaleString()}
                         </Text>
                     </View>
                 </View>

@@ -1,6 +1,8 @@
-import { supabase } from "../lib/supabaseClient";
-import { Database } from "../types/supabase";
-import { PostgrestResponse, PostgrestSingleResponse } from "@supabase/supabase-js";
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import axios from 'axios';
+
+// BASE URL without /api/ - paths will include /api/ prefix explicitly (matching web project pattern)
+const API_BASE_URL = process.env.EXPO_PUBLIC_API_BASE_URL || 'https://api.softsynergysystems.com';
 
 /**
  * API Error class for structured error handling
@@ -32,273 +34,183 @@ export class APIError extends Error {
     }
 }
 
+// Create axios instance
+const instance = axios.create({
+    baseURL: API_BASE_URL,
+    timeout: 30000,
+    headers: {
+        'Content-Type': 'application/json',
+    },
+});
+
+// Request interceptor for auth
+instance.interceptors.request.use(
+    async (config) => {
+        const token = await AsyncStorage.getItem('auth_token');
+        if (token) {
+            config.headers.Authorization = `Bearer ${token}`;
+        }
+        return config;
+    },
+    (error) => Promise.reject(error)
+);
+
 /**
- * Normalize Supabase response to consistent format
+ * Handle network and API errors
  */
-const normalizeResponse = <T>(response: PostgrestResponse<T> | PostgrestSingleResponse<T>, label: string): T | { data: T; count: number } => {
-    const { data, error, count, status } = response as any;
+const handleError = (error: any, label: string) => {
+    if (error.response) {
+        // The request was made and the server responded with a status code
+        const data = error.response.data;
+        const errorMessage = data.message || data.error || data.detail || 'An unknown error occurred';
+        const errorCode = data.code || `HTTP_${error.response.status}`;
 
-    if (error) {
-        const errorCode = error.code || 'UNKNOWN_ERROR';
-        const errorMessage = error.message || 'An unknown error occurred';
-        const errorDetails = typeof error.details === 'object' ? JSON.stringify(error.details) : (error.details || error.hint);
-
-        console.error(`[${label}] Error:`, errorMessage, '| Code:', errorCode, '| Details:', errorDetails || 'None');
+        console.error(`[${label}] API Error:`, errorMessage, '| Status:', error.response.status);
 
         throw new APIError(
             errorMessage,
-            status || 500,
+            error.response.status,
             errorCode,
-            errorDetails
+            data.details
         );
-    }
-
-    const finalData = (count !== null && count !== undefined) ? { data, count } : data;
-
-    // Billing Engine V2 - Legacy Deprecation Warning
-    if (finalData && typeof finalData === 'object') {
-        const wrap = (obj: any): any => {
-            if (!obj || typeof obj !== 'object') return obj;
-            if (Array.isArray(obj)) return obj.map(wrap);
-            return new Proxy(obj, {
-                get(target, prop) {
-                    if (prop === 'balance' && !label.includes('RPC')) {
-                        console.warn(`[V2 Warning] Legacy .balance access detected in ${label}. Contact Billing Engine V2 for details.`);
-                    }
-                    return target[prop];
-                }
-            });
-        };
-        return wrap(finalData);
-    }
-
-    return finalData;
-};
-
-/**
- * Handle network errors
- */
-const handleNetworkError = (error: any, label: string) => {
-    const errorMsg = typeof error.message === 'object' ? JSON.stringify(error.message) : (error.message || 'Unknown Network Error');
-    const fullError = typeof error === 'object' ? JSON.stringify(error) : error;
-
-    console.error(`[${label}] Network Error:`, errorMsg, '| Full:', fullError);
-
-    if (error.message.includes('fetch')) {
+    } else if (error.request) {
+        // The request was made but no response was received
+        console.error(`[${label}] Network Error: No response received`);
         throw new APIError(
             'Network error. Please check your internet connection.',
             0,
             'NETWORK_ERROR',
             error.message
         );
-    }
-
-    throw error;
-};
-
-/**
- * API Client Configuration
- */
-const config = {
-    timeout: 30000,
-    retryAttempts: 2,
-    retryDelay: 1000,
-};
-
-/**
- * Log activity to the master recovery vault
- */
-const logActivity = async (table: string, operation: string, data: any, entityId: string | null = null) => {
-    try {
-        const { data: { user } } = await supabase.auth.getUser();
-        if (!user) return;
-
-        await supabase.from("master_activity_logs").insert([{
-            owner_id: user.id,
-            entity_type: table.toUpperCase(),
-            operation_type: operation,
-            entity_id: entityId,
-            form_data: data
-        }]);
-    } catch (e) {
-        console.warn("[LogActivity] Failed to backup form data:", e);
+    } else {
+        // Something happened in setting up the request
+        console.error(`[${label}] Request Error:`, error.message);
+        throw error;
     }
 };
 
 /**
- * Core Request Wrapper
- */
-const performRequest = async <T>(requestFn: () => Promise<any>, label = "API Request", options: any = {}): Promise<T> => {
-    const { retry = true, timeout = config.timeout } = options;
-    let attempts = 0;
-    const maxAttempts = retry ? config.retryAttempts : 1;
-
-    while (attempts < maxAttempts) {
-        try {
-            attempts++;
-
-            const timeoutPromise = new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Request timeout')), timeout)
-            );
-
-            const response = await Promise.race([
-                requestFn(),
-                timeoutPromise
-            ]);
-
-            return normalizeResponse(response, label) as T;
-
-        } catch (error: any) {
-            const isLastAttempt = attempts >= maxAttempts;
-
-            if (error.name === 'APIError' &&
-                ['AUTH_ERROR', 'VALIDATION_ERROR', 'CLIENT_ERROR'].includes(error.code)) {
-                throw error;
-            }
-
-            if (isLastAttempt) {
-                return handleNetworkError(error, label);
-            }
-
-            await new Promise(resolve =>
-                setTimeout(resolve, config.retryDelay * attempts)
-            );
-
-            console.warn(`[${label}] Retrying... (attempt ${attempts + 1}/${maxAttempts})`);
-        }
-    }
-    throw new Error('Request failed after max attempts');
-};
-
-/**
- * Main API Client - Hardened for Production
+ * Main API Client
+ * All paths must include /api/ prefix to match backend routes
  */
 const apiClient = {
-    request: performRequest,
-
-    get: async <T>(table: keyof Database['public']['Tables'], selectOrQueryFn?: string | ((query: any) => any), queryFn?: (query: any) => any): Promise<T> => {
-        let select = "*";
-        let finalQueryFn = queryFn;
-
-        if (typeof selectOrQueryFn === 'function') {
-            finalQueryFn = selectOrQueryFn;
-        } else if (typeof selectOrQueryFn === 'string') {
-            select = selectOrQueryFn;
+    request: async <T>(config: any, label = "API Request"): Promise<T> => {
+        try {
+            const response = await instance.request(config);
+            return response.data as T;
+        } catch (error) {
+            return handleError(error, label);
         }
-
-        return performRequest(async () => {
-            let query = supabase.from(table).select(select);
-
-            // 🔥 PRODUCTION HARDENING: Uncomment after running SQL migration
-            // query = query.neq("is_deleted", true);
-
-            if (finalQueryFn) query = finalQueryFn(query);
-            return await query;
-        }, `GET ${table}`);
     },
 
-    getView: async <T>(view: keyof Database['public']['Views'], select = "*"): Promise<T> => {
-        return performRequest(async () => {
-            return await supabase.from(view).select(select);
-        }, `GET_VIEW ${view}`);
+    get: async <T>(path: string, params: any = {}): Promise<T> => {
+        return apiClient.request({
+            method: 'get',
+            url: `/api/${path}`,
+            params,
+        }, `GET ${path}`);
     },
 
-    getById: async <T>(table: keyof Database['public']['Tables'], id: string | number, select = "*"): Promise<T> => {
-        return performRequest(async () => {
-            return await supabase.from(table).select(select).eq("id", id).single();
-        }, `GET_BY_ID ${table}`);
+    getById: async <T>(path: string, id: string | number): Promise<T> => {
+        return apiClient.request({
+            method: 'get',
+            url: `/api/${path}/${id}`,
+        }, `GET_BY_ID ${path}`);
     },
 
-    post: async <T>(table: keyof Database['public']['Tables'], payload: any): Promise<T> => {
-        return performRequest(async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            const enhancedPayload = { ...payload };
-
-            // Production Hardening: Auto-inject audit fields (Uncomment after DB migration)
-            /*
-            if (user) {
-                if (!enhancedPayload.owner_id) enhancedPayload.owner_id = user.id;
-                enhancedPayload.updated_by = user.id;
-            }
-            */
-
-            const response = await supabase.from(table).insert(enhancedPayload).select().single();
-            if (response.data) {
-                logActivity(table, 'INSERT', enhancedPayload, (response.data as any).id);
-            }
-            return response;
-        }, `POST ${table}`);
+    post: async <T>(path: string, payload: any): Promise<T> => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/${path}`,
+            data: payload,
+        }, `POST ${path}`);
     },
 
-    update: async <T>(table: keyof Database['public']['Tables'], id: string | number, payload: any): Promise<T> => {
-        return performRequest(async () => {
-            const { data: { user } } = await supabase.auth.getUser();
-            const enhancedPayload = { ...payload };
-
-            // Production Hardening: Auto-inject audit fields (Uncomment after DB migration)
-            /*
-            if (user) {
-                enhancedPayload.updated_by = user.id;
-            }
-            */
-
-            const response = await supabase.from(table).update(enhancedPayload).eq("id", id).select().single();
-            if (response.data) {
-                logActivity(table, 'UPDATE', enhancedPayload, id.toString());
-            }
-            return response;
-        }, `UPDATE ${table}`);
+    update: async <T>(path: string, id: string | number, payload: any): Promise<T> => {
+        return apiClient.request({
+            method: 'patch',
+            url: `/api/${path}/${id}`,
+            data: payload,
+        }, `UPDATE ${path}`);
     },
 
-    delete: async (table: keyof Database['public']['Tables'], id: string | number): Promise<any> => {
-        return performRequest(async () => {
-            // 🔥 PRODUCTION HARDENING: Uncomment after running SQL migration to enable soft-delete
-            // const response = await supabase.from(table).update({ is_deleted: true, status: "DELETED" }).eq("id", id);
-            // logActivity(table, 'DELETE_SOFT', { id }, id.toString());
-            // return response;
-
-            logActivity(table, 'DELETE_HARD', { id }, id.toString());
-            return await supabase.from(table).delete().eq("id", id);
-        }, `DELETE ${table}`);
+    delete: async (path: string, id: string | number): Promise<any> => {
+        return apiClient.request({
+            method: 'delete',
+            url: `/api/${path}/${id}`,
+        }, `DELETE ${path}`);
     },
 
-    rpc: async <T>(functionName: keyof Database['public']['Functions'], params: any = {}): Promise<T> => {
-        return performRequest(async () => {
-            return await supabase.rpc(functionName, params);
+    rpc: async <T>(functionName: string, params: any = {}): Promise<T> => {
+        // RPC route is at /rpc/ (no /api/ prefix per OpenAPI spec)
+        // Function names use underscores as-is — backend matches on exact fn_name
+        return apiClient.request({
+            method: 'post',
+            url: `/api/rpc/${functionName}`,
+            data: params,
         }, `RPC ${functionName}`);
     }
 };
 
 /**
  * Authentication utilities
+ * Auth paths use /api/auth/ prefix
  */
 export const authClient = {
     signIn: async (email: string, password: string) => {
-        return performRequest(async () => {
-            return await supabase.auth.signInWithPassword({ email, password });
-        }, 'AUTH signIn');
+        const response: any = await apiClient.request({
+            method: 'post',
+            url: '/api/auth/login',
+            data: { email, password },
+        }, 'POST auth/login');
+        if (response.access_token) {
+            await AsyncStorage.setItem('auth_token', response.access_token);
+        }
+        return response;
     },
 
-    signUp: async (email: string, password: string, metadata = {}) => {
-        return performRequest(async () => {
-            return await supabase.auth.signUp({
-                email,
-                password,
-                options: { data: metadata }
-            });
-        }, 'AUTH signUp');
+    signUp: async (email: string, password: string, metadata: any = {}) => {
+        return apiClient.request({
+            method: 'post',
+            url: '/api/auth/register',
+            data: { email, password, ...metadata },
+        }, 'POST auth/register');
     },
 
     signOut: async () => {
-        return performRequest(async () => {
-            return await supabase.auth.signOut();
-        }, 'AUTH signOut');
+        await AsyncStorage.removeItem('auth_token');
+        return { success: true };
     },
 
     getUser: async () => {
-        return performRequest(async () => {
-            return await supabase.auth.getUser();
-        }, 'AUTH getUser');
+        return apiClient.request({
+            method: 'get',
+            url: '/api/auth/profile',
+        }, 'GET auth/profile');
+    },
+
+    requestPasswordReset: async (email: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: '/api/auth/request-password-reset',
+            data: { email },
+        }, 'POST auth/request-password-reset');
+    },
+
+    verifyOtp: async (email: string, otp_code: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: '/api/auth/verify-otp',
+            data: { email, otp_code },
+        }, 'POST auth/verify-otp');
+    },
+
+    resetPassword: async (email: string, new_password: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: '/api/auth/reset-password',
+            data: { email, new_password },
+        }, 'POST auth/reset-password');
     },
 };
 

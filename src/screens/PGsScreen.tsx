@@ -1,40 +1,71 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    ActivityIndicator,
+    Alert,
+    Dimensions,
+    FlatList,
+    RefreshControl,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    Dimensions,
-    Alert,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { pgAPI } from "../services/api";
-import { supabase } from "../lib/supabaseClient";
-import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import { pgAPI } from "../services/api";
 import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
-import PGFormModal from "../components/modals/PGFormModal";
 import ConfirmationModal from "../components/common/ConfirmationModal";
-import ThemeToggleButton from "../components/ThemeToggleButton";
-
+import ScreenHeader from "../components/common/ScreenHeader";
+import PGFormModal from "../components/modals/PGFormModal";
 const { width } = Dimensions.get("window");
 
 const PGsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const [loading, setLoading] = useState(true);
-    const [refreshing, setRefreshing] = useState(false);
-    const [pgs, setPgs] = useState<any[]>([]);
+    const { pgs: allPgs, rooms: allRooms, beds: allBeds, tenants: allTenants, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
+    const [refreshing, setRefreshing] = useState(false);
+
+    // Filter and enrich with stats from global data
+    const filteredPgs = useMemo(() => {
+        const basePgs = allPgs.filter((p: any) =>
+            activeTab === "Active" ? p.status !== 'INACTIVE' : p.status === 'INACTIVE'
+        );
+
+        return basePgs
+            .filter(pg =>
+            (pg.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                pg.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                pg.address?.toLowerCase().includes(searchTerm.toLowerCase()))
+            )
+            .map(pg => {
+                const pgRooms = allRooms.filter(r => r.pg_id === pg.id);
+                const pgBeds = allBeds.filter(b => b.pg_id === pg.id || pgRooms.some(r => r.id === b.room_id));
+                const pgTenants = allTenants.filter(t => t.pg_id === pg.id && t.status === 'ACTIVE');
+                const totalDue = pgTenants.reduce((sum, t) => sum + (t.outstanding_balance || 0), 0);
+
+                return {
+                    ...pg,
+                    calculated_total_rooms: pgRooms.length,
+                    calculated_total_beds: pgBeds.length,
+                    calculated_occupied_beds: pgBeds.filter(b => b.status === "OCCUPIED" || b.status === "RESERVED").length,
+                    calculated_residents: pgTenants.length,
+                    calculated_total_due: totalDue
+                };
+            });
+    }, [allPgs, allRooms, allBeds, activeTab, searchTerm]);
+
+    const loading = globalLoading;
+
+    const onRefresh = () => refresh();
 
     // Modal State
     const [modalVisible, setModalVisible] = useState(false);
@@ -62,31 +93,8 @@ const PGsScreen = ({ navigation }: any) => {
     const [confirmInput, setConfirmInput] = useState("");
     const [confirmTargetCode, setConfirmTargetCode] = useState("");
 
-    const fetchPGs = useCallback(async () => {
-        try {
-            setLoading(true);
-            const data: any = await pgAPI.getAllWithStats(activeTab === "Active" ? "ACTIVE" : "INACTIVE");
-            setPgs(Array.isArray(data) ? data : []);
-        } catch (error) {
-            console.error("Failed to fetch properties:", error);
-        } finally {
-            setLoading(false);
-            setRefreshing(false);
-        }
-    }, [activeTab]);
-
-    useEffect(() => {
-        if (isFocused) {
-            fetchPGs();
-        }
-    }, [fetchPGs, isFocused]);
-
-    useRefreshOnForeground(fetchPGs, isFocused);
-
-    const onRefresh = () => {
-        setRefreshing(true);
-        fetchPGs();
-    };
+    // Local loading only for mutation operations (add/edit/delete)
+    const [localLoading, setLocalLoading] = useState(false);
 
     const handleAdd = () => {
         setEditingPg(null);
@@ -98,26 +106,11 @@ const PGsScreen = ({ navigation }: any) => {
         setModalVisible(true);
     };
 
-    const filteredPgs = useMemo(() => {
-        return pgs.filter(pg =>
-        (pg.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            pg.city?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-            pg.address?.toLowerCase().includes(searchTerm.toLowerCase()))
-        );
-    }, [pgs, searchTerm]);
 
     const handleArchive = async (id: string, name: string) => {
         try {
-            setLoading(true);
-            const { count, error } = await supabase
-                .from("tenants")
-                .select("id", { count: "exact", head: true })
-                .eq("pg_id", id)
-                .eq("status", "ACTIVE");
-
-            setLoading(false);
-
-            if (error) throw error;
+            const pg = allPgs.find(p => p.id === id);
+            const count = pg?.calculated_occupied_beds || 0;
 
             if (count && count > 0) {
                 setConfirmState({
@@ -149,7 +142,7 @@ const PGsScreen = ({ navigation }: any) => {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         const date = new Date().toISOString().split('T')[0];
                         await pgAPI.archive(id, date);
-                        await fetchPGs();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
@@ -160,7 +153,6 @@ const PGsScreen = ({ navigation }: any) => {
                 }
             });
         } catch (error: any) {
-            setLoading(false);
             console.error("Archive check error:", error);
             Alert.alert("Error", "Error checking tenants: " + error.message);
         }
@@ -169,7 +161,7 @@ const PGsScreen = ({ navigation }: any) => {
     const handleRestore = async (id: string, name: string) => {
         try {
             const restoredNameCandidate = name.split(" (Archived - ")[0];
-            const conflict = pgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
+            const conflict = allPgs.find(p => p.status !== 'DELETED' && p.name.toLowerCase() === restoredNameCandidate.toLowerCase());
 
             if (conflict) {
                 setConfirmState({
@@ -194,7 +186,7 @@ const PGsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         await pgAPI.restore(id);
-                        await fetchPGs();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
@@ -231,7 +223,7 @@ const PGsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         await pgAPI.hardDelete(id);
-                        await fetchPGs();
+                        refresh();
                         setConfirmState({ visible: false, title: "", message: "", type: "info" });
                         setConfirmInput("");
                         setConfirmTargetCode("");
@@ -242,7 +234,6 @@ const PGsScreen = ({ navigation }: any) => {
                 }
             });
         } catch (error: any) {
-            setLoading(false);
             Alert.alert("Error", error.message || "Something went wrong during deletion check");
         }
     };
@@ -264,9 +255,11 @@ const PGsScreen = ({ navigation }: any) => {
     };
 
     const PropertyCard = ({ item }: { item: any }) => {
-        const totalRooms = item.rooms?.[0]?.count || 0;
-        const occupiedBeds = item.occupied_beds?.[0]?.count || 0;
-        const totalBeds = item.beds?.[0]?.count || 0;
+        const totalRooms = item.calculated_total_rooms || 0;
+        const totalBeds = item.calculated_total_beds || 0;
+        const occupiedBeds = item.calculated_occupied_beds || 0;
+        const totalResidents = item.calculated_residents || 0;
+        const pendingDue = item.calculated_total_due || 0;
         const occupancyRate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
 
         return (
@@ -276,7 +269,40 @@ const PGsScreen = ({ navigation }: any) => {
                 activeOpacity={0.7}
             >
                 <View style={styles.cardHeader}>
-                    <View style={styles.headerLeft}>
+                    <View style={styles.headerActions}>
+                        {item.status === 'ACTIVE' ? (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.primary + "15" }]}
+                                    onPress={() => handleEdit(item)}
+                                >
+                                    <Feather name="edit-2" size={18} color={COLORS.primary} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.warning + "15" }]}
+                                    onPress={() => handleArchive(item.id, item.name)}
+                                >
+                                    <Feather name="archive" size={18} color={COLORS.warning} />
+                                </TouchableOpacity>
+                            </>
+                        ) : (
+                            <>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.success + "15" }]}
+                                    onPress={() => handleRestore(item.id, item.name)}
+                                >
+                                    <Feather name="refresh-ccw" size={18} color={COLORS.success} />
+                                </TouchableOpacity>
+                                <TouchableOpacity
+                                    style={[styles.headerActionBtn, { backgroundColor: COLORS.danger + "15" }]}
+                                    onPress={() => handleDelete(item.id, item.name)}
+                                >
+                                    <Feather name="trash-2" size={18} color={COLORS.danger} />
+                                </TouchableOpacity>
+                            </>
+                        )}
+                    </View>
+                    <View style={[styles.headerLeft, { marginLeft: 12, marginRight: 0 }]}>
                         <Text style={styles.propertyName} numberOfLines={1}>{item.name}</Text>
                         <View style={styles.locationContainer}>
                             <Feather name="map-pin" size={10} color={COLORS.textMuted} />
@@ -290,13 +316,19 @@ const PGsScreen = ({ navigation }: any) => {
                         <Text style={styles.statValue}>{totalRooms}</Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
-                    <View style={[styles.statCell, styles.statDivider]}>
-                        <Text style={styles.statValue}>{totalBeds}</Text>
-                        <Text style={styles.statLabel}>Total Beds</Text>
+                    <View style={[styles.statCell, { borderLeftWidth: 1, borderLeftColor: COLORS.border + '20' }]}>
+                        <Text style={styles.statValue}>{occupiedBeds}/{totalBeds}</Text>
+                        <Text style={styles.statLabel}>{totalBeds - occupiedBeds} Avail</Text>
                     </View>
-                    <View style={styles.statCell}>
-                        <Text style={[styles.statValue, { color: COLORS.success }]}>{occupancyRate}%</Text>
-                        <Text style={styles.statLabel}>Occupancy</Text>
+                    <View style={[styles.statCell, { borderLeftWidth: 1, borderLeftColor: COLORS.border + '20' }]}>
+                        <Text style={[styles.statValue, { color: COLORS.warning }]}>{totalResidents}</Text>
+                        <Text style={styles.statLabel}>Residents</Text>
+                    </View>
+                    <View style={[styles.statCell, { borderLeftWidth: 1, borderLeftColor: COLORS.border + '20' }]}>
+                        <Text style={[styles.statValue, { color: pendingDue > 0 ? COLORS.danger : COLORS.success }]}>
+                            ₹{pendingDue > 999 ? `${(pendingDue / 1000).toFixed(1)}k` : pendingDue}
+                        </Text>
+                        <Text style={styles.statLabel}>Pending</Text>
                     </View>
                 </View>
 
@@ -308,41 +340,6 @@ const PGsScreen = ({ navigation }: any) => {
                         <View style={[styles.miniBadge, { backgroundColor: COLORS.success + "10" }]}>
                             <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>{item.total_floors || 0} Floors</Text>
                         </View>
-                        {item.status === 'ACTIVE' ? (
-                            <>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.primary + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleEdit(item)}
-                                >
-                                    <Feather name="edit-2" size={10} color={COLORS.primary} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.primary }]}>Edit</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.warning + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleArchive(item.id, item.name)}
-                                >
-                                    <Feather name="archive" size={10} color={COLORS.warning} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.warning }]}>Archive</Text>
-                                </TouchableOpacity>
-                            </>
-                        ) : (
-                            <>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.success + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleRestore(item.id, item.name)}
-                                >
-                                    <Feather name="refresh-ccw" size={10} color={COLORS.success} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>Restore</Text>
-                                </TouchableOpacity>
-                                <TouchableOpacity
-                                    style={[styles.miniBadge, { backgroundColor: COLORS.danger + "10", flexDirection: 'row', alignItems: 'center', gap: 4 }]}
-                                    onPress={() => handleDelete(item.id, item.name)}
-                                >
-                                    <Feather name="trash-2" size={10} color={COLORS.danger} />
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.danger }]}>Delete</Text>
-                                </TouchableOpacity>
-                            </>
-                        )}
                     </View>
 
                     {item.status === 'ACTIVE' && (
@@ -356,18 +353,15 @@ const PGsScreen = ({ navigation }: any) => {
     return (
         <SafeAreaView style={styles.container}>
             {/* Compact Top App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>PG Properties</Text>
-                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <ThemeToggleButton style={{ marginRight: 12 }} />
-                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                        <MaterialCommunityIcons name="database-sync" size={18} color={COLORS.text} />
+            <ScreenHeader
+                title="PG Properties"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarIconButton}>
+                        <Feather name="refresh-cw" size={20} color={COLORS.text} />
                     </TouchableOpacity>
-                </View>
-            </View>
+                }
+            />
 
             {/* Segmented Control for Tabs */}
             <View style={styles.controlsWrapper}>
@@ -434,7 +428,7 @@ const PGsScreen = ({ navigation }: any) => {
             <PGFormModal
                 visible={modalVisible}
                 onClose={() => setModalVisible(false)}
-                onSuccess={fetchPGs}
+                onSuccess={refresh}
                 editingPg={editingPg}
             />
 
@@ -471,18 +465,13 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
 
         // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
+        appBarIconButton: {
+            width: 40,
+            height: 40,
+            borderRadius: 20,
+            justifyContent: "center",
+            alignItems: "center"
         },
-        appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Controls
         controlsWrapper: { padding: 16, paddingBottom: 8 },
@@ -526,6 +515,19 @@ const createStyles = (COLORS: any) =>
         },
         cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 },
         headerLeft: { flex: 1, marginRight: 12 },
+        headerActions: { flexDirection: 'row', gap: 8 },
+        headerActionBtn: {
+            width: 38,
+            height: 38,
+            borderRadius: 19,
+            justifyContent: 'center',
+            alignItems: 'center',
+            elevation: 1,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: 1 },
+            shadowOpacity: 0.1,
+            shadowRadius: 2,
+        },
         propertyName: { fontSize: 18, fontWeight: '800', color: COLORS.text },
         locationContainer: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
         locationText: { fontSize: 12, color: COLORS.textMuted, fontWeight: '600' },

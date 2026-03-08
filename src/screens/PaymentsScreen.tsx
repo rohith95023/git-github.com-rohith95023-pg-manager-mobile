@@ -1,26 +1,27 @@
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
-    View,
-    Text,
+    ActivityIndicator,
+    Animated,
+    Dimensions,
+    FlatList,
+    RefreshControl,
     StyleSheet,
+    Text,
     TextInput,
     TouchableOpacity,
-    FlatList,
-    ActivityIndicator,
-    RefreshControl,
-    Dimensions,
-    Animated,
+    View,
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { paymentAPI, pgAPI, tenantAPI, statsAPI } from "../services/api";
-import { billingService } from "../services/billing.service";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
-import useThemePalette from "../hooks/useThemePalette";
-import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
-import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import DropdownSelector from "../components/common/DropdownSelector";
+import FilterBottomSheet from "../components/common/FilterBottomSheet";
+import ScreenHeader from "../components/common/ScreenHeader";
+import SegmentedControl from "../components/common/SegmentedControl";
 import PaymentFormModal from "../components/modals/PaymentFormModal";
+import { useRefreshOnForeground } from "../hooks/useRefreshOnForeground";
+import useThemePalette from "../hooks/useThemePalette";
+import { invoiceAPI, ledgerAPI, paymentAPI, pgAPI, statsAPI, tenantAPI } from "../services/api";
 
 const { width } = Dimensions.get("window");
 const DEFAULT_PAYMENT_FILTERS = {
@@ -44,6 +45,13 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         collectionRate: 0
     });
     const animatedProgress = React.useRef(new Animated.Value(0)).current;
+
+    // View State
+    const [activeView, setActiveView] = useState("transactions");
+    const [invoices, setInvoices] = useState<any[]>([]);
+    const [ledger, setLedger] = useState<any[]>([]);
+    const [loadingInvoices, setLoadingInvoices] = useState(false);
+    const [loadingLedger, setLoadingLedger] = useState(false);
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
@@ -72,28 +80,44 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const [paymentsRes, pgsRes, dashboardStatsRes, tenantsRes]: any = await Promise.all([
-                paymentAPI.getAll(),
-                pgAPI.getAll(),
-                statsAPI.getDashboardStats(),
-                tenantAPI.getActive()
+            const [paymentsRes, pgsRes, dashboardStatsRes, tenantsRes, invoicesRes]: any = await Promise.all([
+                paymentAPI.getAll().catch(() => []),
+                pgAPI.getAll().catch(() => []),
+                statsAPI.getDashboardStats().catch(() => ({})),
+                tenantAPI.getAll().catch(() => []),
+                invoiceAPI.getAll().catch(() => [])
             ]);
 
-            const tenants = tenantsRes || [];
-            // V2: Fetch real-time balances from the engine
-            const balances = await Promise.all(
-                tenants.map((t: any) => billingService.getOutstandingBalance(t.id).catch(() => 0))
-            );
+            const tenantsArr = Array.isArray(tenantsRes) ? tenantsRes : (tenantsRes?.items || tenantsRes?.data || []);
+            const pgsArr = Array.isArray(pgsRes) ? pgsRes : (pgsRes?.items || pgsRes?.data || []);
+            const paymentsArr = Array.isArray(paymentsRes) ? paymentsRes : (paymentsRes?.items || paymentsRes?.data || []);
+            const invoicesArr = Array.isArray(invoicesRes) ? invoicesRes : (invoicesRes?.items || invoicesRes?.data || []);
 
-            tenants.forEach((t: any, i: number) => {
-                t.outstanding_balance = balances[i] || 0;
-            });
+            // Build lookup maps: tenant_id -> tenant obj, pg_id -> pg obj
+            const tenantMap: Record<string, any> = {};
+            tenantsArr.forEach((t: any) => { tenantMap[t.id] = t; });
+            const pgMap: Record<string, any> = {};
+            pgsArr.forEach((pg: any) => { pgMap[pg.id] = pg; });
+
+            // Enrich payment records with tenant/pg lookup
+            const enrichedPayments = paymentsArr.map((p: any) => ({
+                ...p,
+                tenants: p.tenants || tenantMap[p.tenant_id] || null,
+                pgs: p.pgs || pgMap[p.pg_id] || null,
+            }));
 
             const getTenantBalance = (tenant: any) => {
-                return Number(tenant.outstanding_balance || 0);
+                const base = Number(tenant.balance || tenant.outstanding_balance || 0);
+                if (base > 0) return base;
+                // If base is 0, verify against invoices we just fetched
+                const unpaid = invoicesArr.filter((inv: any) =>
+                    inv.tenant_id === tenant.id &&
+                    (inv.status?.toUpperCase() === 'UNPAID' || inv.status?.toUpperCase() === 'PARTIAL')
+                );
+                return unpaid.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0);
             };
 
-            const outstandingDues = (tenantsRes || [])
+            const outstandingDues = tenantsArr
                 .filter((t: any) => getTenantBalance(t) > 0)
                 .map((t: any) => ({
                     id: `virtual_${t.id}`,
@@ -104,32 +128,33 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     tenants: t,
                     type: 'RENT',
                     payment_date: null,
-                    pgs: t.pgs,
+                    pgs: pgMap[t.pg_id] || null,
                     isVirtual: true,
                     billing_month: t.move_in_date || null
                 }));
 
-            setPayments([...(paymentsRes || []), ...outstandingDues]);
-            setPgs(pgsRes || []);
+            setPayments([...enrichedPayments, ...outstandingDues]);
+            setPgs(pgsArr);
 
-            const ds = dashboardStatsRes;
-            if (ds) {
-                const totalReceivable = ds.monthlyRevenue + ds.pendingDues;
-                const collectionRate = totalReceivable > 0 ? Math.round((ds.monthlyRevenue / totalReceivable) * 100) : 0;
+            // Backend might wrap stats in a data envelope
+            const ds = dashboardStatsRes?.data || dashboardStatsRes;
+            const totalReceived = Number(ds.monthlyRevenue || ds.totalRevenue || 0);
+            const outstandingDuesAmt = Number(ds.totalPendingDues || ds.pendingDues || ds.total_pending || 0);
+            const totalReceivable = totalReceived + outstandingDuesAmt;
+            const collectionRate = totalReceivable > 0 ? Math.round((totalReceived / totalReceivable) * 100) : 0;
 
-                setStats({
-                    totalReceived: ds.totalRevenue,
-                    outstandingDues: ds.pendingDues,
-                    totalReceivable: totalReceivable,
-                    collectionRate: collectionRate
-                });
+            setStats({
+                totalReceived,
+                outstandingDues: outstandingDuesAmt,
+                totalReceivable,
+                collectionRate
+            });
 
-                Animated.timing(animatedProgress, {
-                    toValue: collectionRate,
-                    duration: 1000,
-                    useNativeDriver: false
-                }).start();
-            }
+            Animated.timing(animatedProgress, {
+                toValue: collectionRate,
+                duration: 1000,
+                useNativeDriver: false
+            }).start();
         } catch (error) {
             console.error("Failed to fetch financial data:", error);
         } finally {
@@ -148,28 +173,62 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         }
     }, [route?.params?.tenantId]);
 
+    const fetchInvoices = useCallback(async () => {
+        try {
+            setLoadingInvoices(true);
+            const res: any = await invoiceAPI.getAll();
+            // Backend returns array directly or wrapped
+            const items = Array.isArray(res) ? res : (res?.items || res?.data || []);
+            setInvoices(items);
+        } catch (error) {
+            console.error("Failed to fetch invoices:", error);
+        } finally {
+            setLoadingInvoices(false);
+        }
+    }, []);
+
+    const fetchLedger = useCallback(async () => {
+        try {
+            setLoadingLedger(true);
+            const res: any = await ledgerAPI.getAll();
+            // Backend returns { items: [...], summary: {...} }
+            const items = Array.isArray(res) ? res : (res?.items || res?.data || []);
+            setLedger(items);
+        } catch (error) {
+            console.error("Failed to fetch ledger:", error);
+        } finally {
+            setLoadingLedger(false);
+        }
+    }, []);
+
     useEffect(() => {
         if (isFocused) {
-            fetchData();
+            if (activeView === "transactions") fetchData();
+            else if (activeView === "invoices") fetchInvoices();
+            else fetchLedger();
         }
-    }, [fetchData, isFocused]);
+    }, [activeView, fetchData, fetchInvoices, fetchLedger, isFocused]);
 
     useRefreshOnForeground(fetchData, isFocused);
 
     const onRefresh = () => {
         setRefreshing(true);
-        fetchData();
+        if (activeView === "transactions") fetchData();
+        else if (activeView === "invoices") fetchInvoices();
+        else fetchLedger();
     };
 
     const filteredPayments = useMemo(() => {
         return payments.filter(p => {
             const lowerSearch = searchTerm.toLowerCase();
-            const matchesSearch =
-                (p.tenants?.full_name || "").toLowerCase().includes(lowerSearch) ||
-                (p.pgs?.name || "").toLowerCase().includes(lowerSearch) ||
-                (p.billing_month || "").toLowerCase().includes(lowerSearch);
+            if (!lowerSearch) return true; // skip search check if empty
+            // p.tenants is enriched in fetchData via tenantMap
+            const name = (p.tenants?.full_name || p.tenant_name || "").toLowerCase();
+            const pg = (p.pgs?.name || p.pg_name || "").toLowerCase();
+            const month = (p.billing_month || "").toLowerCase();
+            const matchesSearch = name.includes(lowerSearch) || pg.includes(lowerSearch) || month.includes(lowerSearch);
 
-            const matchesPg = filters.propertyId === "ALL" || p.pg_id === filters.propertyId;
+            const matchesPg = filters.propertyId === "ALL" || filters.propertyId === "" || p.pg_id === filters.propertyId;
 
             const statusValue = (p.status || "").toUpperCase();
             let matchesStatus = true;
@@ -179,7 +238,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 } else if (filters.status === "PENDING") {
                     matchesStatus = statusValue === "PENDING" || statusValue === "PENDING_DUE";
                 } else if (filters.status === "PARTIAL") {
-                    matchesStatus = true; // Handled at group level
+                    matchesStatus = true;
                 } else {
                     matchesStatus = statusValue === filters.status;
                 }
@@ -187,7 +246,6 @@ const PaymentsScreen = ({ route, navigation }: any) => {
 
             return matchesSearch && matchesPg && matchesStatus;
         }).sort((a, b) => {
-            // Virtual/Pending dues first, then by date
             if (a.isVirtual && !b.isVirtual) return -1;
             if (!a.isVirtual && b.isVirtual) return 1;
             return 0;
@@ -203,21 +261,27 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             groups[tId].push(p);
         });
 
-        let result = Object.entries(groups).map(([tenantId, items]) => ({
-            tenantId,
-            tenant: items[0].tenants,
-            pg: items[0].pgs,
-            totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
-            items,
-            hasVirtual: items.some(item => item.isVirtual)
-        }));
+        let result = Object.entries(groups).map(([tenantId, items]) => {
+            // p.tenants and p.pgs are enriched in fetchData via tenantMap/pgMap
+            const tenant = items[0].tenants || null;
+            const pg = items[0].pgs || null;
+            return {
+                tenantId,
+                tenant,
+                pg,
+                tenantName: tenant?.full_name || items[0].tenant_name || "Resident",
+                pgName: pg?.name || items[0].pg_name || "—",
+                totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
+                items,
+                hasVirtual: items.some(item => item.isVirtual)
+            };
+        });
 
         if (filters.status === "PARTIAL") {
             result = result.filter(g => g.hasVirtual && g.items.length > 1);
         }
 
         return result.sort((a, b) => {
-            // Virtual/Pending dues first
             if (a.hasVirtual && !b.hasVirtual) return -1;
             if (!a.hasVirtual && b.hasVirtual) return 1;
             return 0;
@@ -259,7 +323,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             <View style={styles.outstandingMainCard}>
                 <View>
                     <Text style={styles.outstandingLabel}>TOTAL OUTSTANDING</Text>
-                    <Text style={styles.outstandingValue}>₹{stats.outstandingDues.toLocaleString()}</Text>
+                    <Text style={styles.outstandingValue}>₹{Number(stats.outstandingDues || 0).toLocaleString()}</Text>
                 </View>
                 <View style={[styles.outstandingIcon, { backgroundColor: COLORS.danger + '10' }]}>
                     <MaterialCommunityIcons name="clock-alert-outline" size={24} color={COLORS.danger} />
@@ -270,11 +334,11 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             <View style={styles.summaryGrid}>
                 <View style={styles.summaryCell}>
                     <Text style={styles.summaryLabel}>TOTAL RECEIVED</Text>
-                    <Text style={[styles.summaryValue, { color: COLORS.success }]}>₹{stats.totalReceived.toLocaleString()}</Text>
+                    <Text style={[styles.summaryValue, { color: COLORS.success }]}>₹{Number(stats.totalReceived || 0).toLocaleString()}</Text>
                 </View>
                 <View style={styles.summaryCell}>
                     <Text style={styles.summaryLabel}>RECEIVABLE</Text>
-                    <Text style={[styles.summaryValue, { color: COLORS.primary }]}>₹{stats.totalReceivable.toLocaleString()}</Text>
+                    <Text style={[styles.summaryValue, { color: COLORS.primary }]}>₹{Number(stats.totalReceivable || 0).toLocaleString()}</Text>
                 </View>
             </View>
 
@@ -335,7 +399,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 >
                     <View style={styles.paymentCardHeader}>
                         <View style={styles.cardHeaderLeft}>
-                            <Text style={styles.residentName} numberOfLines={1}>{group.tenant?.full_name || "Unknown Resident"}</Text>
+                            <Text style={styles.residentName} numberOfLines={1}>{group.tenantName || "Resident"}</Text>
                             <View style={[styles.statusPill, {
                                 backgroundColor: (group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.success) + "12"
                             }]}>
@@ -350,7 +414,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                             <Text style={[styles.paymentAmount, {
                                 color: group.hasVirtual && group.items.length > 1 ? COLORS.warning : group.hasVirtual ? COLORS.danger : COLORS.text
                             }]}>
-                                ₹{group.totalAmount.toLocaleString()}
+                                ₹{Number(group.totalAmount || 0).toLocaleString()}
                             </Text>
                             {hasMultiple && (
                                 <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
@@ -372,7 +436,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                         <View style={styles.detailRow}>
                             <Feather name="home" size={12} color={COLORS.textMuted} />
                             <Text style={styles.detailText} numberOfLines={1}>
-                                {group.pg?.name || "N/A"} • Room {group.tenant?.rooms?.room_number || "N/A"}
+                                {group.pgName} • Room {group.tenant?.rooms?.room_number || "N/A"}
                             </Text>
                         </View>
                         {!hasMultiple && (
@@ -449,26 +513,99 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         );
     };
 
+    const getInvoiceStatusColor = (status: string, colors: any) => {
+        switch (status?.toUpperCase()) {
+            case 'PAID': return colors.success;
+            case 'PARTIAL': return colors.warning;
+            case 'UNPAID': return colors.danger;
+            default: return colors.textMuted;
+        }
+    };
+
+    const renderInvoiceItem = ({ item }: { item: any }) => (
+        <View style={styles.groupContainer}>
+            <View style={styles.paymentCard}>
+                <View style={styles.paymentCardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                        <Text style={styles.residentName} numberOfLines={1}>INV-{String(item.id).slice(0, 6).toUpperCase()}</Text>
+                        <View style={[styles.statusPill, { backgroundColor: getInvoiceStatusColor(item.status, COLORS) + "12" }]}>
+                            <Text style={[styles.statusPillText, { color: getInvoiceStatusColor(item.status, COLORS) }]}>{item.status}</Text>
+                        </View>
+                    </View>
+                    <View style={styles.cardHeaderRight}>
+                        <Text style={styles.paymentAmount}>₹{Number(item.total_amount || 0).toLocaleString()}</Text>
+                        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Period: {new Date(item.billing_period_start).toLocaleDateString([], { month: 'short', year: 'numeric' })}</Text>
+                    </View>
+                </View>
+                <View style={styles.cardDetails}>
+                    <View style={styles.detailRow}>
+                        <Feather name="user" size={12} color={COLORS.textMuted} />
+                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
+                    </View>
+                    <View style={styles.detailRow}>
+                        <Feather name="home" size={12} color={COLORS.textMuted} />
+                        <Text style={styles.detailText}>{item.tenants?.pgs?.name || "N/A"}</Text>
+                    </View>
+                </View>
+            </View>
+        </View>
+    );
+
+    const renderLedgerItem = ({ item }: { item: any }) => (
+        <View style={styles.groupContainer}>
+            <View style={styles.paymentCard}>
+                <View style={styles.paymentCardHeader}>
+                    <View style={styles.cardHeaderLeft}>
+                        <Text style={styles.residentName} numberOfLines={1}>{item.description || "Ledger Entry"}</Text>
+                        <Text style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(item.created_at).toLocaleDateString()}</Text>
+                    </View>
+                    <View style={styles.cardHeaderRight}>
+                        <Text style={[styles.paymentAmount, { color: item.type === 'DEBIT' ? COLORS.danger : COLORS.success }]}>
+                            {item.type === 'DEBIT' ? '-' : '+'}₹{Number(item.amount || 0).toLocaleString()}
+                        </Text>
+                    </View>
+                </View>
+                <View style={styles.cardDetails}>
+                    <View style={styles.detailRow}>
+                        <Feather name="user" size={12} color={COLORS.textMuted} />
+                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
+                    </View>
+                </View>
+            </View>
+        </View>
+    );
+
     return (
         <SafeAreaView style={styles.container}>
-            {/* Compact App Bar */}
-            <View style={styles.appBar}>
-                <TouchableOpacity onPress={() => navigation.openDrawer()} style={styles.appBarButton}>
-                    <Feather name="menu" size={22} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.appBarTitle}>Collections & Dues</Text>
-                <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
-                    <Feather name="refresh-cw" size={18} color={COLORS.text} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Financial Records"
+                onLeftPress={() => navigation.openDrawer()}
+                rightElement={
+                    <TouchableOpacity onPress={onRefresh} style={styles.appBarButton}>
+                        <Feather name="refresh-cw" size={18} color={COLORS.text} />
+                    </TouchableOpacity>
+                }
+            />
 
             <FlatList
-                data={groupedPayments}
-                keyExtractor={item => item.tenantId}
-                renderItem={renderPaymentItem}
+                data={activeView === "transactions" ? groupedPayments : activeView === "invoices" ? invoices : ledger}
+                keyExtractor={item => item.id || item.tenantId}
+                renderItem={activeView === "transactions" ? renderPaymentItem : activeView === "invoices" ? renderInvoiceItem : renderLedgerItem}
                 ListHeaderComponent={
                     <View>
                         <SummarySection />
+
+                        <View style={{ paddingHorizontal: 16, marginBottom: 8 }}>
+                            <SegmentedControl
+                                options={[
+                                    { label: "Transactions", value: "transactions" },
+                                    { label: "Invoices", value: "invoices" },
+                                    { label: "Ledger", value: "ledger" },
+                                ]}
+                                value={activeView}
+                                onChange={setActiveView}
+                            />
+                        </View>
 
                         {/* Improved Search Section */}
                         <View style={styles.searchSection}>
@@ -571,18 +708,7 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
 
         // App Bar
-        appBar: {
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            height: 60,
-            backgroundColor: COLORS.card,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border,
-        },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
-        appBarTitle: { fontSize: 17, fontWeight: '800', color: COLORS.text, letterSpacing: -0.5 },
 
         // Summary Section
         summaryContainer: { padding: 16 },

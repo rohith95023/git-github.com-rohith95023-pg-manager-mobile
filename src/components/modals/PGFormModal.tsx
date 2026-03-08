@@ -1,17 +1,16 @@
-import React, { useEffect, useState } from "react";
-import { View, StyleSheet, Text, TouchableOpacity, Alert } from "react-native";
-import { useForm, Controller } from "react-hook-form";
-import { zodResolver } from "@hookform/resolvers/zod";
-import * as z from "zod";
-import FormModal from "../common/FormModal";
-import FormField from "../common/FormField";
-import DropdownSelector from "../common/DropdownSelector";
-import SegmentedControl from "../common/SegmentedControl";
-import useThemePalette from "../../hooks/useThemePalette";
-import ConfirmationModal from "../common/ConfirmationModal";
 import { Feather } from "@expo/vector-icons";
-import { pgAPI } from "../../services/api";
-import { supabase } from "../../lib/supabaseClient";
+import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import * as z from "zod";
+import useThemePalette from "../../hooks/useThemePalette";
+import { authAPI, pgAPI } from "../../services/api";
+import ConfirmationModal from "../common/ConfirmationModal";
+import DropdownSelector from "../common/DropdownSelector";
+import FormField from "../common/FormField";
+import FormModal from "../common/FormModal";
+import SegmentedControl from "../common/SegmentedControl";
 
 const AMENITIES_LIST = [
     "WiFi", "AC", "Power Backup", "Parking", "CCTV",
@@ -141,7 +140,7 @@ const PGFormModal: React.FC<PGFormModalProps> = ({ visible, onClose, onSuccess, 
             }
 
             setLoading(true);
-            const { data: { user } } = await supabase.auth.getUser();
+            const user: any = await authAPI.getUser();
             if (!user) throw new Error("User session not found");
 
             const payload = {

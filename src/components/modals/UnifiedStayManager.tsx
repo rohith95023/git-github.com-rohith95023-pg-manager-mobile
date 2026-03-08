@@ -1,20 +1,20 @@
-import React, { useEffect, useState } from "react";
-import { View, StyleSheet, Text, TouchableOpacity, Alert, ScrollView } from "react-native";
-import { useForm, Controller } from "react-hook-form";
+import { Feather } from "@expo/vector-icons";
 import { zodResolver } from "@hookform/resolvers/zod";
+import React, { useEffect, useState } from "react";
+import { Controller, useForm } from "react-hook-form";
+import { Alert, StyleSheet, Text, View } from "react-native";
 import * as z from "zod";
-import FormModal from "../common/FormModal";
-import FormField from "../common/FormField";
-import DropdownSelector from "../common/DropdownSelector";
-import SegmentedControl from "../common/SegmentedControl";
-import DatePickerField from "../common/DatePickerField";
 import useThemePalette from "../../hooks/useThemePalette";
-import ConfirmationModal from "../common/ConfirmationModal";
-import { pgAPI, roomAPI, bedAPI, tenantAPI, paymentAPI } from "../../services/api";
+import { bedAPI, paymentAPI, pgAPI, roomAPI, tenantAPI } from "../../services/api";
+import { authClient } from "../../services/apiClient";
 import { billingService } from "../../services/billing.service";
-import { supabase } from "../../lib/supabaseClient";
 import NotificationService from "../../services/NotificationService";
-import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
+import ConfirmationModal from "../common/ConfirmationModal";
+import DatePickerField from "../common/DatePickerField";
+import DropdownSelector from "../common/DropdownSelector";
+import FormField from "../common/FormField";
+import FormModal from "../common/FormModal";
+import SegmentedControl from "../common/SegmentedControl";
 
 const PROFESSION_OPTIONS = [
     "Software Engineer", "IT Professional", "Student", "Business Owner",
@@ -136,6 +136,7 @@ const DEFAULT_VALUES: OnboardingFormData = {
 
 const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClose, onSuccess, editingTenant }) => {
     const COLORS = useThemePalette();
+    const styles = React.useMemo(() => createStyles(COLORS), [COLORS]);
     const [currentStep, setCurrentStep] = useState(1);
     const [loading, setLoading] = useState(false);
 
@@ -170,11 +171,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
     const watchPgId = watch("pgId");
     const watchRoomId = watch("roomId");
     const watchStayType = watch("stayType");
-    const watchRentAmount = watch("rentAmount");
-    const watchMaintenanceAmount = watch("maintenanceAmount");
-    const watchJoinedDate = watch("joinedDate");
-    const watchVacateDate = watch("vacateDate");
-    const watchSecurityDeposit = watch("securityDeposit");
 
     // Data fetching
     useEffect(() => {
@@ -224,7 +220,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
     }, [visible, editingTenant, reset]);
 
     useEffect(() => {
-        // Only clear if not in editing mode initialization
         if (!editingTenant || watch("idType") !== editingTenant.id_type) {
             setValue("idNumber", "");
         }
@@ -237,29 +232,24 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 const roomsData = (data as any) || [];
                 setRooms(roomsData);
 
-                // Check for ANY available beds in the entire PG and ignore inactive/maintenance rooms
-                const { data: availableBedsInPg, error } = await supabase
-                    .from("beds")
-                    .select("id, rooms!inner(pg_id, status)")
-                    .eq("rooms.pg_id", watchPgId)
-                    .neq("rooms.status", "INACTIVE")
-                    .neq("rooms.status", "MAINTENANCE")
-                    .eq("status", "AVAILABLE");
-
-                // If no available beds found, show warning (unless we are editing)
-                if (!error && (!availableBedsInPg || availableBedsInPg.length === 0) && !editingTenant) {
-                    setConfirmState({
-                        visible: true,
-                        title: "Property Full",
-                        message: "No beds available in selected property. Please select another property or free up a bed first.",
-                        type: "danger",
-                        singleButton: true,
-                        cancelText: "Go Back",
-                        onClose: () => {
-                            setValue("pgId", "");
-                            setConfirmState(prev => ({ ...prev, visible: false }));
-                        }
-                    });
+                try {
+                    const availableBedsInPg = await bedAPI.getAvailableByPg(watchPgId) as any[];
+                    if (availableBedsInPg.length === 0 && !editingTenant) {
+                        setConfirmState({
+                            visible: true,
+                            title: "Property Full",
+                            message: "No beds available in selected property. Please select another property or free up a bed first.",
+                            type: "danger",
+                            singleButton: true,
+                            cancelText: "Go Back",
+                            onClose: () => {
+                                setValue("pgId", "");
+                                setConfirmState(prev => ({ ...prev, visible: false }));
+                            }
+                        });
+                    }
+                } catch (err) {
+                    console.error("Error checking bed availability:", err);
                 }
             };
             fetchRooms();
@@ -274,7 +264,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 const data = await bedAPI.getByRoomId(watchRoomId);
                 const bedsData = (data as any) || [];
 
-                // Check if this specific room has available beds
                 const hasAvailable = bedsData.some((b: any) => b.status === "AVAILABLE" || b.id === editingTenant?.bed_id);
                 if (!hasAvailable && !editingTenant) {
                     setConfirmState({
@@ -291,7 +280,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     });
                 }
 
-                // Sort to put available beds first
                 const sorted = bedsData.sort((a: any, b: any) => {
                     if (a.status === "AVAILABLE" && b.status !== "AVAILABLE") return -1;
                     if (a.status !== "AVAILABLE" && b.status === "AVAILABLE") return 1;
@@ -301,7 +289,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             };
             fetchBeds();
 
-            // Auto-fill rent/maintenance from room info ONLY for monthly
             const room = rooms.find(r => r.id === watchRoomId);
             if (room && watchStayType === "MONTHLY" && !editingTenant) {
                 setValue("rentAmount", Number(room.rent || 0));
@@ -309,9 +296,8 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
         } else {
             setBeds([]);
         }
-    }, [watchRoomId, watchStayType]); // rent relies on both room and stayType
+    }, [watchRoomId, watchStayType]);
 
-    // Handle Stay Type switching
     useEffect(() => {
         if (watchStayType === "DAILY") {
             setValue("rentPaymentType", "JOIN_DATE_BASED");
@@ -344,7 +330,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             ];
             const isValid = await trigger(fieldsToValidate);
             if (isValid) {
-                // Check if user is minor
                 const birthYear = new Date(data.dob).getFullYear();
                 const currentYear = new Date().getFullYear();
                 if (currentYear - birthYear < 18 && (!data.guardianName || !data.guardianPhone)) {
@@ -352,18 +337,11 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     return;
                 }
 
-                // Check for duplicate ID
                 try {
                     setLoading(true);
-                    const { data: exists } = await supabase
-                        .from("tenants")
-                        .select("id")
-                        .eq("id_type", data.idType)
-                        .eq("id_number", data.idNumber)
-                        .neq("id", editingTenant?.id || "00000000-0000-0000-0000-000000000000")
-                        .maybeSingle();
+                    const duplicate = await tenantAPI.checkDuplicateId(data.idType, data.idNumber, editingTenant?.id);
 
-                    if (exists) {
+                    if (duplicate) {
                         setConfirmState({
                             visible: true,
                             title: "Resident Exists",
@@ -380,19 +358,13 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 } finally {
                     setLoading(false);
                 }
-            } else {
-                console.log("Step 1 Validation Errors:", errors);
             }
             return;
         }
 
         try {
             setLoading(true);
-            const { data: { user } } = await supabase.auth.getUser();
-
-            // V2: Balances are handled by invoices. Local calculation removed to prevent drift.
-            const initialBalance = 0;
-            const totalDailyRent = 0; // Legacy placeholder
+            const user = await authClient.getUser() as any;
 
             const payload: any = {
                 full_name: data.fullName,
@@ -414,10 +386,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 vacate_date: data.stayType === "DAILY" ? data.vacateDate : null,
                 rent_per_month: data.stayType === "MONTHLY" ? (Number(data.rentAmount) || 0) : null,
                 rent_per_day: data.stayType === "DAILY" ? (Number(data.rentAmount) || 0) : null,
-                total_rent: data.stayType === "DAILY" ? totalDailyRent : null,
-                paid_amount: Number(data.paidAmount) || 0,
-                // balance_amount: initialBalance, // REMOVED v2
-
                 custom_rent: data.stayType === "MONTHLY" ? (Number(data.rentAmount) || 0) : null,
                 maintenance_amount: Number(data.maintenanceAmount) || 0,
                 maintenance_type: data.maintenanceType || null,
@@ -426,36 +394,23 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 owner_id: user?.id
             };
 
-            // balance fields removed per V2 rules
-
-
             let tenantId = editingTenant?.id;
 
             if (editingTenant) {
                 await tenantAPI.update(editingTenant.id, payload);
-                // Handle Bed Change
                 if (editingTenant.bed_id !== data.bedId) {
-                    // Free old bed
                     await bedAPI.update(editingTenant.bed_id, { status: "AVAILABLE", tenant_id: null });
-                    // Occupy new bed
                     await bedAPI.update(data.bedId, { status: "OCCUPIED", tenant_id: tenantId });
-                    // Sync occupancy
                     await roomAPI.recalculateOccupancy(editingTenant.room_id);
                 }
             } else {
-                const tenant = await tenantAPI.create(payload);
+                const tenant = await tenantAPI.create(payload) as any;
                 tenantId = tenant.id;
-
-                // Invoice creation is now automatically handled in tenantAPI.create for monthly tenants
-
-                // Occupy bed
                 await bedAPI.update(data.bedId, { status: "OCCUPIED", tenant_id: tenantId });
             }
 
-            // Always sync current room occupancy
             await roomAPI.recalculateOccupancy(data.roomId);
 
-            // 2. handle Payment
             if (data.paidAmount > 0) {
                 const newPayment: any = await paymentAPI.create({
                     tenant_id: tenantId,
@@ -480,20 +435,11 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 }
             }
 
-            // 3. Handle Notifications
             try {
                 if (data.stayType === "MONTHLY") {
-                    await NotificationService.scheduleMonthlyRentReminder(
-                        tenantId,
-                        data.fullName,
-                        data.joinedDate
-                    );
+                    await NotificationService.scheduleMonthlyRentReminder(tenantId, data.fullName, data.joinedDate);
                 } else if (data.stayType === "DAILY" && data.vacateDate) {
-                    await NotificationService.scheduleCheckoutReminder(
-                        tenantId,
-                        data.fullName,
-                        data.vacateDate
-                    );
+                    await NotificationService.scheduleCheckoutReminder(tenantId, data.fullName, data.vacateDate);
                 }
             } catch (notifErr) {
                 console.warn("Failed to schedule notification:", notifErr);
@@ -539,7 +485,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
             loading={loading}
             submitLabel={currentStep === 1 ? "Next: Stay Details" : (editingTenant ? "Update Resident" : "Complete Onboarding")}
         >
-            {/* Visual Progress Indicator */}
             <View style={styles.progressContainer}>
                 <View style={[styles.progressBar, { backgroundColor: COLORS.border }]}>
                     <View style={[styles.progressFill, { backgroundColor: COLORS.primary, width: currentStep === 1 ? '50%' : '100%' }]} />
@@ -622,7 +567,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 </View>
 
                 <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>IDENTITY PROOF</Text>
+                    <Text style={[styles.label, { color: COLORS.text, marginBottom: 12, opacity: 0.8 }]}>IDENTITY PROOF</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -676,7 +621,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 </View>
 
                 <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>GUARDIAN INFO (FOR MINORS)</Text>
+                    <Text style={[styles.label, { color: COLORS.text, marginBottom: 12, opacity: 0.8 }]}>GUARDIAN INFO (FOR MINORS)</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -758,7 +703,7 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 </View>
 
                 <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>STAY CONFIGURATION</Text>
+                    <Text style={[styles.label, { color: COLORS.text, marginBottom: 12, opacity: 0.8 }]}>STAY CONFIGURATION</Text>
                     <View style={styles.row}>
                         <View style={{ flex: 1, marginRight: 8 }}>
                             <Controller
@@ -797,303 +742,47 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                             )}
                         />
                     )}
-
-                    <View style={styles.row}>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                            <Controller
-                                control={control}
-                                name="rentAmount"
-                                render={({ field: { onChange, value } }) => (
-                                    <FormField
-                                        label={watchStayType === "DAILY" ? "Rent /Day" : "Rent /Mo"}
-                                        placeholder="0"
-                                        value={value !== undefined && value !== -1 && value !== 0 ? String(value) : ""}
-                                        onChangeText={(t) => {
-                                            const sanitized = t.replace(/[^0-9]/g, '');
-                                            onChange(sanitized === "" ? "" : sanitized);
-                                        }}
-                                        error={errors.rentAmount?.message}
-                                        keyboardType="number-pad"
-                                    />
-                                )}
-                            />
-                        </View>
-                        <View style={{ flex: 1, marginLeft: 8 }}>
-                            <Controller
-                                control={control}
-                                name="securityDeposit"
-                                render={({ field: { onChange, value } }) => (
-                                    <FormField
-                                        label="Deposit"
-                                        placeholder="0"
-                                        value={value !== undefined && value !== 0 ? String(value) : ""}
-                                        onChangeText={(t) => {
-                                            const sanitized = t.replace(/[^0-9]/g, '');
-                                            onChange(sanitized === "" ? 0 : sanitized);
-                                        }}
-                                        error={errors.securityDeposit?.message}
-                                        keyboardType="number-pad"
-                                    />
-                                )}
-                            />
-                        </View>
-                    </View>
-
-                    <View style={styles.row}>
-                        <View style={{ flex: 1, marginRight: 8 }}>
-                            <Controller
-                                control={control}
-                                name="maintenanceAmount"
-                                render={({ field: { onChange, value } }) => (
-                                    <FormField
-                                        label="Maint. Fee"
-                                        placeholder="0"
-                                        value={value !== undefined && value !== 0 ? String(value) : ""}
-                                        onChangeText={(t) => {
-                                            const sanitized = t.replace(/[^0-9]/g, '');
-                                            onChange(sanitized === "" ? 0 : sanitized);
-                                        }}
-                                        error={errors.maintenanceAmount?.message}
-                                        keyboardType="number-pad"
-                                    />
-                                )}
-                            />
-                        </View>
-                        <View style={{ flex: 1, marginLeft: 8 }}>
-                            <Controller
-                                control={control}
-                                name="maintenanceType"
-                                render={({ field: { onChange, value } }) => (
-                                    <DropdownSelector
-                                        label="Type"
-                                        options={[
-                                            { label: "None", value: "" },
-                                            { label: "One Time", value: "one_time" },
-                                            { label: "Monthly", value: "monthly" }
-                                        ]}
-                                        value={value || ""}
-                                        onChange={onChange}
-                                    />
-                                )}
-                            />
-                        </View>
-                    </View>
-
-                    {/* Compact Estimates */}
-                    {watchStayType === 'DAILY' && watchJoinedDate && watchVacateDate && Number(watchRentAmount) >= 0 && (
-                        <View style={[styles.estimateCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
-                            <View style={styles.estimateHeader}>
-                                <Text style={[styles.label, { color: COLORS.textMuted }]}>TOTAL STAY RENT</Text>
-                                <Text style={[styles.dayRangeText, { color: COLORS.primary }]}>
-                                    {(() => {
-                                        const start = new Date(watchJoinedDate);
-                                        const end = new Date(watchVacateDate);
-                                        const diff = end.getTime() - start.getTime();
-                                        const diffDays = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
-                                        return `${diffDays} Days Stay`;
-                                    })()}
-                                </Text>
-                            </View>
-
-                            <View style={styles.estimateBody}>
-                                <Text style={[styles.estimateValue, { color: COLORS.text }]}>
-                                    ₹{(() => {
-                                        const start = new Date(watchJoinedDate);
-                                        const end = new Date(watchVacateDate);
-                                        const diff = end.getTime() - start.getTime();
-                                        const diffDays = Math.max(0, Math.floor(diff / (1000 * 60 * 60 * 24)) + 1);
-                                        const total = (diffDays * Number(watchRentAmount || 0)) + Number(watchMaintenanceAmount || 0);
-                                        return total.toLocaleString();
-                                    })()}
-                                </Text>
-                                <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
-                                    Incl. {Number(watchMaintenanceAmount || 0) > 0 ? `₹${Number(watchMaintenanceAmount).toLocaleString()} fees` : "all fees"}
-                                </Text>
-                            </View>
-                        </View>
-                    )}
-
-                    {watchStayType === 'MONTHLY' && Number(watchRentAmount) >= 0 && (
-                        <View style={[styles.estimateCard, { backgroundColor: COLORS.bg, borderColor: COLORS.border }]}>
-                            <View style={styles.estimateHeader}>
-                                <Text style={[styles.label, { color: COLORS.textMuted }]}>TOTAL JOINING AMOUNT</Text>
-                                <View style={[styles.miniBadge, { backgroundColor: COLORS.success + "12" }]}>
-                                    <Text style={[styles.miniBadgeText, { color: COLORS.success }]}>Monthly Stay</Text>
-                                </View>
-                            </View>
-
-                            <View style={styles.estimateBody}>
-                                <Text style={[styles.estimateValue, { color: COLORS.text }]}>
-                                    ₹{(Number(watchRentAmount || 0) + Number(watchSecurityDeposit || 0) + Number(watchMaintenanceAmount || 0)).toLocaleString()}
-                                </Text>
-                                <Text style={[styles.estimateBreakdown, { color: COLORS.textMuted }]}>
-                                    Rent + Deposit + Maint.
-                                </Text>
-                            </View>
-                        </View>
-                    )}
-                </View>
-
-                <View style={styles.flatterSection}>
-                    <Text style={[styles.label, { color: COLORS.textMuted, marginBottom: 12 }]}>INITIAL PAYMENT</Text>
-                    <View style={styles.row}>
-                        <View style={{ flex: 1.5, marginRight: 8 }}>
-                            <Controller
-                                control={control}
-                                name="paidAmount"
-                                render={({ field: { onChange, value } }) => (
-                                    <FormField
-                                        label="Amount Paid Now"
-                                        placeholder="₹ 0"
-                                        value={value !== undefined && value !== 0 ? String(value) : ""}
-                                        onChangeText={(t) => {
-                                            const sanitized = t.replace(/[^0-9]/g, '');
-                                            onChange(sanitized === "" ? 0 : sanitized);
-                                        }}
-                                        keyboardType="number-pad"
-                                    />
-                                )}
-                            />
-                        </View>
-                        <View style={{ flex: 1, marginLeft: 8 }}>
-                            <Controller
-                                control={control}
-                                name="paymentMethod"
-                                render={({ field: { onChange, value } }) => (
-                                    <DropdownSelector
-                                        label="Method"
-                                        options={[
-                                            { label: "Cash", value: "CASH" },
-                                            { label: "UPI", value: "UPI" },
-                                            { label: "Bank", value: "BANK_TRANSFER" },
-                                            { label: "Online", value: "ONLINE" }
-                                        ]}
-                                        value={value}
-                                        onChange={onChange}
-                                    />
-                                )}
-                            />
-                        </View>
-                    </View>
                 </View>
             </View>
 
             <ConfirmationModal
                 visible={confirmState.visible}
-                onClose={() => {
-                    const callback = (confirmState as any).onClose;
-                    setConfirmState(prev => ({ ...prev, visible: false }));
-                    if (callback) callback();
-                }}
-                onConfirm={confirmState.onConfirm}
                 title={confirmState.title}
                 message={confirmState.message}
                 type={confirmState.type}
+                onConfirm={confirmState.onConfirm}
                 confirmText={confirmState.confirmText}
                 cancelText={confirmState.cancelText}
-                loading={confirmState.loading}
                 singleButton={confirmState.singleButton}
+                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
             />
         </FormModal>
     );
 };
 
-const styles = StyleSheet.create({
-    row: {
-        flexDirection: "row",
-    },
-    flatterSection: {
-        marginBottom: 8,
-    },
-    label: {
-        fontSize: 10,
-        fontWeight: "900",
-        marginBottom: 8,
-        letterSpacing: 1,
-    },
-    progressContainer: {
-        marginBottom: 32,
-        paddingHorizontal: 20,
-        position: 'relative',
-        height: 30,
-        justifyContent: 'center',
-    },
-    progressBar: {
-        width: '100%',
-        height: 4,
-        borderRadius: 2,
-    },
-    progressFill: {
-        height: '100%',
-        borderRadius: 2,
-    },
-    stepIcons: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        width: '100%',
-        position: 'absolute',
-        top: 3,
-        left: 20,
-    },
+const createStyles = (COLORS: any) => StyleSheet.create({
+    progressContainer: { marginBottom: 20 },
+    progressBar: { height: 4, borderRadius: 2 },
+    progressFill: { height: 4, borderRadius: 2 },
+    stepIcons: { flexDirection: 'row', justifyContent: 'space-between', marginTop: -8 },
     stepIcon: {
-        width: 30,
-        height: 30,
-        borderRadius: 15,
-        backgroundColor: '#e5e7eb',
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: COLORS.border,
         justifyContent: 'center',
-        alignItems: 'center',
-        borderWidth: 3,
-        borderColor: '#fff',
+        alignItems: 'center'
     },
-    backBtn: {
-        marginBottom: 16,
+    row: { flexDirection: 'row', marginBottom: 15 },
+    flatterSection: {
+        marginTop: 10,
+        padding: 15,
+        backgroundColor: COLORS.card,
+        borderRadius: 12,
+        borderWidth: 1,
+        borderColor: COLORS.border + '20'
     },
-    backText: {
-        fontSize: 14,
-        fontWeight: "700",
-    },
-    estimateCard: {
-        marginTop: 12,
-        padding: 16,
-        borderRadius: 20,
-        borderWidth: 1.5,
-        borderStyle: 'dashed',
-    },
-    estimateHeader: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 8,
-    },
-    dayRangeText: {
-        fontSize: 10,
-        fontWeight: '800',
-    },
-    miniBadge: {
-        paddingHorizontal: 8,
-        paddingVertical: 3,
-        borderRadius: 6,
-    },
-    miniBadgeText: {
-        fontSize: 9,
-        fontWeight: '900',
-        textTransform: 'uppercase',
-    },
-    estimateBody: {
-        flexDirection: 'row',
-        alignItems: 'baseline',
-        justifyContent: 'space-between',
-        gap: 8,
-    },
-    estimateValue: {
-        fontSize: 24,
-        fontWeight: '900',
-        letterSpacing: -0.5,
-    },
-    estimateBreakdown: {
-        fontSize: 11,
-        fontWeight: '700',
-    },
+    label: { fontSize: 12, fontWeight: 'bold' }
 });
 
 export default UnifiedStayManager;

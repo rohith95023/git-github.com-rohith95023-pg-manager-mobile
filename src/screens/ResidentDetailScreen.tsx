@@ -1,19 +1,19 @@
+import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import React, { useMemo } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    ScrollView,
-    TouchableOpacity,
+    ActivityIndicator,
     Dimensions,
-    Image,
-    Linking
+    Linking,
+    ScrollView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { Feather, Ionicons, MaterialCommunityIcons } from "@expo/vector-icons";
+import ScreenHeader from "../components/common/ScreenHeader";
 import useThemePalette from "../hooks/useThemePalette";
 import { billingService } from "../services/billing.service";
-import { ActivityIndicator } from "react-native";
 
 const { width } = Dimensions.get("window");
 
@@ -35,17 +35,34 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
     const loadBillingData = async () => {
         setLoadingBilling(true);
         try {
-            const [balance, creditRes, invoicesRes]: any = await Promise.all([
-                billingService.getOutstandingBalance(tenant.id),
+            // Use pre-computed balance from tenant object if available (from directory)
+            // Else fall back to computing from invoices fetched below
+            const [creditRes, invoicesRes]: any = await Promise.all([
                 billingService.getCredits(tenant.id),
                 billingService.getInvoices(tenant.id)
             ]);
 
-            setOutstandingBalance(balance);
+            const invList = Array.isArray(invoicesRes) ? invoicesRes : (invoicesRes?.items || invoicesRes?.data || []);
+            // Calculate balance from invoices if not pre-computed
+            const preComputedBalance = tenant.balance ?? tenant.outstanding_balance;
+            if (preComputedBalance !== undefined && preComputedBalance !== null) {
+                setOutstandingBalance(Number(preComputedBalance));
+            } else {
+                const totalDue = invList
+                    .filter((inv: any) => inv.type !== 'DEPOSIT')
+                    .reduce((acc: number, inv: any) => acc + Math.max(0, (Number(inv.total_amount) || 0) - (Number(inv.paid_amount) || 0)), 0);
+                setOutstandingBalance(totalDue);
+            }
             setTenantCredit(creditRes?.amount || 0);
-            setInvoices(invoicesRes || []);
+            setInvoices(invList);
         } catch (err) {
             console.error("Failed to load billing data:", err);
+            // Graceful fallback — show pre-computed balance from tenant object
+            if (tenant.outstanding_balance !== undefined) {
+                setOutstandingBalance(Number(tenant.outstanding_balance));
+            } else {
+                setOutstandingBalance(0);
+            }
         } finally {
             setLoadingBilling(false);
         }
@@ -105,15 +122,16 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
 
     return (
         <SafeAreaView style={styles.container}>
-            <View style={styles.navHeader}>
-                <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
-                    <Feather name="arrow-left" size={24} color={COLORS.text} />
-                </TouchableOpacity>
-                <Text style={styles.navTitle}>Resident Profile</Text>
-                <TouchableOpacity style={styles.editBtn}>
-                    <Feather name="edit-2" size={20} color={COLORS.primary} />
-                </TouchableOpacity>
-            </View>
+            <ScreenHeader
+                title="Resident Profile"
+                onLeftPress={() => navigation.goBack()}
+                leftIcon="arrow-left"
+                rightElement={
+                    <TouchableOpacity style={styles.editBtn}>
+                        <Feather name="edit-2" size={20} color={COLORS.primary} />
+                    </TouchableOpacity>
+                }
+            />
 
             <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scrollPadding}>
                 {/* Profile Header */}
@@ -252,7 +270,7 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                                 <Text style={styles.financeLabel}>Tenant Credit</Text>
                                 <Text style={styles.financeSubLabel}>Available for future invoices</Text>
                             </View>
-                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{tenantCredit.toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{Number(tenantCredit || 0).toLocaleString()}</Text>
                         </View>
                     )}
                     <View style={styles.financeItem}>
@@ -302,8 +320,8 @@ const ResidentDetailScreen = ({ route, navigation }: any) => {
                                         </View>
                                     </View>
                                     <View style={styles.invoiceAmounts}>
-                                        <Text style={styles.invoiceTotal}>₹{inv.total_amount.toLocaleString()}</Text>
-                                        <Text style={styles.invoicePaid}>Paid: ₹{inv.paid_amount.toLocaleString()}</Text>
+                                        <Text style={styles.invoiceTotal}>₹{Number(inv.total_amount || 0).toLocaleString()}</Text>
+                                        <Text style={styles.invoicePaid}>Paid: ₹{Number(inv.paid_amount || 0).toLocaleString()}</Text>
                                     </View>
                                 </View>
                             );
@@ -324,17 +342,6 @@ type ThemePalette = ReturnType<typeof useThemePalette>;
 const createStyles = (COLORS: ThemePalette) =>
     StyleSheet.create({
         container: { flex: 1, backgroundColor: COLORS.bg },
-        navHeader: {
-            flexDirection: "row",
-            alignItems: "center",
-            justifyContent: "space-between",
-            paddingHorizontal: 20,
-            paddingVertical: 15,
-            borderBottomWidth: 1,
-            borderBottomColor: COLORS.border
-        },
-        backBtn: { padding: 4 },
-        navTitle: { fontSize: 18, fontWeight: "800", color: COLORS.text },
         editBtn: { padding: 8 },
         scrollPadding: { paddingHorizontal: 20, paddingTop: 20 },
 

@@ -1,6 +1,6 @@
-import * as Notifications from 'expo-notifications';
-import * as Device from 'expo-device';
 import Constants from 'expo-constants';
+import * as Device from 'expo-device';
+import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 
 // Configure how notifications are handled when the app is open
@@ -79,7 +79,20 @@ const NotificationService = {
 
         const data: NotificationData = { tenantId, type: 'RENT_DUE' };
 
-        // Use calendar trigger for monthly recurrence
+        const now = new Date();
+        const nextDate = new Date();
+
+        // Ensure month calculation respects end-of-month bounds
+        nextDate.setDate(1);
+        nextDate.setMonth(now.getMonth());
+        nextDate.setDate(reminderDay);
+        nextDate.setHours(10, 0, 0, 0);
+
+        if (nextDate.getTime() <= now.getTime()) {
+            nextDate.setMonth(nextDate.getMonth() + 1);
+        }
+
+        // Use standard date trigger to avoid Android calendar trigger limitations
         return await Notifications.scheduleNotificationAsync({
             content: {
                 title: 'Rent Due Soon 🏠',
@@ -87,13 +100,9 @@ const NotificationService = {
                 data,
             },
             trigger: {
-                type: 'calendar',
-                day: reminderDay,
-                hour: 10,
-                minute: 0,
-                repeats: true,
+                date: nextDate,
                 channelId: 'default',
-            } as any, // Using 'any' to avoid strict linter issues with specific trigger types
+            },
             identifier,
         });
     },
@@ -125,10 +134,9 @@ const NotificationService = {
                 data,
             },
             trigger: {
-                type: 'date',
-                timestamp: triggerDate.getTime(),
+                date: triggerDate,
                 channelId: 'default',
-            } as any,
+            },
             identifier,
         });
     },

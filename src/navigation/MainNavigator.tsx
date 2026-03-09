@@ -7,6 +7,7 @@ import {
 import { createNativeStackNavigator } from "@react-navigation/native-stack";
 import React, { useState } from "react";
 import {
+    Image,
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -48,8 +49,8 @@ const CustomDrawerContent = (props: any) => {
             {/* Header / Logo */}
             <View style={styles.drawerHeader}>
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-                    <View style={[styles.logoBox, { backgroundColor: colors.primary }]}>
-                        <Feather name="home" size={24} color="#fff" />
+                    <View style={styles.logoBox}>
+                        <Image source={require('../../assets/images/LOGO.png')} style={{ width: '100%', height: '100%', borderRadius: 12 }} resizeMode="contain" />
                     </View>
                     <Text style={[styles.logoText, { color: colors.text }]}>PG Manager</Text>
                 </View>

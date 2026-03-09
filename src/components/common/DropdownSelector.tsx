@@ -3,12 +3,12 @@ import React, { useState } from "react";
 import {
     FlatList,
     Modal,
-    SafeAreaView,
     StyleSheet,
     Text,
     TouchableOpacity,
     View
 } from "react-native";
+import { SafeAreaView } from "react-native-safe-area-context";
 import useThemePalette from "../../hooks/useThemePalette";
 
 interface DropdownOption {

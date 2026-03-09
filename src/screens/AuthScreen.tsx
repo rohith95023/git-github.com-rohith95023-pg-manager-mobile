@@ -4,6 +4,7 @@ import React, { useState } from "react";
 import {
     ActivityIndicator,
     Alert,
+    Image,
     KeyboardAvoidingView,
     Platform,
     ScrollView,
@@ -146,8 +147,8 @@ const AuthScreen = ({ navigation }: any) => {
             >
                 <ScrollView contentContainerStyle={styles.scrollContent}>
                     <View style={styles.header}>
-                        <View style={[styles.logoContainer, { backgroundColor: colors.primary }]}>
-                            <Feather name="shield" size={40} color="#fff" />
+                        <View style={styles.logoContainer}>
+                            <Image source={require('../../assets/images/LOGO.png')} style={{ width: '100%', height: '100%', borderRadius: 24 }} resizeMode="contain" />
                         </View>
                         <Text style={[styles.title, { color: colors.text }]}>THE PG MANAGER</Text>
                         <Text style={[styles.subtitle, { color: colors.textSecondary }]}>

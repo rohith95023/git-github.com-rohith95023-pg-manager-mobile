@@ -111,9 +111,9 @@ export const bedAPI = {
         }, `DELETE beds/${id}`);
     },
     getStats: (params: any = {}) => apiClient.get('beds/stats', params),
-    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}`, { status: 'AVAILABLE' }),
+    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}`, { status: 'AVAILABLE' }), // Keeping for legacy reference, but shouldn't be called
     getArchived: () => apiClient.get('beds/archived'),
-    getByPgId: (pgId: string) => apiClient.get(`beds/pg/${pgId}`),
+    getByPgId: (pgId: string) => apiClient.get(`beds/pg/${pgId}`), // Warning: likely returns 404, kept for legacy
     archive: async (id: string) => {
         return apiClient.request({
             method: 'post',
@@ -145,6 +145,16 @@ export const tenantAPI = {
             url: `/api/tenants/${id}`,
             data,
         }, `UPDATE tenants/${id}`);
+    },
+    onboard: async (data: any) => {
+        return apiClient.post('tenants/onboard', data);
+    },
+    updateFull: async (id: string, data: any) => {
+        return apiClient.request({
+            method: 'put',
+            url: `/api/tenants/${id}/full`,
+            data,
+        }, `UPDATE_FULL tenants/${id}`);
     },
     archive: async (id: string) => {
         return apiClient.request({

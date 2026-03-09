@@ -2,12 +2,11 @@ import { Feather } from "@expo/vector-icons";
 import { zodResolver } from "@hookform/resolvers/zod";
 import React, { useEffect, useState } from "react";
 import { Controller, useForm } from "react-hook-form";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import * as z from "zod";
 import useThemePalette from "../../hooks/useThemePalette";
-import { bedAPI, paymentAPI, pgAPI, roomAPI, tenantAPI } from "../../services/api";
+import { bedAPI, pgAPI, roomAPI, tenantAPI } from "../../services/api";
 import { authClient } from "../../services/apiClient";
-import { billingService } from "../../services/billing.service";
 import NotificationService from "../../services/NotificationService";
 import ConfirmationModal from "../common/ConfirmationModal";
 import DatePickerField from "../common/DatePickerField";
@@ -137,6 +136,7 @@ const DEFAULT_VALUES: OnboardingFormData = {
 const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClose, onSuccess, editingTenant }) => {
     const COLORS = useThemePalette();
     const styles = React.useMemo(() => createStyles(COLORS), [COLORS]);
+    const isDark = COLORS.bg !== '#FFFFFF' && COLORS.bg !== '#ffffff' && COLORS.bg !== '#FFF' && COLORS.bg !== '#fff';
     const [currentStep, setCurrentStep] = useState(1);
     const [loading, setLoading] = useState(false);
 
@@ -232,26 +232,6 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 const roomsData = (data as any) || [];
                 setRooms(roomsData);
 
-                try {
-                    const bedsInPg = await bedAPI.getAvailableByPg(watchPgId) as any[];
-                    const availableBedsInPg = bedsInPg.filter(b => b.status === "AVAILABLE");
-                    if (availableBedsInPg.length === 0 && !editingTenant) {
-                        setConfirmState({
-                            visible: true,
-                            title: "Property Full",
-                            message: "No beds available in selected property. Please select another property or free up a bed first.",
-                            type: "danger",
-                            singleButton: true,
-                            cancelText: "Go Back",
-                            onClose: () => {
-                                setValue("pgId", "");
-                                setConfirmState(prev => ({ ...prev, visible: false }));
-                            }
-                        });
-                    }
-                } catch (err) {
-                    console.error("Error checking bed availability:", err);
-                }
             };
             fetchRooms();
         } else {
@@ -402,58 +382,30 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 room_id: data.roomId,
                 bed_id: data.bedId,
                 stay_type: data.stayType,
+                billing_cycle_type: data.rentPaymentType === "FIXED_FIRST_DAY" ? "MONTH_START" : "JOIN_DATE",
                 rent_cycle: data.rentPaymentType,
                 move_in_date: data.joinedDate,
                 vacate_date: data.stayType === "DAILY" ? data.vacateDate : null,
-                rent_per_month: data.stayType === "MONTHLY" ? (Number(data.rentAmount) || 0) : null,
-                rent_per_day: data.stayType === "DAILY" ? (Number(data.rentAmount) || 0) : null,
-                custom_rent: data.stayType === "MONTHLY" ? (Number(data.rentAmount) || 0) : null,
+                rent_per_month: data.stayType === "MONTHLY" ? (Number(data.rentAmount) || 0) : 0,
+                rent_per_day: data.stayType === "DAILY" ? (Number(data.rentAmount) || 0) : 0,
+                custom_rent: Number(data.rentAmount) || 0,
                 maintenance_amount: Number(data.maintenanceAmount) || 0,
-                maintenance_type: data.maintenanceType || null,
+                maintenance_type: data.maintenanceType || "one_time",
                 security_deposit: Number(data.securityDeposit) || 0,
-                status: "ACTIVE",
+                paid_amount: Number(data.paidAmount) || 0,
+                payment_method: data.paymentMethod,
+                initial_bed_id: editingTenant?.bed_id,
+                initial_room_id: editingTenant?.room_id,
                 owner_id: user?.id
             };
 
             let tenantId = editingTenant?.id;
 
             if (editingTenant) {
-                await tenantAPI.update(editingTenant.id, payload);
-                if (editingTenant.bed_id !== data.bedId) {
-                    await bedAPI.update(editingTenant.bed_id, { status: "AVAILABLE", tenant_id: null });
-                    await bedAPI.update(data.bedId, { status: "OCCUPIED", tenant_id: tenantId });
-                    await roomAPI.recalculateOccupancy(editingTenant.room_id);
-                }
+                await tenantAPI.updateFull(editingTenant.id, payload);
             } else {
-                const tenant = await tenantAPI.create(payload) as any;
-                tenantId = tenant.id;
-                await bedAPI.update(data.bedId, { status: "OCCUPIED", tenant_id: tenantId });
-            }
-
-            await roomAPI.recalculateOccupancy(data.roomId);
-
-            if (data.paidAmount > 0) {
-                const newPayment: any = await paymentAPI.create({
-                    tenant_id: tenantId,
-                    pg_id: data.pgId,
-                    amount: data.paidAmount,
-                    payment_date: data.joinedDate,
-                    status: "COMPLETED",
-                    type: "RENT",
-                    payment_method: data.paymentMethod,
-                    billing_month: `${data.joinedDate.slice(0, 7)}-01`,
-                    notes: `Onboarding payment: ₹${data.paidAmount}`,
-                    owner_id: user?.id
-                });
-
-                const paymentId = newPayment?.id;
-                if (paymentId) {
-                    try {
-                        await billingService.allocatePayment(paymentId, tenantId, data.paidAmount);
-                    } catch (allocErr) {
-                        console.warn("Onboarding allocation failed:", allocErr);
-                    }
-                }
+                const response = await tenantAPI.onboard(payload) as any;
+                tenantId = response?.tenant_id || response?.id || "new_tenant";
             }
 
             try {
@@ -701,25 +653,71 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                         />
                     </View>
                     <View style={{ flex: 1, marginLeft: 8 }}>
-                        <Controller
-                            control={control}
-                            name="bedId"
-                            render={({ field: { onChange, value } }) => (
-                                <DropdownSelector
-                                    label="Bed *"
-                                    options={beds.map(b => ({
-                                        label: `Bed ${b.bed_number}${b.status !== 'AVAILABLE' ? ' (Full)' : ''}`,
-                                        value: b.id,
-                                        disabled: b.status !== 'AVAILABLE' && b.id !== editingTenant?.bed_id
-                                    }))}
-                                    value={value}
-                                    onChange={onChange}
-                                    error={errors.bedId?.message}
-                                    placeholder="Select"
-                                    disabled={!watchRoomId}
-                                />
-                            )}
-                        />
+                        <Text style={[styles.label, { color: COLORS.text, marginBottom: 8 }]}>Available Beds</Text>
+                        {!watchRoomId ? (
+                            <View style={[styles.emptyContainer, { borderColor: COLORS.border, borderStyle: 'dashed', borderWidth: 1 }]}>
+                                <Text style={[styles.emptyText, { color: COLORS.textMuted }]}>Please select a room first</Text>
+                            </View>
+                        ) : beds.length === 0 ? (
+                            <View style={[styles.emptyContainer, { borderColor: COLORS.border, borderStyle: 'dashed', borderWidth: 1 }]}>
+                                <Text style={[styles.emptyText, { color: COLORS.textMuted }]}>No beds configured</Text>
+                            </View>
+                        ) : (
+                            <Controller
+                                control={control}
+                                name="bedId"
+                                render={({ field: { onChange, value } }) => (
+                                    <View>
+                                        <View style={styles.bedGrid}>
+                                            {beds.map((bed: any) => {
+                                                const isAvailable = bed.status === "AVAILABLE" || bed.id === editingTenant?.bed_id;
+                                                const isOccupied = bed.status === "OCCUPIED" && bed.id !== editingTenant?.bed_id;
+                                                const isMaintenance = bed.status === "MAINTENANCE";
+                                                const isSelected = value === bed.id;
+                                                const isCurrent = bed.id === editingTenant?.bed_id;
+
+                                                let bgColor = isDark ? '#1e293b' : '#f1f5f9';
+                                                let borderColor = 'transparent';
+                                                let color = COLORS.text;
+                                                let opacity = 1;
+
+                                                if (isSelected) {
+                                                    bgColor = COLORS.primary;
+                                                    color = '#fff';
+                                                } else if (!isAvailable) {
+                                                    opacity = 0.5;
+                                                } else {
+                                                    borderColor = COLORS.border;
+                                                }
+
+                                                return (
+                                                    <TouchableOpacity
+                                                        key={bed.id}
+                                                        style={[styles.bedBox, { backgroundColor: bgColor, borderColor, opacity }]}
+                                                        onPress={() => onChange(bed.id)}
+                                                        disabled={!isAvailable}
+                                                    >
+                                                        <Feather name="box" size={16} color={isSelected ? '#fff' : (isAvailable ? COLORS.success : (isMaintenance ? COLORS.primary : COLORS.danger))} />
+                                                        <Text style={[styles.bedText, { color }]}>{bed.bed_number}</Text>
+                                                        {!isAvailable && (
+                                                            <View style={[styles.bedBadge, { backgroundColor: isOccupied ? COLORS.danger : COLORS.primary }]}>
+                                                                <Text style={styles.bedBadgeText}>{bed.status.substring(0, 3)}</Text>
+                                                            </View>
+                                                        )}
+                                                        {isCurrent && (
+                                                            <View style={[styles.bedBadge, { backgroundColor: COLORS.success, right: 'auto', left: -4 }]}>
+                                                                <Text style={styles.bedBadgeText}>CUR</Text>
+                                                            </View>
+                                                        )}
+                                                    </TouchableOpacity>
+                                                );
+                                            })}
+                                        </View>
+                                        {errors.bedId && <Text style={{ color: COLORS.danger, fontSize: 10, marginTop: 4 }}>{errors.bedId.message}</Text>}
+                                    </View>
+                                )}
+                            />
+                        )}
                     </View>
                 </View>
 
@@ -843,8 +841,9 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                     <DropdownSelector
                                         label="Type"
                                         options={[
+                                            { label: "One Time", value: "one_time" },
                                             { label: "No Maintenance", value: "" },
-                                            { label: "Fixed", value: "FIXED" },
+                                            { label: "Monthly", value: "monthly" },
                                         ]}
                                         value={value || ""}
                                         onChange={onChange}
@@ -855,6 +854,30 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                         </View>
                     </View>
                 </View>
+
+                {watchStayType === 'DAILY' && watch("joinedDate") && watch("vacateDate") && (() => {
+                    const start = new Date(watch("joinedDate"));
+                    const end = new Date(watch("vacateDate")!);
+                    if (end > start) {
+                        const diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                        const rentBase = diffDays * (Number(watch("rentAmount")) || 0);
+                        const maintenanceBase = Number(watch("maintenanceAmount")) || 0;
+                        const totalRent = rentBase + maintenanceBase;
+
+                        return (
+                            <View style={[styles.flatterSection, { backgroundColor: isDark ? '#1e293b' : '#f1f5f9' }]}>
+                                <Text style={[styles.label, { color: COLORS.text, opacity: 0.7, marginBottom: 8 }]}>TOTAL STAY RENT ({diffDays} DAYS)</Text>
+                                <Text style={{ fontSize: 24, fontWeight: 'bold', color: COLORS.text }}>
+                                    ₹{totalRent.toLocaleString()}
+                                </Text>
+                                <Text style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 4 }}>
+                                    (₹{Number(watch("rentAmount") || 0).toLocaleString()} × {diffDays} days) {maintenanceBase > 0 ? `+ ₹${maintenanceBase.toLocaleString()} Maint` : ''}
+                                </Text>
+                            </View>
+                        );
+                    }
+                    return null;
+                })()}
 
                 {!editingTenant && (
                     <View style={styles.flatterSection}>
@@ -897,6 +920,44 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                                 />
                             </View>
                         </View>
+
+                        {(() => {
+                            const paidAmount = Number(watch("paidAmount")) || 0;
+                            if (!paidAmount) return null;
+
+                            let calcBase = 0;
+                            if (watchStayType === "DAILY" && watch("joinedDate") && watch("vacateDate")) {
+                                const start = new Date(watch("joinedDate"));
+                                const end = new Date(watch("vacateDate")!);
+                                if (end > start) {
+                                    const diffDays = Math.floor((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                                    calcBase = (diffDays * (Number(watch("rentAmount")) || 0)) + (Number(watch("maintenanceAmount")) || 0);
+                                }
+                            } else {
+                                calcBase = (Number(watch("rentAmount")) || 0) +
+                                    (((watch("maintenanceType") === "monthly" || watch("maintenanceType") === "one_time" || watch("maintenanceType") === "FIXED" || (!watch("maintenanceType"))) ? Number(watch("maintenanceAmount") || 0) : 0)) +
+                                    (Number(watch("securityDeposit")) || 0);
+                            }
+
+                            const isOverpaid = paidAmount > calcBase;
+                            const balance = isOverpaid ? 0 : Math.max(0, calcBase - paidAmount);
+
+                            return (
+                                <View style={{ marginTop: 8 }}>
+                                    {isOverpaid ? (
+                                        <View style={{ padding: 8, backgroundColor: COLORS.danger + '20', borderRadius: 8 }}>
+                                            <Text style={{ fontSize: 10, color: COLORS.danger, fontWeight: 'bold' }}>
+                                                WARNING: Paid amount (₹{paidAmount.toLocaleString()}) is GREATER than total expected (₹{calcBase.toLocaleString()}).
+                                            </Text>
+                                        </View>
+                                    ) : (
+                                        <Text style={{ fontSize: 11, color: COLORS.success, fontWeight: 'bold', fontStyle: 'italic' }}>
+                                            Remaining Balance: ₹{balance.toLocaleString()}
+                                        </Text>
+                                    )}
+                                </View>
+                            );
+                        })()}
                     </View>
                 )}
             </View>
@@ -910,7 +971,13 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 confirmText={confirmState.confirmText}
                 cancelText={confirmState.cancelText}
                 singleButton={confirmState.singleButton}
-                onClose={() => setConfirmState(prev => ({ ...prev, visible: false }))}
+                onClose={() => {
+                    if (confirmState.onClose) {
+                        confirmState.onClose();
+                    } else {
+                        setConfirmState(prev => ({ ...prev, visible: false }));
+                    }
+                }}
             />
         </FormModal>
     );
@@ -938,7 +1005,29 @@ const createStyles = (COLORS: any) => StyleSheet.create({
         borderWidth: 1,
         borderColor: COLORS.border + '20'
     },
-    label: { fontSize: 12, fontWeight: 'bold' }
+    label: { fontSize: 12, fontWeight: 'bold' },
+    emptyContainer: { padding: 20, alignItems: 'center', justifyContent: 'center', borderRadius: 12, marginTop: 4 },
+    emptyText: { fontSize: 12, fontWeight: '600' },
+    bedGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 10, marginTop: 4 },
+    bedBox: {
+        width: 48,
+        height: 52,
+        borderRadius: 12,
+        borderWidth: 1,
+        alignItems: 'center',
+        justifyContent: 'center',
+        position: 'relative',
+    },
+    bedText: { fontSize: 10, fontWeight: 'bold', marginTop: 2 },
+    bedBadge: {
+        position: 'absolute',
+        top: -4,
+        right: -4,
+        paddingHorizontal: 4,
+        paddingVertical: 2,
+        borderRadius: 4,
+    },
+    bedBadgeText: { color: '#fff', fontSize: 7, fontWeight: 'bold' },
 });
 
 export default UnifiedStayManager;

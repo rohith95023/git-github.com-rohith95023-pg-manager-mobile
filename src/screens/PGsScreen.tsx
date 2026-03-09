@@ -1,6 +1,6 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -16,7 +16,7 @@ import {
 import { SafeAreaView } from "react-native-safe-area-context";
 import { useData } from "../context/DataContext";
 import useThemePalette from "../hooks/useThemePalette";
-import { pgAPI } from "../services/api";
+import { bedAPI, pgAPI, roomAPI } from "../services/api";
 import { generateDeleteCode, generatePgDeleteCode } from "../utils/security";
 
 import ConfirmationModal from "../components/common/ConfirmationModal";
@@ -28,7 +28,11 @@ const PGsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const { pgs: allPgs, rooms: allRooms, beds: allBeds, tenants: allTenants, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+    const { pgs: allPgs, rooms: allRooms, beds: allBeds, tenants: allTenants, invoices: allInvoices, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+
+    useEffect(() => {
+        if (isFocused) refresh();
+    }, [isFocused, refresh]);
 
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
@@ -36,9 +40,10 @@ const PGsScreen = ({ navigation }: any) => {
 
     // Filter and enrich with stats from global data
     const filteredPgs = useMemo(() => {
-        const basePgs = allPgs.filter((p: any) =>
-            activeTab === "Active" ? p.status !== 'INACTIVE' : p.status === 'INACTIVE'
-        );
+        const basePgs = allPgs.filter((p: any) => {
+            const isArchived = p.archived === true || p.status === 'ARCHIVED';
+            return activeTab === "Active" ? !isArchived : isArchived;
+        });
 
         return basePgs
             .filter(pg =>
@@ -50,7 +55,18 @@ const PGsScreen = ({ navigation }: any) => {
                 const pgRooms = allRooms.filter(r => r.pg_id === pg.id);
                 const pgBeds = allBeds.filter(b => b.pg_id === pg.id || pgRooms.some(r => r.id === b.room_id));
                 const pgTenants = allTenants.filter(t => t.pg_id === pg.id && t.status === 'ACTIVE');
-                const totalDue = pgTenants.reduce((sum, t) => sum + (t.outstanding_balance || 0), 0);
+
+                // Calculate total due from invoices (most accurate source in V2)
+                const pgInvoices = allInvoices.filter(inv =>
+                    inv.pg_id === pg.id &&
+                    (inv.status?.toUpperCase() === 'UNPAID' || inv.status?.toUpperCase() === 'PARTIAL')
+                );
+
+                const invoiceDue = pgInvoices.reduce((sum, inv) =>
+                    sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0);
+
+                // Prioritize backend-provided stats if they exist
+                const totalDue = pg.total_pending ?? pg.total_due ?? invoiceDue;
 
                 return {
                     ...pg,
@@ -61,7 +77,7 @@ const PGsScreen = ({ navigation }: any) => {
                     calculated_total_due: totalDue
                 };
             });
-    }, [allPgs, allRooms, allBeds, activeTab, searchTerm]);
+    }, [allPgs, allRooms, allBeds, allTenants, allInvoices, activeTab, searchTerm]);
 
     const loading = globalLoading;
 
@@ -141,14 +157,49 @@ const PGsScreen = ({ navigation }: any) => {
                     try {
                         setConfirmState(prev => ({ ...prev, loading: true }));
                         const date = new Date().toISOString().split('T')[0];
+
+                        // 1. Archive the PG itself
                         await pgAPI.archive(id, date);
+
+                        // 2. Cascade: fetch all rooms for this PG and archive them
+                        try {
+                            const roomsData: any = await roomAPI.getByPgIdAll(id);
+                            const pgRooms: any[] = Array.isArray(roomsData)
+                                ? roomsData
+                                : (roomsData?.data || []);
+
+                            // Archive each room + all its beds concurrently
+                            await Promise.allSettled(
+                                pgRooms.map(async (room: any) => {
+                                    // Archive room
+                                    await roomAPI.archive(room.id).catch(() => { });
+
+                                    // Fetch and archive beds in this room
+                                    try {
+                                        const bedsData: any = await bedAPI.getByRoomId(room.id);
+                                        const roomBeds: any[] = Array.isArray(bedsData)
+                                            ? bedsData
+                                            : (bedsData?.data || []);
+                                        await Promise.allSettled(
+                                            roomBeds.map((bed: any) =>
+                                                bedAPI.archive(bed.id).catch(() => { })
+                                            )
+                                        );
+                                    } catch (_) { }
+                                })
+                            );
+                        } catch (cascadeErr) {
+                            // Cascade failures are non-critical; PG itself is archived
+                            console.warn('Cascade archive warning:', cascadeErr);
+                        }
+
                         refresh();
-                        setConfirmState({ visible: false, title: "", message: "", type: "info" });
-                        setConfirmInput("");
-                        setConfirmTargetCode("");
+                        setConfirmState({ visible: false, title: '', message: '', type: 'info' });
+                        setConfirmInput('');
+                        setConfirmTargetCode('');
                     } catch (error: any) {
                         setConfirmState(prev => ({ ...prev, loading: false }));
-                        Alert.alert("Error", error.message || "Failed to archive property");
+                        Alert.alert('Error', error.message || 'Failed to archive property');
                     }
                 }
             });
@@ -244,7 +295,7 @@ const PGsScreen = ({ navigation }: any) => {
             `Manage ${item.name}`,
             [
                 { text: "Edit Details", onPress: () => handleEdit(item) },
-                item.status === "ACTIVE"
+                !item.archived
                     ? { text: "Archive", onPress: () => handleArchive(item.id, item.name), style: "destructive" }
                     : { text: "Restore", onPress: () => handleRestore(item.id, item.name) },
                 { text: "Delete Permanently", onPress: () => handleDelete(item.id, item.name), style: "destructive" },
@@ -270,7 +321,7 @@ const PGsScreen = ({ navigation }: any) => {
             >
                 <View style={styles.cardHeader}>
                     <View style={styles.headerActions}>
-                        {item.status === 'ACTIVE' ? (
+                        {!item.archived ? (
                             <>
                                 <TouchableOpacity
                                     style={[styles.headerActionBtn, { backgroundColor: COLORS.primary + "15" }]}
@@ -342,7 +393,7 @@ const PGsScreen = ({ navigation }: any) => {
                         </View>
                     </View>
 
-                    {item.status === 'ACTIVE' && (
+                    {!item.archived && item.status === 'ACTIVE' && (
                         <View style={[styles.statusIndicator, { backgroundColor: COLORS.success }]} />
                     )}
                 </View>

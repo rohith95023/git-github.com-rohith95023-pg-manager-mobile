@@ -26,9 +26,11 @@ import { invoiceAPI, ledgerAPI, paymentAPI, pgAPI, statsAPI, tenantAPI } from ".
 const { width } = Dimensions.get("window");
 const DEFAULT_PAYMENT_FILTERS = {
     propertyId: "ALL",
-    status: ""
+    status: "",
+    tenantStatus: "ACTIVE"
 };
 const PAYMENT_STATUS_OPTIONS = ["", "PAID", "PENDING", "PARTIAL"];
+const TENANT_STATUS_OPTIONS = ["ALL", "ACTIVE", "DELETED"];
 
 const PaymentsScreen = ({ route, navigation }: any) => {
     const COLORS = useThemePalette();
@@ -38,6 +40,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const [refreshing, setRefreshing] = useState(false);
     const [payments, setPayments] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
+    const [tenantsMap, setTenantsMap] = useState<Record<string, any>>({});
     const [stats, setStats] = useState({
         totalReceived: 0,
         outstandingDues: 0,
@@ -50,8 +53,18 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const [activeView, setActiveView] = useState("transactions");
     const [invoices, setInvoices] = useState<any[]>([]);
     const [ledger, setLedger] = useState<any[]>([]);
+    const [dues, setDues] = useState<any[]>([]);
     const [loadingInvoices, setLoadingInvoices] = useState(false);
     const [loadingLedger, setLoadingLedger] = useState(false);
+    const [loadingDues, setLoadingDues] = useState(false);
+    const [activeDueSegment, setActiveDueSegment] = useState("all");
+
+    // Unified Stats
+    const [paymentStats, setPaymentStats] = useState({
+        overdue: 0,
+        upcoming: 0,
+        paidThisMonth: 0
+    });
 
     // Filters
     const [searchTerm, setSearchTerm] = useState("");
@@ -84,7 +97,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 paymentAPI.getAll().catch(() => []),
                 pgAPI.getAll().catch(() => []),
                 statsAPI.getDashboardStats().catch(() => ({})),
-                tenantAPI.getAll().catch(() => []),
+                tenantAPI.search({ limit: 1000 }).catch(() => []),
                 invoiceAPI.getAll().catch(() => [])
             ]);
 
@@ -133,8 +146,11 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     billing_month: t.move_in_date || null
                 }));
 
-            setPayments([...enrichedPayments, ...outstandingDues]);
+            const allPayments = [...enrichedPayments, ...outstandingDues];
+            setPayments(allPayments);
             setPgs(pgsArr);
+            setTenantsMap(tenantMap);
+            setInvoices(invoicesArr); // Update shared invoices state
 
             // Backend might wrap stats in a data envelope
             const ds = dashboardStatsRes?.data || dashboardStatsRes;
@@ -148,6 +164,41 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 outstandingDues: outstandingDuesAmt,
                 totalReceivable,
                 collectionRate
+            });
+
+            // Calculate Payment Status (Overdue/Upcoming)
+            const now = new Date();
+            now.setHours(0, 0, 0, 0);
+
+            let overdue = 0;
+            let upcoming = 0;
+            const paidThisMonthCount = invoicesArr.filter((inv: any) => {
+                const isPaid = inv.status?.toUpperCase() === 'PAID';
+                // Simplified paid this month check: paid status + created_at in this month
+                if (isPaid && inv.created_at) {
+                    const payDate = new Date(inv.created_at);
+                    return payDate.getMonth() === now.getMonth() && payDate.getFullYear() === now.getFullYear();
+                }
+                return false;
+            }).length;
+
+            invoicesArr.forEach((inv: any) => {
+                if (inv.status === 'UNPAID' || inv.status === 'PARTIAL') {
+                    const end = inv.billing_period_end ? new Date(inv.billing_period_end) : null;
+                    if (end) {
+                        end.setHours(0, 0, 0, 0);
+                        if (end < now) overdue++;
+                        else upcoming++;
+                    } else {
+                        upcoming++;
+                    }
+                }
+            });
+
+            setPaymentStats({
+                overdue,
+                upcoming,
+                paidThisMonth: paidThisMonthCount
             });
 
             Animated.timing(animatedProgress, {
@@ -203,9 +254,9 @@ const PaymentsScreen = ({ route, navigation }: any) => {
 
     useEffect(() => {
         if (isFocused) {
-            if (activeView === "transactions") fetchData();
-            else if (activeView === "invoices") fetchInvoices();
-            else fetchLedger();
+            fetchData(); // Always fetch core data
+            if (activeView === "invoices") fetchInvoices();
+            else if (activeView === "ledger") fetchLedger();
         }
     }, [activeView, fetchData, fetchInvoices, fetchLedger, isFocused]);
 
@@ -221,9 +272,30 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const filteredPayments = useMemo(() => {
         return payments.filter(p => {
             const lowerSearch = searchTerm.toLowerCase();
-            if (!lowerSearch) return true; // skip search check if empty
-            // p.tenants is enriched in fetchData via tenantMap
-            const name = (p.tenants?.full_name || p.tenant_name || "").toLowerCase();
+            const tenant = p.tenants || tenantsMap[p.tenant_id];
+
+            // Tenant Status Filter
+            if (filters.tenantStatus === "ACTIVE" && !tenant) return false;
+            if (filters.tenantStatus === "DELETED" && tenant) return false;
+
+            if (!lowerSearch) {
+                // If no search, still check other filters
+                const matchesPg = filters.propertyId === "ALL" || filters.propertyId === "" || p.pg_id === filters.propertyId;
+                const statusValue = (p.status || "").toUpperCase();
+                let matchesStatus = true;
+                if (filters.status) {
+                    if (filters.status === "PAID") {
+                        matchesStatus = statusValue === "PAID" || statusValue === "COMPLETED";
+                    } else if (filters.status === "PENDING") {
+                        matchesStatus = statusValue === "PENDING" || statusValue === "PENDING_DUE";
+                    } else {
+                        matchesStatus = statusValue === filters.status;
+                    }
+                }
+                return matchesPg && matchesStatus;
+            }
+
+            const name = (tenant?.full_name || p.tenant_name || "").toLowerCase();
             const pg = (p.pgs?.name || p.pg_name || "").toLowerCase();
             const month = (p.billing_month || "").toLowerCase();
             const matchesSearch = name.includes(lowerSearch) || pg.includes(lowerSearch) || month.includes(lowerSearch);
@@ -250,7 +322,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             if (!a.isVirtual && b.isVirtual) return 1;
             return 0;
         });
-    }, [payments, searchTerm, filters]);
+    }, [payments, searchTerm, filters, tenantsMap]);
 
     const groupedPayments = useMemo(() => {
         const groups: { [key: string]: any[] } = {};
@@ -262,14 +334,13 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         });
 
         let result = Object.entries(groups).map(([tenantId, items]) => {
-            // p.tenants and p.pgs are enriched in fetchData via tenantMap/pgMap
             const tenant = items[0].tenants || null;
             const pg = items[0].pgs || null;
             return {
                 tenantId,
                 tenant,
                 pg,
-                tenantName: tenant?.full_name || items[0].tenant_name || "Resident",
+                tenantName: tenant?.full_name || (items[0].tenant_name ? items[0].tenant_name.charAt(0).toUpperCase() + items[0].tenant_name.slice(1) : "Resident"),
                 pgName: pg?.name || items[0].pg_name || "—",
                 totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
                 items,
@@ -288,6 +359,120 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         });
     }, [filteredPayments, filters.status]);
 
+    const getDueStatus = (inv: any) => {
+        const end = inv.billing_period_end ? new Date(inv.billing_period_end) : null;
+        if (!end) return "upcoming";
+        const now = new Date();
+        now.setHours(0, 0, 0, 0);
+        const endDate = new Date(end);
+        endDate.setHours(0, 0, 0, 0);
+
+        if (endDate < now) return "overdue";
+        if (endDate.getTime() === now.getTime()) return "due_today";
+        return "upcoming";
+    };
+
+    const filteredInvoices = useMemo(() => {
+        return invoices.filter(inv => {
+            const tenant = tenantsMap[inv.tenant_id];
+
+            // Tenant Status Filter
+            if (filters.tenantStatus === "ACTIVE" && !tenant) return false;
+            if (filters.tenantStatus === "DELETED" && tenant) return false;
+
+            // Property Filter
+            if (filters.propertyId !== "ALL" && filters.propertyId !== "" && inv.pg_id !== filters.propertyId) return false;
+
+            // Status Filter
+            if (filters.status && inv.status !== filters.status) return false;
+
+            // Search Filter
+            if (searchTerm.trim()) {
+                const lower = searchTerm.toLowerCase();
+                const name = (tenant?.full_name || inv.tenant_name || "").toLowerCase();
+                if (!name.includes(lower)) return false;
+            }
+
+            return true;
+        });
+    }, [invoices, tenantsMap, filters, searchTerm]);
+
+    const filteredLedger = useMemo(() => {
+        return ledger.filter(entry => {
+            const tenant = tenantsMap[entry.tenant_id];
+
+            // Tenant Status Filter
+            if (filters.tenantStatus === "ACTIVE" && !tenant) return false;
+            if (filters.tenantStatus === "DELETED" && tenant) return false;
+
+            // Property Filter - Ledger might not have pg_id directly on all entries, but usually does
+            if (filters.propertyId !== "ALL" && filters.propertyId !== "" && entry.pg_id && entry.pg_id !== filters.propertyId) return false;
+
+            // Search Filter
+            if (searchTerm.trim()) {
+                const lower = searchTerm.toLowerCase();
+                const name = (tenant?.full_name || entry.tenant_name || "").toLowerCase();
+                const desc = (entry.description || "").toLowerCase();
+                if (!name.includes(lower) && !desc.includes(lower)) return false;
+            }
+
+            return true;
+        });
+    }, [ledger, tenantsMap, filters, searchTerm]);
+
+    const groupedDues = useMemo(() => {
+        let filtered = invoices.filter((inv: any) => {
+            const tenant = tenantsMap[inv.tenant_id];
+
+            // Tenant Status Filter
+            if (filters.tenantStatus === "ACTIVE" && !tenant) return false;
+            if (filters.tenantStatus === "DELETED" && tenant) return false;
+
+            // Property Filter
+            if (filters.propertyId !== "ALL" && filters.propertyId !== "" && inv.pg_id !== filters.propertyId) return false;
+
+            return inv.status === 'UNPAID' || inv.status === 'PARTIAL';
+        });
+
+        // segment filter
+        if (activeDueSegment === "overdue") {
+            filtered = filtered.filter(inv => getDueStatus(inv) === "overdue");
+        } else if (activeDueSegment === "upcoming") {
+            filtered = filtered.filter(inv => getDueStatus(inv) === "upcoming" || getDueStatus(inv) === "due_today");
+        }
+
+        // search
+        if (searchTerm.trim()) {
+            const lower = searchTerm.toLowerCase();
+            filtered = filtered.filter((inv: any) => {
+                const t = tenantsMap[inv.tenant_id] || {};
+                return (t.full_name || "").toLowerCase().includes(lower) || (inv.tenant_name || "").toLowerCase().includes(lower);
+            });
+        }
+
+        const groups: Record<string, any> = {};
+        filtered.forEach((inv: any) => {
+            const tId = inv.tenant_id;
+            const tenant = tenantsMap[tId] || null;
+            if (!groups[tId]) {
+                groups[tId] = {
+                    tenantId: tId,
+                    tenantName: tenant?.full_name || inv.tenant_name || "Resident",
+                    items: [],
+                    tenant,
+                    pgName: pgs.find(p => p.id === inv.pg_id)?.name || "—"
+                };
+            }
+            groups[tId].items.push(inv);
+        });
+
+        return Object.values(groups).map((g: any) => ({
+            ...g,
+            totalDue: g.items.reduce((sum: number, inv: any) => sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0),
+            hasOverdue: g.items.some((inv: any) => getDueStatus(inv) === "overdue")
+        })).sort((a: any, b: any) => (a.hasOverdue ? -1 : 1));
+    }, [invoices, activeDueSegment, searchTerm, tenantsMap, pgs]);
+
     const getStatusColor = (status: string) => {
         switch (status?.toUpperCase()) {
             case 'PAID':
@@ -296,6 +481,21 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             case 'PENDING_DUE': return COLORS.danger;
             case 'FAILED': return COLORS.danger;
             default: return COLORS.textMuted;
+        }
+    };
+
+    const formatDate = (dateStr: string) => {
+        if (!dateStr) return "N/A";
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr;
+            return date.toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric'
+            });
+        } catch (e) {
+            return dateStr;
         }
     };
 
@@ -342,28 +542,50 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 </View>
             </View>
 
-            {/* Enhanced Collection Rate */}
-            <View style={styles.rateCard}>
-                <View style={styles.rateInfo}>
-                    <Text style={styles.rateTitle}>COLLECTION RATE</Text>
-                </View>
-                <View style={styles.progressContainer}>
-                    <View style={styles.progressBg}>
-                        <Animated.View
-                            style={[
-                                styles.progressFill,
-                                {
-                                    width: animatedProgress.interpolate({
-                                        inputRange: [0, 100],
-                                        outputRange: ['0%', '100%']
-                                    }),
-                                    backgroundColor: COLORS.success
-                                }
-                            ]}
-                        >
-                            <Text style={styles.progressText}>{stats.collectionRate}%</Text>
-                        </Animated.View>
+            {/* Payment Status Section (from Dues & Collections) */}
+            <View style={styles.statusRow}>
+                <View style={[styles.statusCard, { borderColor: COLORS.danger + '30' }]}>
+                    <View style={[styles.statusDot, { backgroundColor: COLORS.danger }]} />
+                    <View>
+                        <Text style={styles.statusLabel}>OVERDUE</Text>
+                        <Text style={[styles.statusValue, { color: COLORS.danger }]}>{paymentStats.overdue}</Text>
                     </View>
+                </View>
+                <View style={[styles.statusCard, { borderColor: COLORS.warning + '30' }]}>
+                    <View style={[styles.statusDot, { backgroundColor: COLORS.warning }]} />
+                    <View>
+                        <Text style={styles.statusLabel}>UPCOMING</Text>
+                        <Text style={[styles.statusValue, { color: COLORS.warning }]}>{paymentStats.upcoming}</Text>
+                    </View>
+                </View>
+                <View style={[styles.statusCard, { borderColor: COLORS.success + '30' }]}>
+                    <View style={[styles.statusDot, { backgroundColor: COLORS.success }]} />
+                    <View>
+                        <Text style={styles.statusLabel}>PAID THIS MONTH</Text>
+                        <Text style={[styles.statusValue, { color: COLORS.success }]}>{paymentStats.paidThisMonth}</Text>
+                    </View>
+                </View>
+            </View>
+
+            {/* Collection Rate */}
+            <View style={styles.rateCard}>
+                <View style={styles.rateInfoRow}>
+                    <Text style={styles.rateTitle}>COLLECTION RATE</Text>
+                    <Text style={[styles.ratePercent, { color: COLORS.success }]}>{stats.collectionRate}%</Text>
+                </View>
+                <View style={styles.progressBg}>
+                    <Animated.View
+                        style={[
+                            styles.progressFill,
+                            {
+                                width: animatedProgress.interpolate({
+                                    inputRange: [0, 100],
+                                    outputRange: ['0%', '100%']
+                                }),
+                                backgroundColor: COLORS.success
+                            }
+                        ]}
+                    />
                 </View>
             </View>
         </View>
@@ -436,14 +658,14 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                         <View style={styles.detailRow}>
                             <Feather name="home" size={12} color={COLORS.textMuted} />
                             <Text style={styles.detailText} numberOfLines={1}>
-                                {group.pgName} • Room {group.tenant?.rooms?.room_number || "N/A"}
+                                {group.pgName}{(group.tenant?.rooms?.room_number || group.items[0].room_number || group.items[0].room_name) ? ` • Room ${group.tenant?.rooms?.room_number || group.items[0].room_number || group.items[0].room_name}` : ''}
                             </Text>
                         </View>
                         {!hasMultiple && (
                             <View style={styles.detailRow}>
                                 <Feather name="calendar" size={12} color={COLORS.textMuted} />
                                 <Text style={styles.detailText}>
-                                    {group.items[0].payment_date || group.items[0].billing_month || `Joined: ${new Date(group.tenant?.move_in_date).toLocaleDateString()}`}
+                                    {formatDate(group.items[0].payment_date || group.items[0].billing_month) || `Joined: ${formatDate(group.tenant?.move_in_date)}`}
                                 </Text>
                             </View>
                         )}
@@ -487,7 +709,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                                     {getInvoiceLabel(subItem)}
                                 </Text>
                                 <Text style={{ fontSize: 11, color: COLORS.textMuted }}>
-                                    {subItem.payment_date || subItem.billing_month || 'Recent Record'}
+                                    {formatDate(subItem.payment_date || subItem.billing_month) || 'Recent Record'}
                                 </Text>
                             </View>
                             <View style={{ alignItems: 'flex-end' }}>
@@ -522,58 +744,184 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         }
     };
 
-    const renderInvoiceItem = ({ item }: { item: any }) => (
-        <View style={styles.groupContainer}>
-            <View style={styles.paymentCard}>
-                <View style={styles.paymentCardHeader}>
-                    <View style={styles.cardHeaderLeft}>
-                        <Text style={styles.residentName} numberOfLines={1}>INV-{String(item.id).slice(0, 6).toUpperCase()}</Text>
-                        <View style={[styles.statusPill, { backgroundColor: getInvoiceStatusColor(item.status, COLORS) + "12" }]}>
-                            <Text style={[styles.statusPillText, { color: getInvoiceStatusColor(item.status, COLORS) }]}>{item.status}</Text>
+    const renderInvoiceItem = ({ item }: { item: any }) => {
+        const tenant = item.tenants || tenantsMap[item.tenant_id];
+        return (
+            <View style={styles.groupContainer}>
+                <View style={styles.paymentCard}>
+                    <View style={styles.paymentCardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <Text style={styles.residentName} numberOfLines={1}>INV-{String(item.id).slice(0, 6).toUpperCase()}</Text>
+                            <View style={[styles.statusPill, { backgroundColor: getInvoiceStatusColor(item.status, COLORS) + "12" }]}>
+                                <Text style={[styles.statusPillText, { color: getInvoiceStatusColor(item.status, COLORS) }]}>{item.status}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.cardHeaderRight}>
+                            <Text style={[styles.paymentAmount, { color: COLORS.text }]}>₹{Number(item.total_amount || 0).toLocaleString()}</Text>
+                            <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Period: {formatDate(item.billing_period_start)}</Text>
                         </View>
                     </View>
-                    <View style={styles.cardHeaderRight}>
-                        <Text style={styles.paymentAmount}>₹{Number(item.total_amount || 0).toLocaleString()}</Text>
-                        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Period: {new Date(item.billing_period_start).toLocaleDateString([], { month: 'short', year: 'numeric' })}</Text>
-                    </View>
-                </View>
-                <View style={styles.cardDetails}>
-                    <View style={styles.detailRow}>
-                        <Feather name="user" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                        <Feather name="home" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.detailText}>{item.tenants?.pgs?.name || "N/A"}</Text>
+                    <View style={styles.cardDetails}>
+                        <View style={styles.detailRow}>
+                            <Feather name="user" size={12} color={COLORS.textMuted} />
+                            {tenant?.full_name || item.tenant_name ? (
+                                <Text style={styles.detailText}>{tenant?.full_name || item.tenant_name}</Text>
+                            ) : (
+                                <View style={[styles.statusPill, { backgroundColor: COLORS.danger + '12', paddingHorizontal: 6, height: 18 }]}>
+                                    <Text style={[styles.statusPillText, { color: COLORS.danger, fontSize: 9 }]}>DELETED</Text>
+                                </View>
+                            )}
+                        </View>
+                        <View style={styles.detailRow}>
+                            <Feather name="home" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.detailText}>
+                                {tenant?.pgs?.name || pgs.find(p => p.id === item.pg_id)?.name || item.pg_name || "Deleted PG"}
+                                {(tenant?.rooms?.room_number || item.room_number || item.room_name) ? ` • Room ${tenant?.rooms?.room_number || item.room_number || item.room_name}` : ''}
+                            </Text>
+                        </View>
                     </View>
                 </View>
             </View>
-        </View>
-    );
+        );
+    };
 
-    const renderLedgerItem = ({ item }: { item: any }) => (
-        <View style={styles.groupContainer}>
-            <View style={styles.paymentCard}>
-                <View style={styles.paymentCardHeader}>
-                    <View style={styles.cardHeaderLeft}>
-                        <Text style={styles.residentName} numberOfLines={1}>{item.description || "Ledger Entry"}</Text>
-                        <Text style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(item.created_at).toLocaleDateString()}</Text>
+    const renderLedgerItem = ({ item }: { item: any }) => {
+        const tenant = item.tenants || tenantsMap[item.tenant_id];
+        return (
+            <View style={styles.groupContainer}>
+                <View style={styles.paymentCard}>
+                    <View style={styles.paymentCardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <Text style={styles.residentName} numberOfLines={1}>{item.description || "Ledger Entry"}</Text>
+                            <Text style={{ fontSize: 11, color: COLORS.textMuted }}>{formatDate(item.created_at)}</Text>
+                        </View>
+                        <View style={styles.cardHeaderRight}>
+                            <Text style={[styles.paymentAmount, { color: item.type === 'DEBIT' ? COLORS.danger : COLORS.success }]}>
+                                {item.type === 'DEBIT' ? '-' : '+'}₹{Number(item.amount || 0).toLocaleString()}
+                            </Text>
+                        </View>
                     </View>
-                    <View style={styles.cardHeaderRight}>
-                        <Text style={[styles.paymentAmount, { color: item.type === 'DEBIT' ? COLORS.danger : COLORS.success }]}>
-                            {item.type === 'DEBIT' ? '-' : '+'}₹{Number(item.amount || 0).toLocaleString()}
-                        </Text>
-                    </View>
-                </View>
-                <View style={styles.cardDetails}>
-                    <View style={styles.detailRow}>
-                        <Feather name="user" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
+                    <View style={styles.cardDetails}>
+                        <View style={styles.detailRow}>
+                            <Feather name="user" size={12} color={COLORS.textMuted} />
+                            {tenant?.full_name || item.tenant_name ? (
+                                <Text style={styles.detailText}>{tenant?.full_name || item.tenant_name}</Text>
+                            ) : (
+                                <View style={[styles.statusPill, { backgroundColor: COLORS.danger + '12', paddingHorizontal: 6, height: 18 }]}>
+                                    <Text style={[styles.statusPillText, { color: COLORS.danger, fontSize: 9 }]}>DELETED</Text>
+                                </View>
+                            )}
+                        </View>
                     </View>
                 </View>
             </View>
-        </View>
-    );
+        );
+    };
+
+    const renderDueItem = ({ item: group }: { item: any }) => {
+        const isExpanded = expandedGroups.includes(group.tenantId);
+        const hasMultiple = group.items.length > 1;
+        const accentColor = group.hasOverdue ? COLORS.danger : COLORS.warning;
+
+        return (
+            <View style={styles.groupContainer}>
+                <TouchableOpacity
+                    style={[styles.paymentCard, { borderLeftColor: accentColor, borderLeftWidth: 3 }]}
+                    activeOpacity={0.7}
+                    onPress={() => {
+                        if (hasMultiple) {
+                            setExpandedGroups(prev =>
+                                prev.includes(group.tenantId)
+                                    ? prev.filter(id => id !== group.tenantId)
+                                    : [...prev, group.tenantId]
+                            );
+                        } else {
+                            setEditingPayment(null);
+                            setInitialTenantId(group.tenantId);
+                            setModalVisible(true);
+                        }
+                    }}
+                >
+                    <View style={styles.paymentCardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <Text style={styles.residentName} numberOfLines={1}>{group.tenantName}</Text>
+                            <View style={[styles.statusPill, { backgroundColor: accentColor + "12" }]}>
+                                <Text style={[styles.statusPillText, { color: accentColor }]}>
+                                    {group.hasOverdue ? "OVERDUE" : "PENDING"}
+                                </Text>
+                            </View>
+                        </View>
+                        <View style={styles.cardHeaderRight}>
+                            <Text style={[styles.paymentAmount, { color: accentColor }]}>
+                                ₹{Number(group.totalDue).toLocaleString()}
+                            </Text>
+                            {hasMultiple && (
+                                <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 4 }}>
+                                    <Text style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: '700' }}>
+                                        {group.items.length} INVOICES
+                                    </Text>
+                                    <Feather
+                                        name={isExpanded ? "chevron-up" : "chevron-down"}
+                                        size={14}
+                                        color={COLORS.textMuted}
+                                        style={{ marginLeft: 4 }}
+                                    />
+                                </View>
+                            )}
+                        </View>
+                    </View>
+                    <View style={styles.cardDetails}>
+                        <View style={styles.detailRow}>
+                            <Feather name="home" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.detailText}>
+                                {group.pgName}{(group.tenant?.rooms?.room_number || group.items[0].room_number || group.items[0].room_name) ? ` • Room ${group.tenant?.rooms?.room_number || group.items[0].room_number || group.items[0].room_name}` : ''}
+                            </Text>
+                        </View>
+                    </View>
+
+                    <TouchableOpacity
+                        style={[styles.payButton, { backgroundColor: accentColor, marginTop: 12 }]}
+                        onPress={() => {
+                            setEditingPayment(null);
+                            setInitialTenantId(group.tenantId);
+                            setModalVisible(true);
+                        }}
+                    >
+                        <MaterialCommunityIcons name="currency-inr" size={16} color="#fff" />
+                        <Text style={styles.payButtonText}>Collect Payment</Text>
+                    </TouchableOpacity>
+                </TouchableOpacity>
+
+                {isExpanded && group.items.map((inv: any, idx: number) => {
+                    const statusColor = getDueStatus(inv) === "overdue" ? COLORS.danger : COLORS.warning;
+                    const balanceDue = Number(inv.total_amount || 0) - Number(inv.paid_amount || 0);
+                    return (
+                        <View key={inv.id || idx} style={[styles.nestedItem, { borderLeftColor: COLORS.border, marginLeft: 20, marginTop: 4 }]}>
+                            <View style={styles.nestedIndicator} />
+                            <View style={{ flex: 1, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <View>
+                                    <Text style={{ fontSize: 13, fontWeight: '700', color: COLORS.text }}>{getInvoiceLabel(inv)}</Text>
+                                    <Text style={{ fontSize: 11, color: COLORS.textMuted }}>
+                                        Due {formatDate(inv.billing_period_end)}
+                                    </Text>
+                                </View>
+                                <View style={{ alignItems: 'flex-end' }}>
+                                    <Text style={{ fontSize: 14, fontWeight: '800', color: statusColor }}>
+                                        ₹{balanceDue.toLocaleString()}
+                                    </Text>
+                                    <View style={[styles.statusPill, { backgroundColor: statusColor + "12", marginTop: 4 }]}>
+                                        <Text style={[styles.statusPillText, { color: statusColor, fontSize: 8 }]}>
+                                            {getDueStatus(inv).toUpperCase()}
+                                        </Text>
+                                    </View>
+                                </View>
+                            </View>
+                        </View>
+                    );
+                })}
+            </View>
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -588,9 +936,14 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             />
 
             <FlatList
-                data={activeView === "transactions" ? groupedPayments : activeView === "invoices" ? invoices : ledger}
+                data={activeView === "transactions" ? groupedPayments : activeView === "invoices" ? filteredInvoices : activeView === "ledger" ? filteredLedger : groupedDues}
                 keyExtractor={item => item.id || item.tenantId}
-                renderItem={activeView === "transactions" ? renderPaymentItem : activeView === "invoices" ? renderInvoiceItem : renderLedgerItem}
+                renderItem={({ item }) => {
+                    if (activeView === "transactions") return renderPaymentItem({ item });
+                    if (activeView === "invoices") return renderInvoiceItem({ item });
+                    if (activeView === "ledger") return renderLedgerItem({ item });
+                    return renderDueItem({ item });
+                }}
                 ListHeaderComponent={
                     <View>
                         <SummarySection />
@@ -601,11 +954,26 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                                     { label: "Transactions", value: "transactions" },
                                     { label: "Invoices", value: "invoices" },
                                     { label: "Ledger", value: "ledger" },
+                                    { label: "Dues", value: "dues" },
                                 ]}
                                 value={activeView}
                                 onChange={setActiveView}
                             />
                         </View>
+
+                        {activeView === "dues" && (
+                            <View style={{ paddingHorizontal: 16, marginBottom: 12 }}>
+                                <SegmentedControl
+                                    options={[
+                                        { label: "All Dues", value: "all" },
+                                        { label: "Overdue", value: "overdue" },
+                                        { label: "Upcoming", value: "upcoming" },
+                                    ]}
+                                    value={activeDueSegment}
+                                    onChange={setActiveDueSegment}
+                                />
+                            </View>
+                        )}
 
                         {/* Improved Search Section */}
                         <View style={styles.searchSection}>
@@ -628,11 +996,20 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                                     style={styles.filterTrigger}
                                     onPress={() => setFilterSheetVisible(true)}
                                 >
-                                    <Feather
-                                        name="sliders"
-                                        size={18}
-                                        color={filters.propertyId !== "ALL" || filters.status !== "" ? COLORS.primary : COLORS.textMuted}
-                                    />
+                                    <View>
+                                        <Feather
+                                            name="sliders"
+                                            size={18}
+                                            color={filters.propertyId !== "ALL" || filters.status !== "" ? COLORS.primary : COLORS.textMuted}
+                                        />
+                                        {((filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "" ? 1 : 0) + (filters.tenantStatus !== "ACTIVE" ? 1 : 0)) > 0 && (
+                                            <View style={styles.filterBadge}>
+                                                <Text style={styles.filterBadgeText}>
+                                                    {(filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "" ? 1 : 0) + (filters.tenantStatus !== "ACTIVE" ? 1 : 0)}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </View>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -644,7 +1021,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     !loading ? (
                         <View style={styles.emptyView}>
                             <MaterialCommunityIcons name="finance" size={60} color={COLORS.textMuted + "20"} />
-                            <Text style={styles.emptyText}>No financial records found</Text>
+                            <Text style={styles.emptyText}>No records found</Text>
                         </View>
                     ) : null
                 }
@@ -669,7 +1046,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     label="Property"
                     options={[
                         { label: "All Properties", value: "ALL" },
-                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                        ...pgs.map(pg => ({ label: pg.archived ? `${pg.name} (Archived)` : pg.name, value: pg.id }))
                     ]}
                     value={pendingFilters.propertyId}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}
@@ -682,6 +1059,15 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     }))}
                     value={pendingFilters.status}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, status: value }))}
+                />
+                <DropdownSelector
+                    label="Resident Status"
+                    options={TENANT_STATUS_OPTIONS.map(stat => ({
+                        label: stat === "ALL" ? "All Residents" : stat.charAt(0) + stat.slice(1).toLowerCase(),
+                        value: stat
+                    }))}
+                    value={pendingFilters.tenantStatus}
+                    onChange={(value) => setPendingFilters(prev => ({ ...prev, tenantStatus: value }))}
                 />
             </FilterBottomSheet>
 
@@ -747,12 +1133,27 @@ const createStyles = (COLORS: any) =>
             borderWidth: 1,
             borderColor: COLORS.border,
         },
-        rateInfo: { marginBottom: 10 },
+        rateInfoRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 },
         rateTitle: { fontSize: 11, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5 },
-        progressContainer: { marginTop: 4 },
-        progressBg: { height: 24, backgroundColor: COLORS.bg, borderRadius: 12, overflow: 'hidden' },
-        progressFill: { height: '100%', justifyContent: 'center', alignItems: 'center' },
-        progressText: { fontSize: 12, fontWeight: '900', color: '#fff' },
+        ratePercent: { fontSize: 13, fontWeight: '900' },
+        progressBg: { height: 10, backgroundColor: COLORS.bg, borderRadius: 5, overflow: 'hidden' },
+        progressFill: { height: '100%', borderRadius: 5 },
+
+        // Status Status Section
+        statusRow: { flexDirection: 'row', gap: 10, marginBottom: 12 },
+        statusCard: {
+            flex: 1,
+            backgroundColor: COLORS.card,
+            borderRadius: 14,
+            padding: 12,
+            borderWidth: 1,
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 8,
+        },
+        statusDot: { width: 6, height: 6, borderRadius: 3 },
+        statusLabel: { fontSize: 8, fontWeight: '800', color: COLORS.textMuted, letterSpacing: 0.5 },
+        statusValue: { fontSize: 16, fontWeight: '900', marginTop: 1 },
 
         // Search Section
         searchSection: { paddingHorizontal: 16, paddingBottom: 16 },
@@ -771,6 +1172,8 @@ const createStyles = (COLORS: any) =>
         clearBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
         searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
         filterTrigger: { padding: 4 },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 
         // List & Cards
         listContent: { paddingBottom: 100 },

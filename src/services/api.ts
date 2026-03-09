@@ -69,7 +69,23 @@ export const roomAPI: any = {
             url: `/api/rooms/${roomId}/recalculate`,
             data: {},
         }, `RECALCULATE rooms/${roomId}`);
-    }
+    },
+    getArchived: () => apiClient.get('rooms/archived'),
+    archive: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/rooms/${id}/archive`,
+            data: {},
+        }, `ARCHIVE rooms/${id}`);
+    },
+    restore: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/rooms/${id}/restore`,
+            data: {},
+        }, `RESTORE rooms/${id}`);
+    },
+    getByPgIdAll: (pgId: string) => apiClient.get(`rooms/pg/${pgId}`),
 };
 
 // Bed APIs — backend: /api/beds/
@@ -95,7 +111,23 @@ export const bedAPI = {
         }, `DELETE beds/${id}`);
     },
     getStats: (params: any = {}) => apiClient.get('beds/stats', params),
-    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}/available`),
+    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}`, { status: 'AVAILABLE' }),
+    getArchived: () => apiClient.get('beds/archived'),
+    getByPgId: (pgId: string) => apiClient.get(`beds/pg/${pgId}`),
+    archive: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/beds/${id}/archive`,
+            data: {},
+        }, `ARCHIVE beds/${id}`);
+    },
+    restore: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/beds/${id}/restore`,
+            data: {},
+        }, `RESTORE beds/${id}`);
+    },
 };
 
 // Tenant APIs — backend: /api/tenants/
@@ -125,8 +157,9 @@ export const tenantAPI = {
         return apiClient.get('tenants/search', params);
     },
     checkDuplicateId: async (idType: string, idNumber: string, excludeId?: string) => {
-        return apiClient.get('tenants/check-duplicate', { id_type: idType, id_number: idNumber, exclude_id: excludeId });
+        return apiClient.get('tenants/check-duplicate', { type: idType, number: idNumber, ...(excludeId ? { exclude_id: excludeId } : {}) });
     },
+    getArchived: () => apiClient.get('tenants/', { archived: true }),
 };
 
 // Payment APIs — backend: /api/payments/
@@ -147,8 +180,8 @@ export const paymentAPI = {
 
 // Expense APIs — backend: /api/expenses/
 export const expenseAPI = {
-    getAll: () => apiClient.get('expenses/'),
-    create: (data: any) => apiClient.post('expenses/', data),
+    getAll: () => apiClient.get('expenses'),
+    create: (data: any) => apiClient.post('expenses', data),
     update: (id: string, data: any) => apiClient.request({
         method: 'put',
         url: `/api/expenses/${id}`,
@@ -159,7 +192,7 @@ export const expenseAPI = {
         url: `/api/expenses/${id}`,
     }, `DELETE expenses/${id}`),
     search: async (params: any) => {
-        return apiClient.get('expenses/', params);
+        return apiClient.get('expenses', params);
     },
     getStats: (params: any = {}) => apiClient.get('expenses/stats', params),
     getCategories: () => apiClient.get('expenses/categories'),

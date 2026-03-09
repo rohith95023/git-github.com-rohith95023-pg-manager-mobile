@@ -1,4 +1,5 @@
 import { Feather } from "@expo/vector-icons";
+import DateTimePicker from "@react-native-community/datetimepicker";
 import React, { useState } from "react";
 import {
     ActivityIndicator,
@@ -14,6 +15,7 @@ import {
 } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
 import ForgotPasswordModal from "../components/modals/ForgotPasswordModal";
+import ResendVerificationModal from "../components/modals/ResendVerificationModal";
 import { useAuth } from "../context/AuthContext";
 import { useTheme } from "../context/ThemeContext";
 
@@ -49,6 +51,18 @@ const AuthScreen = ({ navigation }: any) => {
     const [gender, setGender] = useState("");
     const [showPassword, setShowPassword] = useState(false);
     const [showForgotPassword, setShowForgotPassword] = useState(false);
+    const [showResendVerification, setShowResendVerification] = useState(false);
+    const [showDatePicker, setShowDatePicker] = useState(false);
+
+    const onDateChange = (event: any, selectedDate?: Date) => {
+        setShowDatePicker(Platform.OS === 'ios');
+        if (selectedDate) {
+            const year = selectedDate.getFullYear();
+            const month = String(selectedDate.getMonth() + 1).padStart(2, '0');
+            const day = String(selectedDate.getDate()).padStart(2, '0');
+            setDob(`${year}-${month}-${day}`);
+        }
+    };
 
     const handleAuth = async () => {
         if (!email || !password) {
@@ -157,13 +171,24 @@ const AuthScreen = ({ navigation }: any) => {
 
                                 <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
                                     <Feather name="calendar" size={18} color={colors.textSecondary} style={styles.inputIcon} />
-                                    <TextInput
-                                        placeholder="Date of Birth (YYYY-MM-DD)"
-                                        placeholderTextColor={colors.textSecondary}
-                                        value={dob}
-                                        onChangeText={setDob}
-                                        style={[styles.input, { color: colors.text }]}
-                                    />
+                                    <TouchableOpacity
+                                        style={styles.input}
+                                        onPress={() => setShowDatePicker(true)}
+                                    >
+                                        <Text style={{ color: dob ? colors.text : colors.textSecondary, fontSize: 15, fontWeight: "500" }}>
+                                            {dob || "Date of Birth (YYYY-MM-DD)"}
+                                        </Text>
+                                    </TouchableOpacity>
+
+                                    {showDatePicker && (
+                                        <DateTimePicker
+                                            value={dob ? new Date(dob) : new Date(2000, 0, 1)}
+                                            mode="date"
+                                            display="default"
+                                            onChange={onDateChange}
+                                            maximumDate={new Date()}
+                                        />
+                                    )}
                                 </View>
 
                                 <View style={[styles.inputContainer, { backgroundColor: colors.card, borderColor: colors.border }]}>
@@ -193,6 +218,7 @@ const AuthScreen = ({ navigation }: any) => {
                                         value={phone}
                                         onChangeText={setPhone}
                                         keyboardType="phone-pad"
+                                        maxLength={10}
                                         style={[styles.input, { color: colors.text }]}
                                     />
                                 </View>
@@ -242,14 +268,18 @@ const AuthScreen = ({ navigation }: any) => {
                         )}
 
                         {!isSignUp && (
-                            <TouchableOpacity
-                                style={{ alignSelf: 'flex-end', marginTop: -8, marginBottom: 16 }}
-                                onPress={() => setShowForgotPassword(true)}
-                            >
-                                <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
-                                    Forgot Password?
-                                </Text>
-                            </TouchableOpacity>
+                            <View style={{ flexDirection: 'row', justifyContent: 'space-between', marginTop: -8, marginBottom: 16 }}>
+                                <TouchableOpacity onPress={() => setShowResendVerification(true)}>
+                                    <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
+                                        Resend verification link?
+                                    </Text>
+                                </TouchableOpacity>
+                                <TouchableOpacity onPress={() => setShowForgotPassword(true)}>
+                                    <Text style={{ color: colors.primary, fontWeight: '600', fontSize: 13 }}>
+                                        Forgot Password?
+                                    </Text>
+                                </TouchableOpacity>
+                            </View>
                         )}
 
                         <TouchableOpacity
@@ -281,6 +311,11 @@ const AuthScreen = ({ navigation }: any) => {
             <ForgotPasswordModal
                 visible={showForgotPassword}
                 onClose={() => setShowForgotPassword(false)}
+            />
+
+            <ResendVerificationModal
+                visible={showResendVerification}
+                onClose={() => setShowResendVerification(false)}
             />
         </SafeAreaView>
     );

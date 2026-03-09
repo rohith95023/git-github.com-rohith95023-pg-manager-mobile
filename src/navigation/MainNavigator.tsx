@@ -20,7 +20,6 @@ import { useTheme } from "../context/ThemeContext";
 // Screens
 import ChangePasswordScreen from "../screens/ChangePasswordScreen";
 import Dashboard from "../screens/Dashboard";
-import DuesScreen from "../screens/DuesScreen";
 import ExpensesScreen from "../screens/ExpensesScreen";
 import MaintenanceScreen from "../screens/MaintenanceScreen";
 import NotificationsScreen from "../screens/NotificationsScreen";
@@ -222,24 +221,10 @@ const MainNavigator = () => {
                 }}
             />
             <Drawer.Screen
-                name="Dues"
-                component={DuesScreen}
-                options={{
-                    drawerLabel: "Dues & Collections",
-                    drawerIcon: ({ color }) => <Feather name="alert-circle" size={20} color={color} />,
-                    headerTitle: "Dues & Collections"
-                }}
-            />
-            <Drawer.Screen
                 name="TenantFinder"
                 component={SmartTenantFinder}
                 options={{
-                    drawerLabel: ({ color }) => (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
-                            <Text style={{ color, fontSize: 15, fontWeight: '600' }}>Smart Tenant Finder</Text>
-                            <View style={styles.newBadge}><Text style={styles.newBadgeText}>NEW</Text></View>
-                        </View>
-                    ),
+                    drawerLabel: "Smart Tenant Finder",
                     drawerIcon: ({ color }) => <Feather name="search" size={20} color={color} />,
                     headerTitle: "Smart Tenant Finder"
                 }}
@@ -274,12 +259,7 @@ const MainNavigator = () => {
                 name="ProfitLoss"
                 component={ProfitLossScreen}
                 options={{
-                    drawerLabel: ({ color }) => (
-                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
-                            <Text style={{ color, fontSize: 15, fontWeight: '600' }}>Profit & Loss</Text>
-                            <View style={styles.betaBadge}><Text style={styles.betaBadgeText}>BETA</Text></View>
-                        </View>
-                    ),
+                    drawerLabel: "Profit & Loss",
                     drawerIcon: ({ color }) => <Feather name="trending-up" size={20} color={color} />,
                     headerTitle: "Profit & Loss"
                 }}
@@ -288,7 +268,12 @@ const MainNavigator = () => {
                 name="Maintenance"
                 component={MaintenanceScreen}
                 options={{
-                    drawerLabel: "Maintenance",
+                    drawerLabel: ({ color }) => (
+                        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', flex: 1 }}>
+                            <Text style={{ color, fontSize: 15, fontWeight: '600' }}>Maintenance</Text>
+                            <View style={styles.betaBadge}><Text style={styles.betaBadgeText}>BETA</Text></View>
+                        </View>
+                    ),
                     drawerIcon: ({ color }) => <Feather name="tool" size={20} color={color} />,
                     headerTitle: "Maintenance"
                 }}

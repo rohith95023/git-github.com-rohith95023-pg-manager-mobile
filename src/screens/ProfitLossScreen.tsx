@@ -10,15 +10,8 @@ import {
     TouchableOpacity,
     View,
 } from "react-native";
+import { BarChart, PieChart } from "react-native-gifted-charts";
 import { SafeAreaView } from "react-native-safe-area-context";
-import {
-    VictoryAxis,
-    VictoryBar,
-    VictoryChart,
-    VictoryGroup,
-    VictoryPie,
-    VictoryTheme
-} from "victory-native";
 import FilterBottomSheet from "../components/common/FilterBottomSheet";
 import ScreenHeader from "../components/common/ScreenHeader";
 import { useData } from "../context/DataContext";
@@ -49,9 +42,14 @@ const ProfitLossScreen = ({ navigation }: any) => {
 
     const onRefresh = () => refresh();
 
+    const filteredSummary = useMemo(() => {
+        if (selectedMonth === "all") return summary;
+        return summary.filter((item: any) => item.month === selectedMonth);
+    }, [summary, selectedMonth]);
+
     const stats = useMemo(() => {
-        const rev = summary.reduce((sum, item) => sum + (Number(item.total_revenue) || 0), 0);
-        const exp = summary.reduce((sum, item) => sum + (Number(item.total_expense) || 0), 0);
+        const rev = filteredSummary.reduce((sum: number, item: any) => sum + (Number(item.total_revenue) || 0), 0);
+        const exp = filteredSummary.reduce((sum: number, item: any) => sum + (Number(item.total_expense) || 0), 0);
         const profit = rev - exp;
         const margin = rev > 0 ? (profit / rev) * 100 : 0;
 
@@ -61,31 +59,82 @@ const ProfitLossScreen = ({ navigation }: any) => {
             netProfit: profit,
             profitMargin: margin.toFixed(1)
         };
-    }, [summary]);
+    }, [filteredSummary]);
 
     const chartData = useMemo(() => {
-        const sorted = [...summary].sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
-        const recent = sorted.slice(-6);
+        // Aggregate by month first (combine multiple PGs for the same month)
+        const monthGroups: Record<string, { revenue: number; expense: number }> = {};
+
+        summary.forEach(item => {
+            if (!item.month) return;
+            const mKey = item.month; // e.g. "2026-03-01"
+            if (!monthGroups[mKey]) {
+                monthGroups[mKey] = { revenue: 0, expense: 0 };
+            }
+            monthGroups[mKey].revenue += (Number(item.total_revenue) || 0);
+            monthGroups[mKey].expense += (Number(item.total_expense) || 0);
+        });
+
+        // Convert to array and sort
+        const aggregated = Object.entries(monthGroups).map(([month, data]) => ({
+            month,
+            ...data
+        })).sort((a, b) => new Date(a.month).getTime() - new Date(b.month).getTime());
+
+        // Take last 6 months
+        const recent = aggregated.slice(-6);
 
         return recent.map(item => ({
             month: new Date(item.month).toLocaleDateString(undefined, { month: 'short' }),
-            revenue: Number(item.total_revenue),
-            expense: Number(item.total_expense)
+            revenue: item.revenue,
+            expense: item.expense
         }));
     }, [summary]);
 
     const pieData = useMemo(() => {
         const categories: { [key: string]: number } = {};
         categoryStats.forEach(item => {
-            const cat = item.category || "Other";
-            categories[cat] = (categories[cat] || 0) + (Number(item.amount) || 0);
+            // Mapping fix: backend returns { name: string, value: number }
+            const cat = item.name || item.category || "Other";
+            const val = Number(item.value || item.amount || 0);
+            categories[cat] = (categories[cat] || 0) + val;
         });
 
         return Object.keys(categories).map(key => ({
             x: key,
             y: categories[key]
-        })).sort((a, b) => b.y - a.y).slice(0, 5); // Top 5 categories
+        })).filter(c => c.y > 0).sort((a, b) => b.y - a.y).slice(0, 5); // Top 5 categories
     }, [categoryStats]);
+
+    const giftedPieData = useMemo(() => {
+        const pieColors = [COLORS.primary, COLORS.success, COLORS.warning, COLORS.danger, '#8884d8'];
+        return pieData.map((item, idx) => ({
+            value: item.y,
+            color: pieColors[idx % 5],
+            text: `${item.x}\n₹${(item.y / 1000).toFixed(1)}k`,
+            textColor: COLORS.text,
+            shiftTextX: -10,
+        }));
+    }, [pieData, COLORS]);
+
+    const giftedBarData = useMemo(() => {
+        const data: any[] = [];
+        chartData.forEach((item, index) => {
+            data.push({
+                value: item.revenue,
+                frontColor: COLORS.success,
+                label: item.month,
+                spacing: 4,
+                labelTextStyle: { color: COLORS.textMuted, fontSize: 10, fontWeight: '700' },
+            });
+            data.push({
+                value: item.expense,
+                frontColor: COLORS.danger,
+                spacing: index === chartData.length - 1 ? 0 : 24,
+            });
+        });
+        return data;
+    }, [chartData, COLORS]);
 
     const BreakdownCard = ({ item }: { item: any }) => (
         <View style={styles.breakdownCard}>
@@ -201,44 +250,23 @@ const ProfitLossScreen = ({ navigation }: any) => {
                 {/* Monthly Performance Chart */}
                 <View style={styles.chartCard}>
                     {chartData.length > 0 ? (
-                        <VictoryChart
-                            theme={VictoryTheme.material}
-                            domainPadding={{ x: 20 }}
-                            width={width - 32}
-                            height={220}
-                            padding={{ top: 20, bottom: 40, left: 50, right: 30 }}
-                        >
-                            <VictoryAxis
-                                tickValues={chartData.map(d => d.month)}
-                                style={{
-                                    tickLabels: { fontSize: 10, fill: COLORS.textMuted, fontWeight: '700' },
-                                    axis: { stroke: COLORS.border }
-                                }}
-                            />
-                            <VictoryAxis
-                                dependentAxis
-                                tickFormat={(x) => `₹${x / 1000}k`}
-                                style={{
-                                    tickLabels: { fontSize: 10, fill: COLORS.textMuted, fontWeight: '700' },
-                                    axis: { stroke: COLORS.border },
-                                    grid: { stroke: COLORS.border, strokeDasharray: "4, 4" }
-                                }}
-                            />
-                            <VictoryGroup offset={12} colorScale={[COLORS.success, COLORS.danger]}>
-                                <VictoryBar
-                                    data={chartData}
-                                    x="month"
-                                    y="revenue"
-                                    cornerRadius={{ top: 4 }}
-                                />
-                                <VictoryBar
-                                    data={chartData}
-                                    x="month"
-                                    y="expense"
-                                    cornerRadius={{ top: 4 }}
-                                />
-                            </VictoryGroup>
-                        </VictoryChart>
+                        <BarChart
+                            data={giftedBarData}
+                            barWidth={20}
+                            spacing={24}
+                            roundedTop
+                            hideRules
+                            xAxisThickness={1}
+                            yAxisThickness={1}
+                            xAxisColor={COLORS.border}
+                            yAxisColor={COLORS.border}
+                            yAxisTextStyle={{ color: COLORS.textMuted, fontSize: 10, fontWeight: '700' }}
+                            noOfSections={4}
+                            yAxisLabelPrefix="₹"
+                            formatYLabel={(label: string) => `${Number(label) / 1000}k`}
+                            width={width - 80}
+                            height={180}
+                        />
                     ) : (
                         <View style={{ height: 200, justifyContent: 'center', alignItems: 'center' }}>
                             <MaterialCommunityIcons name="chart-bar" size={48} color={COLORS.textMuted + "20"} />
@@ -253,16 +281,22 @@ const ProfitLossScreen = ({ navigation }: any) => {
                 </View>
                 <View style={styles.chartCard}>
                     {pieData.length > 0 ? (
-                        <VictoryPie
-                            data={pieData}
-                            colorScale={[COLORS.primary, COLORS.success, COLORS.warning, COLORS.danger, COLORS.primary]}
-                            width={width - 32}
-                            height={220}
+                        <PieChart
+                            data={giftedPieData}
+                            donut
                             innerRadius={60}
-                            padding={{ top: 20, bottom: 20, left: 80, right: 80 }}
-                            labels={({ datum }: any) => `${datum.x}\n₹${(datum.y / 1000).toFixed(1)}k`}
-                            style={{
-                                labels: { fontSize: 10, fontWeight: '700', fill: COLORS.text }
+                            radius={100}
+                            showText
+                            textColor={COLORS.text}
+                            textSize={10}
+                            fontWeight="bold"
+                            textBackgroundRadius={14}
+                            centerLabelComponent={() => {
+                                return (
+                                    <View style={{ justifyContent: 'center', alignItems: 'center' }}>
+                                        <Text style={{ fontSize: 12, color: COLORS.textMuted, fontWeight: '600' }}>Expenses</Text>
+                                    </View>
+                                );
                             }}
                         />
                     ) : (
@@ -277,8 +311,8 @@ const ProfitLossScreen = ({ navigation }: any) => {
                     <View style={styles.sectionHeaderRow}>
                         <Text style={styles.sectionTitle}>Monthly History</Text>
                     </View>
-                    {summary.length > 0 ? (
-                        summary.map((item, index) => (
+                    {filteredSummary.length > 0 ? (
+                        filteredSummary.map((item: any, index: number) => (
                             <BreakdownCard key={index} item={item} />
                         ))
                     ) : (

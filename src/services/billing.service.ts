@@ -13,7 +13,7 @@ export const billingService = {
     getOutstandingBalance: async (tenantId: string): Promise<number> => {
         try {
             const tenant: any = await apiClient.get(`tenants/${tenantId}`);
-            return tenant?.balance || 0;
+            return tenant?.outstanding_balance || tenant?.balance || 0;
         } catch (e) {
             return 0;
         }

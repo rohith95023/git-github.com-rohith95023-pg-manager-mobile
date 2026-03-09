@@ -65,7 +65,7 @@ const handleError = (error: any, label: string) => {
         const errorMessage = data.message || data.error || data.detail || 'An unknown error occurred';
         const errorCode = data.code || `HTTP_${error.response.status}`;
 
-        console.error(`[${label}] API Error:`, errorMessage, '| Status:', error.response.status);
+        console.warn(`[${label}] API Error:`, errorMessage, '| Status:', error.response.status);
 
         throw new APIError(
             errorMessage,
@@ -211,6 +211,14 @@ export const authClient = {
             url: '/api/auth/reset-password',
             data: { email, new_password },
         }, 'POST auth/reset-password');
+    },
+
+    resendVerification: async (email: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: '/api/auth/resend-verification',
+            data: { email },
+        }, 'POST auth/resend-verification');
     },
 };
 

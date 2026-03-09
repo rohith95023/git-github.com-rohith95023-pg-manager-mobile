@@ -168,7 +168,28 @@ const BedsScreen = ({ navigation }: any) => {
         }
     };
 
+    const isPgArchivedBed = (bed: any): boolean => {
+        const pg = bed.rooms?.pgs || bed.pgs;
+        return pg?.archived === true || pg?.status === 'ARCHIVED' || pg?.status === 'INACTIVE' || pg?.status === 'DELETED';
+    };
+
+    const showArchivedPropertyWarning = () => {
+        setConfirmState({
+            visible: true,
+            title: '⚠️ Property Archived',
+            message: 'This property is archived. You cannot edit, delete, or modify beds that belong to an archived property. Please restore the property first.',
+            type: 'warning',
+            singleButton: true,
+            cancelText: 'Got It',
+        });
+    };
+
     const toggleBedStatus = async (bed: any) => {
+        if (isPgArchivedBed(bed)) {
+            showArchivedPropertyWarning();
+            return;
+        }
+
         if (bed.status === "OCCUPIED") {
             setConfirmState({
                 visible: true,
@@ -210,6 +231,11 @@ const BedsScreen = ({ navigation }: any) => {
     const [confirmTargetCode, setConfirmTargetCode] = useState("");
 
     const handleDeleteBed = async (bed: any) => {
+        if (isPgArchivedBed(bed)) {
+            showArchivedPropertyWarning();
+            return;
+        }
+
         if (bed.status === "OCCUPIED") {
             setConfirmState({
                 visible: true,

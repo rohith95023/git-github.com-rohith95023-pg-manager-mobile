@@ -114,31 +114,39 @@ const ExpensesScreen = ({ navigation }: any) => {
             if (pageNum === 1) setLoading(true);
             else setLoadingMore(true);
 
+            const searchParams: any = {};
+            if (filters.category !== "ALL") searchParams.category = filters.category;
+            if (filters.propertyId !== "ALL") searchParams.pg_id = filters.propertyId;
+
             const [expensesRes, pgsData, statsRes]: any = await Promise.all([
-                expenseAPI.search({
-                    page: pageNum,
-                    limit: 10,
-                    search: debouncedSearch,
-                    category: filters.category,
-                    pgId: filters.propertyId,
-                }),
+                expenseAPI.search(searchParams),
                 pageNum === 1 ? Promise.resolve(pgs) : Promise.resolve(pgs),
                 pageNum === 1 ? expenseAPI.getStats({ pg_id: filters.propertyId === "ALL" ? "all" : filters.propertyId }) : Promise.resolve({ total_outflow: totalOutflowSum })
             ]);
 
-            const expenseList = Array.isArray(expensesRes) ? expensesRes : (expensesRes?.data || expensesRes?.items || []);
-            const count = expensesRes?.count ?? expensesRes?.total ?? expenseList.length;
+            let expenseList = Array.isArray(expensesRes) ? expensesRes : (expensesRes?.data || expensesRes?.items || []);
+
+            // Client-side filtering if search is active
+            if (debouncedSearch) {
+                const searchLower = debouncedSearch.toLowerCase();
+                expenseList = expenseList.filter((item: any) =>
+                    (item.title || item.description || "").toLowerCase().includes(searchLower) ||
+                    (item.vendor_name || "").toLowerCase().includes(searchLower)
+                );
+            }
+
+            const stats = statsRes?.data || statsRes;
+            const finalCount = stats.transaction_count ?? expensesRes?.count ?? expensesRes?.total ?? expenseList.length;
 
             if (shouldAppend) {
                 setExpenses(prev => [...prev, ...expenseList]);
             } else {
                 setExpenses(expenseList);
-                const stats = statsRes?.data || statsRes;
-                setTotalOutflowSum(stats.total_outflow || 0);
+                setTotalOutflowSum(stats.total_outflow || stats.total_amount || 0);
             }
 
-            setTotalCount(count);
-            setHasMore(shouldAppend ? (expenses.length + expenseList.length < count) : (expenseList.length < count));
+            setTotalCount(Number(finalCount));
+            setHasMore(false); // Disable pagination since we fetch all for now to avoid broken queries
 
             setPage(pageNum);
         } catch (error) {
@@ -284,11 +292,20 @@ const ExpensesScreen = ({ navigation }: any) => {
                             setFilterSheetVisible(true);
                         }}
                     >
-                        <Feather
-                            name="sliders"
-                            size={18}
-                            color={(filters.category !== "ALL" || filters.propertyId !== "ALL") ? COLORS.primary : COLORS.textMuted}
-                        />
+                        <View>
+                            <Feather
+                                name="sliders"
+                                size={18}
+                                color={(filters.category !== "ALL" || filters.propertyId !== "ALL") ? COLORS.primary : COLORS.textMuted}
+                            />
+                            {((filters.category !== "ALL" ? 1 : 0) + (filters.propertyId !== "ALL" ? 1 : 0)) > 0 && (
+                                <View style={styles.filterBadge}>
+                                    <Text style={styles.filterBadgeText}>
+                                        {(filters.category !== "ALL" ? 1 : 0) + (filters.propertyId !== "ALL" ? 1 : 0)}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
                     </TouchableOpacity>
                 </View>
                 <Text style={styles.resultMetaText}>{loading && page === 1 ? "SEARCHING..." : `${totalCount} EXPENSES LOGGED`}</Text>
@@ -348,7 +365,7 @@ const ExpensesScreen = ({ navigation }: any) => {
                     label="Property"
                     options={[
                         { label: "All Properties", value: "ALL" },
-                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                        ...pgs.map(pg => ({ label: pg.archived ? `${pg.name} (Archived)` : pg.name, value: pg.id }))
                     ]}
                     value={pendingFilters.propertyId}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}
@@ -373,6 +390,7 @@ const ExpensesScreen = ({ navigation }: any) => {
                 onClose={() => setModalVisible(false)}
                 onSuccess={() => {
                     loadExpenses();
+                    globalRefresh();
                     setModalVisible(false);
                 }}
                 editingExpense={editingExpense}
@@ -447,6 +465,8 @@ const createStyles = (COLORS: any) =>
         clearBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
         searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
         filterTrigger: { padding: 4 },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
         resultMetaText: { fontSize: 10, fontWeight: '800', color: COLORS.textMuted, marginTop: 16, marginLeft: 4, letterSpacing: 1 },
 
         // List & Cards

@@ -79,30 +79,63 @@ const RoomsScreen = ({ navigation }: any) => {
     };
 
     // ─── DataContext ─────────────────────────────────────────────────────
-    const { rooms: ctxRooms, beds: ctxBeds, pgs: ctxPgs, loading, refresh } = useData();
+    const { rooms: ctxRooms, beds: ctxBeds, pgs: ctxPgs, tenants: ctxTenants, loading, refresh } = useData();
     const [rooms, setRooms] = useState<any[]>(ctxRooms);
     const [beds, setBeds] = useState<any[]>(ctxBeds);
     const [pgs, setPgs] = useState<any[]>(ctxPgs);
+    const [allTenants, setAllTenants] = useState<any[]>(ctxTenants);
     const onRefresh = () => refresh();
+
+    useEffect(() => {
+        if (isFocused) refresh();
+    }, [isFocused, refresh]);
 
     // Sync local state with context data
     useEffect(() => { setRooms(ctxRooms); }, [ctxRooms]);
     useEffect(() => { setBeds(ctxBeds); }, [ctxBeds]);
     useEffect(() => { setPgs(ctxPgs); }, [ctxPgs]);
+    useEffect(() => { setAllTenants(ctxTenants); }, [ctxTenants]);
 
     const handleAddRoom = () => {
         setEditingRoom(null);
         setRoomModalVisible(true);
     };
 
+    // Helper: check if item's parent PG is archived
+    const isPgArchived = (item: any): boolean => {
+        const pg = item.pgs || pgs.find((p: any) => p.id === (item.pg_id || item.rooms?.pg_id || item.pg_id));
+        return pg?.archived === true || pg?.status === 'ARCHIVED' || pg?.status === 'INACTIVE' || pg?.status === 'DELETED';
+    };
+
+    const showArchivedPropertyWarning = () => {
+        setConfirmState({
+            visible: true,
+            title: '⚠️ Property Archived',
+            message: 'This property is archived. You cannot edit, delete, or modify rooms or beds that belong to an archived property. Please restore the property first.',
+            type: 'warning',
+            singleButton: true,
+            cancelText: 'Got It',
+        });
+    };
+
     const handleEditRoom = (room: any) => {
+        if (isPgArchived(room)) {
+            showArchivedPropertyWarning();
+            return;
+        }
         setEditingRoom(room);
         setRoomModalVisible(true);
     };
 
     const handleDeleteRoom = async (id: string, roomNumber: string) => {
+        // Check if parent PG is archived
+        const room = rooms.find((r: any) => r.id === id);
+        if (room && isPgArchived(room)) {
+            showArchivedPropertyWarning();
+            return;
+        }
+
         try {
-            const room = rooms.find((r: any) => r.id === id);
             const count = room?.current_occupancy || 0;
 
             if (count && count > 0) {
@@ -154,15 +187,24 @@ const RoomsScreen = ({ navigation }: any) => {
         const propertyId = filters.property;
         const showArchived = filters.showArchived;
 
-        const isArchivedRoom = (r: any) =>
-            r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
-            r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
+        const isArchivedRoom = (r: any) => {
+            const pg = r.pgs || pgs.find((p: any) => p.id === r.pg_id);
+            return r.archived === true ||
+                r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
 
-        const isArchivedBed = (b: any) =>
-            b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
-            b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" ||
-            b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" ||
-            b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+        const isArchivedBed = (b: any) => {
+            const room = b.rooms || rooms.find((r: any) => r.id === b.room_id);
+            const pg = b.pgs || room?.pgs || pgs.find((p: any) => p.id === (b.pg_id || room?.pg_id));
+            return b.archived === true ||
+                b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
+                room?.status === "MAINTENANCE" || room?.status === "INACTIVE" ||
+                room?.archived === true ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
 
         if (viewMode === "ROOMS") {
             return rooms.map(r => {
@@ -184,8 +226,17 @@ const RoomsScreen = ({ navigation }: any) => {
             return beds.map(b => {
                 const room = rooms.find(r => r.id === b.room_id);
                 const pg = pgs.find(p => p.id === (b.pg_id || room?.pg_id));
+
+                // Find active resident for this specific bed
+                const resident = allTenants.find(t =>
+                    (t.bed_id === b.id || t.id === b.tenant_id) &&
+                    t.status === 'ACTIVE'
+                );
+
                 return {
                     ...b,
+                    tenants: b.tenants || resident, // Hydrate with context tenant if missing from bed record
+                    floor: b.rooms?.floor ?? room?.floor ?? 0,
                     display_room_number: b.rooms?.room_number || room?.room_number || "N/A",
                     display_pg_name: b.pgs?.name || b.rooms?.pgs?.name || room?.pgs?.name || pg?.name || "N/A"
                 };
@@ -200,11 +251,27 @@ const RoomsScreen = ({ navigation }: any) => {
                 return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
         }
-    }, [viewMode, rooms, beds, searchTerm, filters, pgs]);
+    }, [viewMode, rooms, beds, searchTerm, filters, pgs, allTenants]);
 
     const stats = useMemo(() => {
-        const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
-        const isArchiveB = (b: any) => b.status === "MAINTENANCE" || b.status === "INACTIVE" || b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" || b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" || b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+        const isArchiveR = (r: any) => {
+            const pg = r.pgs || pgs.find((p: any) => p.id === r.pg_id);
+            return r.archived === true ||
+                r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
+
+        const isArchiveB = (b: any) => {
+            const room = b.rooms || rooms.find((r: any) => r.id === b.room_id);
+            const pg = b.pgs || room?.pgs || pgs.find((p: any) => p.id === (b.pg_id || room?.pg_id));
+            return b.archived === true ||
+                b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
+                room?.status === "MAINTENANCE" || room?.status === "INACTIVE" ||
+                room?.archived === true ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
 
         if (viewMode === "ROOMS") {
             const active = rooms.filter(r => !isArchiveR(r));
@@ -280,7 +347,7 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardTop}>
                 <View style={styles.cardHeaderLeft}>
                     <Text style={styles.roomNumber}>{item.bed_number}</Text>
-                    <Text style={styles.pgName}>Room {item.display_room_number} • {item.display_pg_name}</Text>
+                    <Text style={styles.pgName}>Room {item.display_room_number} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`} • {item.display_pg_name}</Text>
                 </View>
 
                 <View style={[styles.miniBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
@@ -302,6 +369,10 @@ const RoomsScreen = ({ navigation }: any) => {
                     <TouchableOpacity
                         style={styles.fixButton}
                         onPress={() => {
+                            if (isPgArchived(item)) {
+                                showArchivedPropertyWarning();
+                                return;
+                            }
                             setSelectedEntity({
                                 id: item.id,
                                 type: 'BED',
@@ -416,11 +487,20 @@ const RoomsScreen = ({ navigation }: any) => {
                                         setFilterSheetVisible(true);
                                     }}
                                 >
-                                    <Feather
-                                        name="sliders"
-                                        size={18}
-                                        color={filters.property ? COLORS.primary : COLORS.textMuted}
-                                    />
+                                    <View>
+                                        <Feather
+                                            name="sliders"
+                                            size={18}
+                                            color={filters.property || (viewMode === "BEDS" && filters.bedStatus !== "ALL") ? COLORS.primary : COLORS.textMuted}
+                                        />
+                                        {((filters.property ? 1 : 0) + (viewMode === "BEDS" && filters.bedStatus !== "ALL" ? 1 : 0)) > 0 && (
+                                            <View style={styles.filterBadge}>
+                                                <Text style={styles.filterBadgeText}>
+                                                    {(filters.property ? 1 : 0) + (viewMode === "BEDS" && filters.bedStatus !== "ALL" ? 1 : 0)}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </View>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -460,7 +540,7 @@ const RoomsScreen = ({ navigation }: any) => {
                     label="Property"
                     options={[
                         { label: "All Properties", value: "" },
-                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                        ...pgs.map(pg => ({ label: pg.archived ? `${pg.name} (Archived)` : pg.name, value: pg.id }))
                     ]}
                     value={pendingFilters.property || ""}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, property: value || null }))}
@@ -602,6 +682,8 @@ const createStyles = (COLORS: any) =>
         clearBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
         searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
         filterTrigger: { padding: 4 },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 
         // Real Cards
         listContent: { paddingBottom: 100 },

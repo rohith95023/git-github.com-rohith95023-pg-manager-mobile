@@ -233,7 +233,8 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                 setRooms(roomsData);
 
                 try {
-                    const availableBedsInPg = await bedAPI.getAvailableByPg(watchPgId) as any[];
+                    const bedsInPg = await bedAPI.getAvailableByPg(watchPgId) as any[];
+                    const availableBedsInPg = bedsInPg.filter(b => b.status === "AVAILABLE");
                     if (availableBedsInPg.length === 0 && !editingTenant) {
                         setConfirmState({
                             visible: true,
@@ -339,9 +340,21 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
 
                 try {
                     setLoading(true);
-                    const duplicate = await tenantAPI.checkDuplicateId(data.idType, data.idNumber, editingTenant?.id);
+                    const response: any = await tenantAPI.checkDuplicateId(data.idType, data.idNumber, editingTenant?.id);
+                    console.log("Duplicate check response:", JSON.stringify(response));
 
-                    if (duplicate) {
+                    // Backend may return: boolean true/false, or { is_duplicate: bool }, or { exists: bool }, or { duplicate: bool }, or a tenant object (truthy = duplicate)
+                    let isDuplicate = false;
+                    if (typeof response === 'boolean') {
+                        isDuplicate = response;
+                    } else if (response && typeof response === 'object') {
+                        if ('is_duplicate' in response) isDuplicate = !!response.is_duplicate;
+                        else if ('duplicate' in response) isDuplicate = !!response.duplicate;
+                        else if ('exists' in response) isDuplicate = !!response.exists;
+                        else if ('id' in response) isDuplicate = true; // returned a tenant object
+                    }
+
+                    if (isDuplicate) {
                         setConfirmState({
                             visible: true,
                             title: "Resident Exists",
@@ -353,8 +366,16 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                     } else {
                         setCurrentStep(2);
                     }
-                } catch (err) {
+                } catch (err: any) {
                     console.error("Duplicate ID check error:", err);
+                    setConfirmState({
+                        visible: true,
+                        title: "Verification Failed",
+                        message: "Could not verify ID uniqueness. Please check your connection and try again.",
+                        type: "warning",
+                        singleButton: true,
+                        cancelText: "Close"
+                    });
                 } finally {
                     setLoading(false);
                 }
@@ -742,7 +763,142 @@ const UnifiedStayManager: React.FC<UnifiedStayManagerProps> = ({ visible, onClos
                             )}
                         />
                     )}
+
+                    {watchStayType === 'MONTHLY' && (
+                        <Controller
+                            control={control}
+                            name="rentPaymentType"
+                            render={({ field: { onChange, value } }) => (
+                                <DropdownSelector
+                                    label="Rent Cycle *"
+                                    options={[
+                                        { label: "1st of every month", value: "FIXED_FIRST_DAY" },
+                                        { label: "According to Join Date", value: "JOIN_DATE_BASED" }
+                                    ]}
+                                    value={value}
+                                    onChange={onChange}
+                                    error={errors.rentPaymentType?.message}
+                                />
+                            )}
+                        />
+                    )}
+
+                    <View style={styles.row}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                            <Controller
+                                control={control}
+                                name="rentAmount"
+                                render={({ field: { onChange, value } }) => (
+                                    <FormField
+                                        label={watchStayType === 'MONTHLY' ? "Rent Per Month *" : "Rent Per Day *"}
+                                        placeholder="0"
+                                        value={value?.toString()}
+                                        onChangeText={onChange}
+                                        error={errors.rentAmount?.message}
+                                        keyboardType="numeric"
+                                    />
+                                )}
+                            />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                            <Controller
+                                control={control}
+                                name="securityDeposit"
+                                render={({ field: { onChange, value } }) => (
+                                    <FormField
+                                        label="Security Deposit"
+                                        placeholder="0"
+                                        value={value?.toString()}
+                                        onChangeText={onChange}
+                                        error={errors.securityDeposit?.message}
+                                        keyboardType="numeric"
+                                    />
+                                )}
+                            />
+                        </View>
+                    </View>
+
+                    <View style={styles.row}>
+                        <View style={{ flex: 1, marginRight: 8 }}>
+                            <Controller
+                                control={control}
+                                name="maintenanceAmount"
+                                render={({ field: { onChange, value } }) => (
+                                    <FormField
+                                        label="Maintenance Charge"
+                                        placeholder="0"
+                                        value={value?.toString()}
+                                        onChangeText={onChange}
+                                        error={errors.maintenanceAmount?.message}
+                                        keyboardType="numeric"
+                                    />
+                                )}
+                            />
+                        </View>
+                        <View style={{ flex: 1, marginLeft: 8 }}>
+                            <Controller
+                                control={control}
+                                name="maintenanceType"
+                                render={({ field: { onChange, value } }) => (
+                                    <DropdownSelector
+                                        label="Type"
+                                        options={[
+                                            { label: "No Maintenance", value: "" },
+                                            { label: "Fixed", value: "FIXED" },
+                                        ]}
+                                        value={value || ""}
+                                        onChange={onChange}
+                                        error={errors.maintenanceType?.message}
+                                    />
+                                )}
+                            />
+                        </View>
+                    </View>
                 </View>
+
+                {!editingTenant && (
+                    <View style={styles.flatterSection}>
+                        <Text style={[styles.label, { marginBottom: 12, opacity: 0.8, color: COLORS.success }]}>INITIAL PAYMENT (RECEIVED TODAY)</Text>
+                        <View style={styles.row}>
+                            <View style={{ flex: 1, marginRight: 8 }}>
+                                <Controller
+                                    control={control}
+                                    name="paidAmount"
+                                    render={({ field: { onChange, value } }) => (
+                                        <FormField
+                                            label="Amount Paid Now"
+                                            placeholder="0"
+                                            value={value?.toString()}
+                                            onChangeText={onChange}
+                                            error={errors.paidAmount?.message}
+                                            keyboardType="numeric"
+                                        />
+                                    )}
+                                />
+                            </View>
+                            <View style={{ flex: 1, marginLeft: 8 }}>
+                                <Controller
+                                    control={control}
+                                    name="paymentMethod"
+                                    render={({ field: { onChange, value } }) => (
+                                        <DropdownSelector
+                                            label="Payment Method"
+                                            options={[
+                                                { label: "Cash", value: "CASH" },
+                                                { label: "Online", value: "ONLINE" },
+                                                { label: "UPI", value: "UPI" },
+                                                { label: "Bank Transfer", value: "BANK_TRANSFER" },
+                                            ]}
+                                            value={value}
+                                            onChange={onChange}
+                                            error={errors.paymentMethod?.message}
+                                        />
+                                    )}
+                                />
+                            </View>
+                        </View>
+                    </View>
+                )}
             </View>
 
             <ConfirmationModal

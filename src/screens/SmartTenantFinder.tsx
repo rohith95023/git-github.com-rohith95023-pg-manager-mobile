@@ -262,11 +262,20 @@ const SmartTenantFinder = ({ navigation }: any) => {
                             setFilterSheetVisible(true);
                         }}
                     >
-                        <Feather
-                            name="sliders"
-                            size={18}
-                            color={(filters.propertyId !== "ALL" || filters.status !== "ALL" || filters.profession !== "ALL") ? COLORS.primary : COLORS.textMuted}
-                        />
+                        <View>
+                            <Feather
+                                name="sliders"
+                                size={18}
+                                color={(filters.propertyId !== "ALL" || filters.status !== "ALL" || filters.profession !== "ALL") ? COLORS.primary : COLORS.textMuted}
+                            />
+                            {((filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "ALL" ? 1 : 0) + (filters.profession !== "ALL" ? 1 : 0)) > 0 && (
+                                <View style={styles.filterBadge}>
+                                    <Text style={styles.filterBadgeText}>
+                                        {(filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "ALL" ? 1 : 0) + (filters.profession !== "ALL" ? 1 : 0)}
+                                    </Text>
+                                </View>
+                            )}
+                        </View>
                     </TouchableOpacity>
                 </View>
 
@@ -422,6 +431,8 @@ const createStyles = (COLORS: any) =>
         filterTrigger: {
             padding: 4,
         },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
         metaText: {
             fontSize: 10,
             fontWeight: '800',

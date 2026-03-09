@@ -1,14 +1,14 @@
+import { Feather } from "@expo/vector-icons";
 import React, { useState } from "react";
 import {
-    View,
-    Text,
-    StyleSheet,
-    TouchableOpacity,
-    Modal,
     FlatList,
-    SafeAreaView
+    Modal,
+    SafeAreaView,
+    StyleSheet,
+    Text,
+    TouchableOpacity,
+    View
 } from "react-native";
-import { Feather } from "@expo/vector-icons";
 import useThemePalette from "../../hooks/useThemePalette";
 
 interface DropdownOption {

@@ -111,7 +111,7 @@ export const bedAPI = {
         }, `DELETE beds/${id}`);
     },
     getStats: (params: any = {}) => apiClient.get('beds/stats', params),
-    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}/available`),
+    getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}`, { status: 'AVAILABLE' }),
     getArchived: () => apiClient.get('beds/archived'),
     getByPgId: (pgId: string) => apiClient.get(`beds/pg/${pgId}`),
     archive: async (id: string) => {
@@ -157,9 +157,9 @@ export const tenantAPI = {
         return apiClient.get('tenants/search', params);
     },
     checkDuplicateId: async (idType: string, idNumber: string, excludeId?: string) => {
-        return apiClient.get('tenants/check-duplicate', { id_type: idType, id_number: idNumber, exclude_id: excludeId });
+        return apiClient.get('tenants/check-duplicate', { type: idType, number: idNumber, ...(excludeId ? { exclude_id: excludeId } : {}) });
     },
-    getArchived: () => apiClient.get('tenants/archived'),
+    getArchived: () => apiClient.get('tenants/', { archived: true }),
 };
 
 // Payment APIs — backend: /api/payments/

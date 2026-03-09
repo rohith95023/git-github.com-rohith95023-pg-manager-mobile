@@ -1,6 +1,6 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
     Alert,
     Dimensions,
@@ -27,8 +27,12 @@ const Dashboard = ({ navigation, route }: any) => {
     const COLORS = useThemePalette();
     const {
         dashboardStats, dashboardKpis, pgs, rooms, beds, tenants,
-        payments, invoices, refresh, loading, refreshing
+        payments, expenses, invoices, refresh, loading, refreshing
     } = useData();
+
+    useEffect(() => {
+        if (isFocused) refresh();
+    }, [isFocused, refresh]);
 
     const stats = dashboardStats;
     const kpis = dashboardKpis;
@@ -178,28 +182,28 @@ const Dashboard = ({ navigation, route }: any) => {
                         <View style={[styles.iconPill, { backgroundColor: COLORS.primary + "15" }]}>
                             <Feather name="home" size={14} color={COLORS.primary} />
                         </View>
-                        <Text style={styles.statValue}>{pgs.length > 0 ? pgs.length : (stats?.totalPGs || kpis?.totalPgs || 0)}</Text>
+                        <Text style={styles.statValue}>{pgs.length > 0 ? pgs.length : (stats?.total_pgs || stats?.totalPGs || kpis?.total_pgs || kpis?.totalPgs || 0)}</Text>
                         <Text style={styles.statLabel}>Properties</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.success + "15" }]}>
                             <Feather name="box" size={14} color={COLORS.success} />
                         </View>
-                        <Text style={styles.statValue}>{rooms.length > 0 ? rooms.length : (stats?.activeRooms || kpis?.activeRooms || 0)}</Text>
+                        <Text style={styles.statValue}>{rooms.length > 0 ? rooms.length : (stats?.active_rooms || stats?.activeRooms || kpis?.active_rooms || kpis?.activeRooms || 0)}</Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.warning + "15" }]}>
                             <Feather name="users" size={14} color={COLORS.warning} />
                         </View>
-                        <Text style={styles.statValue}>{tenants.length > 0 ? tenants.filter(t => t.status === 'ACTIVE').length : (stats?.totalTenants || kpis?.totalTenants || 0)}</Text>
+                        <Text style={styles.statValue}>{tenants.length > 0 ? tenants.filter(t => t.status === 'ACTIVE').length : (stats?.total_tenants || stats?.totalTenants || kpis?.total_tenants || kpis?.totalTenants || 0)}</Text>
                         <Text style={styles.statLabel}>Residents</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.danger + "15" }]}>
                             <MaterialCommunityIcons name="bed-outline" size={14} color={COLORS.danger} />
                         </View>
-                        <Text style={styles.statValue}>{beds.length > 0 ? occupancyData.availableBeds : (kpis?.availableBeds || 0)}</Text>
+                        <Text style={styles.statValue}>{beds.length > 0 ? occupancyData.availableBeds : (kpis?.available_beds || kpis?.availableBeds || 0)}</Text>
                         <Text style={styles.statLabel}>Free Beds</Text>
                     </View>
                 </View>
@@ -208,15 +212,17 @@ const Dashboard = ({ navigation, route }: any) => {
                 <View style={styles.activityRow}>
                     <View style={styles.activityItem}>
                         <View style={[styles.dot, { backgroundColor: COLORS.success }]} />
-                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.todayActivity?.payments || 0}</Text> Payments</Text>
+                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.today_activity?.payments || stats?.todayActivity?.payments || 0}</Text> Payments</Text>
                     </View>
                     <View style={styles.activityItem}>
                         <View style={[styles.dot, { backgroundColor: COLORS.primary }]} />
-                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.todayActivity?.newTenants || 0}</Text> New</Text>
+                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.today_activity?.new_tenants || stats?.todayActivity?.newTenants || 0}</Text> New</Text>
                     </View>
                     <View style={styles.activityItem}>
                         <View style={[styles.dot, { backgroundColor: COLORS.warning }]} />
-                        <Text style={styles.activityText}><Text style={styles.bold}>{stats?.todayActivity?.expenses || 0}</Text> Expenses</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate("Expenses")}>
+                            <Text style={styles.activityText}><Text style={styles.bold}>{stats?.today_activity?.expenses || stats?.todayActivity?.expenses || 0}</Text> Expenses</Text>
+                        </TouchableOpacity>
                     </View>
                 </View>
 
@@ -225,7 +231,7 @@ const Dashboard = ({ navigation, route }: any) => {
                     <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
                         <Text style={styles.sectionTitle}>Financials</Text>
                         <View style={styles.creditBadge}>
-                            <Text style={styles.creditValue}>Credits: ₹{(stats?.totalCredits || 0).toLocaleString()}</Text>
+                            <Text style={styles.creditValue}>Credits: ₹{(stats?.total_credits || stats?.totalCredits || 0).toLocaleString()}</Text>
                         </View>
                     </View>
 
@@ -233,22 +239,22 @@ const Dashboard = ({ navigation, route }: any) => {
                     <View style={styles.financeGrid}>
                         <View style={[styles.financeItem, { borderRightWidth: 1, borderBottomWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Revenue</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{(stats?.monthlyRevenue || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.success }]}>₹{(stats?.monthly_revenue || stats?.monthlyRevenue || 0).toLocaleString()}</Text>
                             <Text style={styles.financeSubLabel}>This month</Text>
                         </View>
                         <View style={[styles.financeItem, { borderBottomWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Due</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.totalPendingDues || stats?.total_pending || kpis?.total_pending || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.danger }]}>₹{(stats?.total_pending_dues || stats?.totalPendingDues || stats?.total_pending || kpis?.total_pending || 0).toLocaleString()}</Text>
                             <Text style={styles.financeSubLabel}>Outstanding</Text>
                         </View>
                         <View style={[styles.financeItem, { borderRightWidth: 1, borderColor: COLORS.border }]}>
                             <Text style={styles.financeLabel}>Net Profit</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(stats?.netProfit || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.primary }]}>₹{(Number(stats?.monthly_revenue || stats?.monthlyRevenue || 0) - (stats?.monthly_expenses || stats?.monthlyExpenses || 0)).toLocaleString()}</Text>
                             <Text style={styles.financeSubLabel}>Monthly</Text>
                         </View>
                         <View style={styles.financeItem}>
                             <Text style={styles.financeLabel}>All-time</Text>
-                            <Text style={[styles.financeValue, { color: COLORS.textMuted }]}>₹{(stats?.totalRevenue || kpis?.allTimeRevenue || 0).toLocaleString()}</Text>
+                            <Text style={[styles.financeValue, { color: COLORS.textMuted }]}>₹{(stats?.total_revenue || stats?.totalRevenue || kpis?.all_time_revenue || kpis?.allTimeRevenue || 0).toLocaleString()}</Text>
                             <Text style={styles.financeSubLabel}>Total earned</Text>
                         </View>
                     </View>
@@ -267,12 +273,43 @@ const Dashboard = ({ navigation, route }: any) => {
                     <View style={styles.progressSection}>
                         <View style={styles.progressHeader}>
                             <Text style={styles.progressLabel}>Monthly Collection</Text>
-                            <Text style={styles.progressValue}>{stats?.collectionRatePercentage || 0}%</Text>
+                            <Text style={styles.progressValue}>{stats?.collection_rate_percentage || stats?.collectionRatePercentage || 0}%</Text>
                         </View>
                         <View style={styles.progressBarBg}>
-                            <View style={[styles.progressBarFill, { width: `${stats?.collectionRatePercentage || 0}%`, backgroundColor: COLORS.success }]} />
+                            <View style={[styles.progressBarFill, { width: `${stats?.collection_rate_percentage || stats?.collectionRatePercentage || 0}%`, backgroundColor: COLORS.success }]} />
                         </View>
                     </View>
+                </View>
+
+                {/* Performance Analytics Card */}
+                <View style={styles.listSection}>
+                    <View style={styles.listHeader}>
+                        <Text style={styles.sectionTitle}>Recent Expenses</Text>
+                        <TouchableOpacity onPress={() => navigation.navigate("Expenses")}>
+                            <Text style={styles.seeAllText}>See all</Text>
+                        </TouchableOpacity>
+                    </View>
+                    {(stats?.recentExpenses || expenses || []).slice(0, 3).map((e: any) => (
+                        <TouchableOpacity
+                            key={e.id}
+                            style={styles.summaryItem}
+                            onPress={() => navigation.navigate("Expenses", { expense: e })}
+                        >
+                            <View style={[styles.avatarMini, { backgroundColor: COLORS.danger + "20" }]}>
+                                <Feather name="arrow-up-right" size={14} color={COLORS.danger} />
+                            </View>
+                            <View style={styles.itemMain}>
+                                <Text style={styles.itemTitle}>{e.title || e.description}</Text>
+                                <Text style={styles.itemSub}>{e.category} • {e.pgs?.name || pgs.find(p => p.id === e.pg_id)?.name || "General"}</Text>
+                            </View>
+                            <Text style={[styles.itemPrice, { color: COLORS.danger }]}>-₹{Number(e.amount).toLocaleString()}</Text>
+                        </TouchableOpacity>
+                    ))}
+                    {(stats?.recentExpenses || expenses || []).length === 0 && (
+                        <View style={[styles.summaryItem, { justifyContent: 'center', borderStyle: 'dashed' }]}>
+                            <Text style={styles.itemSub}>No recent expenses</Text>
+                        </View>
+                    )}
                 </View>
 
                 {/* Daily Stay Alerts (Simplified) */}
@@ -296,7 +333,7 @@ const Dashboard = ({ navigation, route }: any) => {
                                 </View>
                                 <View style={styles.itemMain}>
                                     <Text style={styles.itemTitle}>{t.full_name}</Text>
-                                    <Text style={styles.itemSub}>{t.pgs?.name} • Room {t.rooms?.room_number}</Text>
+                                    <Text style={styles.itemSub}>{t.pgs?.name} • {(t.floor ?? t.rooms?.floor ?? rooms.find(r => r.id === t.room_id)?.floor ?? 0) === 0 ? "GF" : `F${t.floor ?? t.rooms?.floor ?? rooms.find(r => r.id === t.room_id)?.floor}`} • Room {t.rooms?.room_number}</Text>
                                 </View>
                                 <Feather name="chevron-right" size={16} color={COLORS.textMuted} />
                             </TouchableOpacity>

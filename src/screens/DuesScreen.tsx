@@ -20,7 +20,7 @@ import ScreenHeader from "../components/common/ScreenHeader";
 import SegmentedControl from "../components/common/SegmentedControl";
 import PaymentFormModal from "../components/modals/PaymentFormModal";
 import useThemePalette from "../hooks/useThemePalette";
-import { financialAPI, invoiceAPI, pgAPI, tenantAPI } from "../services/api";
+import { financialAPI, invoiceAPI, pgAPI, roomAPI, tenantAPI } from "../services/api";
 
 const { width } = Dimensions.get("window");
 
@@ -68,6 +68,7 @@ const DuesScreen = ({ navigation }: any) => {
     const [invoices, setInvoices] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
     const [tenants, setTenants] = useState<any[]>([]);
+    const [rooms, setRooms] = useState<any[]>([]);
     const [loading, setLoading] = useState(true);
     const [refreshing, setRefreshing] = useState(false);
 
@@ -89,11 +90,12 @@ const DuesScreen = ({ navigation }: any) => {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const [ledgerRes, invoicesRes, pgsRes, tenantsRes]: any[] = await Promise.all([
+            const [ledgerRes, invoicesRes, pgsRes, tenantsRes, roomsRes]: any[] = await Promise.all([
                 financialAPI.getGroupedLedger().catch(() => []),
                 invoiceAPI.getAll().catch(() => []),
                 pgAPI.getAll().catch(() => []),
                 tenantAPI.getAll().catch(() => []),
+                roomAPI.getAll().catch(() => []),
             ]);
 
             const ledgerArr = Array.isArray(ledgerRes) ? ledgerRes : (ledgerRes?.items || ledgerRes?.data || []);
@@ -102,11 +104,13 @@ const DuesScreen = ({ navigation }: any) => {
             const pgsArr = Array.isArray(pgsRes) ? pgsRes : (pgsRes?.items || pgsRes?.data || []);
             const tenantsArr = Array.isArray(tenantsRes) ? tenantsRes
                 : (tenantsRes?.items || tenantsRes?.data || []);
+            const roomsArr = Array.isArray(roomsRes) ? roomsRes : (roomsRes?.items || roomsRes?.data || []);
 
             setGroupedLedger(ledgerArr);
             setInvoices(invoicesArr);
             setPgs(pgsArr);
             setTenants(tenantsArr);
+            setRooms(roomsArr);
         } catch (err) {
             console.error("DuesScreen fetch error:", err);
         } finally {
@@ -136,6 +140,12 @@ const DuesScreen = ({ navigation }: any) => {
         pgs.forEach((pg: any) => { m[pg.id] = pg; });
         return m;
     }, [pgs]);
+
+    const roomMap = useMemo(() => {
+        const m: Record<string, any> = {};
+        rooms.forEach((r: any) => { m[r.id] = r; });
+        return m;
+    }, [rooms]);
 
     // Build tenant-grouped due items from invoices (unpaid/partial only)
     const dueInvoices = useMemo(() => {
@@ -201,12 +211,14 @@ const DuesScreen = ({ navigation }: any) => {
             const tId = inv.tenant_id || "unknown";
             const tenant = inv.tenants || tenantMap[tId] || null;
             const pg = inv.pgs || pgMap[inv.pg_id] || null;
+            const room = inv.rooms || roomMap[inv.room_id || tenant?.room_id] || null;
             if (!groups[tId]) {
                 groups[tId] = {
                     tenantId: tId,
                     tenantName: tenant?.full_name || inv.tenant_name || "Unknown Resident",
                     pgName: pg?.name || inv.pg_name || "—",
-                    roomNumber: tenant?.rooms?.room_number || inv.room_number || "—",
+                    floor: tenant?.floor ?? room?.floor ?? inv.floor ?? 0,
+                    roomNumber: tenant?.rooms?.room_number || room?.room_number || inv.room_number || "—",
                     items: [],
                 };
             }
@@ -319,7 +331,7 @@ const DuesScreen = ({ navigation }: any) => {
                         <View style={styles.groupInfo}>
                             <Text style={styles.groupName} numberOfLines={1}>{group.tenantName}</Text>
                             <Text style={styles.groupSub} numberOfLines={1}>
-                                {group.pgName}
+                                {group.pgName} • {group.floor === 0 || group.floor === "0" ? "GF" : `F${group.floor}`}
                                 {group.roomNumber !== "—" ? ` • Room ${group.roomNumber}` : ""}
                             </Text>
                         </View>
@@ -447,7 +459,14 @@ const DuesScreen = ({ navigation }: any) => {
                     style={[styles.filterBtn, selectedPgId !== "ALL" && { backgroundColor: COLORS.primary }]}
                     onPress={() => setFilterSheetVisible(true)}
                 >
-                    <Feather name="sliders" size={16} color={selectedPgId !== "ALL" ? "#fff" : COLORS.textMuted} />
+                    <View>
+                        <Feather name="sliders" size={16} color={selectedPgId !== "ALL" ? "#fff" : COLORS.textMuted} />
+                        {selectedPgId !== "ALL" && (
+                            <View style={[styles.filterBadge, { borderColor: COLORS.primary }]}>
+                                <Text style={styles.filterBadgeText}>1</Text>
+                            </View>
+                        )}
+                    </View>
                 </TouchableOpacity>
             </View>
 
@@ -636,6 +655,8 @@ const createStyles = (COLORS: any) =>
             justifyContent: "center",
             alignItems: "center",
         },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 
         resultChip: {
             marginHorizontal: 16,

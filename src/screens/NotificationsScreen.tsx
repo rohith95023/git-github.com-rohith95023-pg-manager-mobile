@@ -7,6 +7,7 @@ import {
     Alert,
     FlatList,
     RefreshControl,
+    ScrollView,
     StyleSheet,
     Text,
     TouchableOpacity,
@@ -34,7 +35,7 @@ const NotificationsScreen = ({ navigation }: any) => {
     const [activeTab, setActiveTab] = useState("overdue");
 
     // Pull live overdue/upcoming data from context
-    const { dashboardStats, invoices, tenants, pgs, loading: dataLoading, refresh: refreshData } = useData();
+    const { dashboardStats, invoices, tenants, pgs, rooms, loading: dataLoading, refresh: refreshData } = useData();
 
     const fetchScheduled = useCallback(async () => {
         try {
@@ -91,6 +92,12 @@ const NotificationsScreen = ({ navigation }: any) => {
         return m;
     }, [tenants]);
 
+    const roomMap = useMemo(() => {
+        const m: Record<string, any> = {};
+        rooms.forEach((r: any) => { m[r.id] = r; });
+        return m;
+    }, [rooms]);
+
     // Build overdue alerts from invoices, cross-referencing tenant names
     const overdueAlerts = useMemo(() => {
         const now = new Date();
@@ -112,10 +119,17 @@ const NotificationsScreen = ({ navigation }: any) => {
                 // Resolve tenant: try nested first, then context map
                 const tenant = inv.tenants || tenantMap[inv.tenant_id] || null;
                 const pg = inv.pgs || pgMap[inv.pg_id] || pgMap[tenant?.pg_id] || (tenant?.pgs) || null;
+                const room = tenant?.rooms || roomMap[tenant?.room_id] || null;
+                const roomInfo = room?.room_number ? ` • Rm ${room.room_number}` : '';
+                const floorLabel = room?.floor === 0 ? "Ground Floor" : `Floor ${room?.floor}`;
+                const floorInfo = (room?.floor !== undefined && room?.floor !== null) ? `, ${floorLabel}` : '';
+
                 return {
                     id: inv.id,
                     tenantName: tenant?.full_name || inv.tenant_name || inv.tenants?.full_name || "Unknown Resident",
+                    profileImage: tenant?.profile_image_url || null,
                     pgName: pg?.name || inv.pg_name || inv.pgs?.name || (tenant?.pgs?.name) || "—",
+                    roomDetails: `${roomInfo}${floorInfo}`,
                     type: inv.type || "RENT",
                     amount: balanceDue,
                     dueDate: endDate,
@@ -147,13 +161,21 @@ const NotificationsScreen = ({ navigation }: any) => {
 
         return (
             <View style={[styles.alertCard, { borderLeftColor: accentColor, borderLeftWidth: 3 }]}>
-                <View style={[styles.alertIconBox, { backgroundColor: accentColor + "15" }]}>
-                    <MaterialCommunityIcons name={getTypeIcon(item.type) as any} size={22} color={accentColor} />
-                </View>
+                {item.profileImage ? (
+                    <View style={styles.alertIconBox}>
+                        <MaterialCommunityIcons name="account-circle" size={44} color={COLORS.border} />
+                    </View>
+                ) : (
+                    <View style={[styles.alertIconBox, { backgroundColor: accentColor + "15" }]}>
+                        <Text style={[styles.avatarInitial, { color: accentColor }]}>
+                            {(item.tenantName || "?").charAt(0).toUpperCase()}
+                        </Text>
+                    </View>
+                )}
                 <View style={styles.alertBody}>
                     <Text style={styles.alertTitle} numberOfLines={1}>{item.tenantName}</Text>
                     <Text style={styles.alertSub} numberOfLines={1}>
-                        {item.pgName} • {(item.type || "RENT").charAt(0) + (item.type || "RENT").slice(1).toLowerCase()}
+                        {item.pgName}{item.roomDetails} • {(item.type || "RENT").charAt(0) + (item.type || "RENT").slice(1).toLowerCase()}
                     </Text>
                     <View style={styles.alertFooter}>
                         <View style={[styles.daysBadge, { backgroundColor: accentColor + "12" }]}>
@@ -229,22 +251,28 @@ const NotificationsScreen = ({ navigation }: any) => {
 
             {/* Summary pills for overdue tab */}
             {activeTab === "overdue" && (
-                <View style={styles.summaryRow}>
-                    <View style={[styles.summaryPill, { borderColor: COLORS.danger + "40" }]}>
-                        <View style={[styles.pillDot, { backgroundColor: COLORS.danger }]} />
-                        <Text style={styles.pillLabel} numberOfLines={1} adjustsFontSizeToFit>Overdue</Text>
-                        <Text style={[styles.pillValue, { color: COLORS.danger }]}>{overdueCount}</Text>
-                    </View>
-                    <View style={[styles.summaryPill, { borderColor: COLORS.warning + "40" }]}>
-                        <View style={[styles.pillDot, { backgroundColor: COLORS.warning }]} />
-                        <Text style={styles.pillLabel} numberOfLines={1} adjustsFontSizeToFit>Upcoming</Text>
-                        <Text style={[styles.pillValue, { color: COLORS.warning }]}>{upcomingCount}</Text>
-                    </View>
-                    <View style={[styles.summaryPill, { borderColor: COLORS.border }]}>
-                        <MaterialCommunityIcons name="bell-ring-outline" size={14} color={COLORS.primary} />
-                        <Text style={styles.pillLabel} numberOfLines={1} adjustsFontSizeToFit>Scheduled</Text>
-                        <Text style={[styles.pillValue, { color: COLORS.primary }]}>{scheduledNotifs.length}</Text>
-                    </View>
+                <View style={styles.summaryRowContainer}>
+                    <ScrollView
+                        horizontal
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.summaryRow}
+                    >
+                        <View style={[styles.summaryPill, { borderColor: COLORS.danger + "40" }]}>
+                            <View style={[styles.pillDot, { backgroundColor: COLORS.danger }]} />
+                            <Text style={styles.pillLabel}>Overdue</Text>
+                            <Text style={[styles.pillValue, { color: COLORS.danger }]}>{overdueCount}</Text>
+                        </View>
+                        <View style={[styles.summaryPill, { borderColor: COLORS.warning + "40" }]}>
+                            <View style={[styles.pillDot, { backgroundColor: COLORS.warning }]} />
+                            <Text style={styles.pillLabel}>Upcoming</Text>
+                            <Text style={[styles.pillValue, { color: COLORS.warning }]}>{upcomingCount}</Text>
+                        </View>
+                        <View style={[styles.summaryPill, { borderColor: COLORS.border }]}>
+                            <MaterialCommunityIcons name="bell-ring-outline" size={14} color={COLORS.primary} />
+                            <Text style={styles.pillLabel}>Scheduled</Text>
+                            <Text style={[styles.pillValue, { color: COLORS.primary }]}>{scheduledNotifs.length}</Text>
+                        </View>
+                    </ScrollView>
                 </View>
             )}
 
@@ -311,21 +339,23 @@ const createStyles = (COLORS: any) =>
         container: { flex: 1, backgroundColor: COLORS.bg },
         appBarButton: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
 
+        summaryRowContainer: {
+            paddingTop: 14,
+        },
         summaryRow: {
             flexDirection: 'row',
             gap: 10,
             paddingHorizontal: 16,
-            paddingTop: 14,
         },
         summaryPill: {
-            flex: 1,
+            minWidth: 110,
             flexDirection: 'row',
             alignItems: 'center',
-            gap: 4,
+            gap: 6,
             backgroundColor: COLORS.card,
             borderRadius: 12,
             paddingVertical: 10,
-            paddingHorizontal: 6,
+            paddingHorizontal: 12,
             borderWidth: 1,
         },
         pillDot: { width: 6, height: 6, borderRadius: 3 },
@@ -351,10 +381,15 @@ const createStyles = (COLORS: any) =>
         alertIconBox: {
             width: 44,
             height: 44,
-            borderRadius: 12,
+            borderRadius: 22, // Make it circular just like an avatar
             justifyContent: 'center',
             alignItems: 'center',
             marginRight: 12,
+            overflow: 'hidden',
+        },
+        avatarInitial: {
+            fontSize: 20,
+            fontWeight: '800',
         },
         alertBody: { flex: 1 },
         alertTitle: { fontSize: 14, fontWeight: '800', color: COLORS.text, marginBottom: 2 },

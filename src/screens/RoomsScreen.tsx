@@ -79,16 +79,22 @@ const RoomsScreen = ({ navigation }: any) => {
     };
 
     // ─── DataContext ─────────────────────────────────────────────────────
-    const { rooms: ctxRooms, beds: ctxBeds, pgs: ctxPgs, loading, refresh } = useData();
+    const { rooms: ctxRooms, beds: ctxBeds, pgs: ctxPgs, tenants: ctxTenants, loading, refresh } = useData();
     const [rooms, setRooms] = useState<any[]>(ctxRooms);
     const [beds, setBeds] = useState<any[]>(ctxBeds);
     const [pgs, setPgs] = useState<any[]>(ctxPgs);
+    const [allTenants, setAllTenants] = useState<any[]>(ctxTenants);
     const onRefresh = () => refresh();
+
+    useEffect(() => {
+        if (isFocused) refresh();
+    }, [isFocused, refresh]);
 
     // Sync local state with context data
     useEffect(() => { setRooms(ctxRooms); }, [ctxRooms]);
     useEffect(() => { setBeds(ctxBeds); }, [ctxBeds]);
     useEffect(() => { setPgs(ctxPgs); }, [ctxPgs]);
+    useEffect(() => { setAllTenants(ctxTenants); }, [ctxTenants]);
 
     const handleAddRoom = () => {
         setEditingRoom(null);
@@ -184,8 +190,17 @@ const RoomsScreen = ({ navigation }: any) => {
             return beds.map(b => {
                 const room = rooms.find(r => r.id === b.room_id);
                 const pg = pgs.find(p => p.id === (b.pg_id || room?.pg_id));
+
+                // Find active resident for this specific bed
+                const resident = allTenants.find(t =>
+                    (t.bed_id === b.id || t.id === b.tenant_id) &&
+                    t.status === 'ACTIVE'
+                );
+
                 return {
                     ...b,
+                    tenants: b.tenants || resident, // Hydrate with context tenant if missing from bed record
+                    floor: b.rooms?.floor ?? room?.floor ?? 0,
                     display_room_number: b.rooms?.room_number || room?.room_number || "N/A",
                     display_pg_name: b.pgs?.name || b.rooms?.pgs?.name || room?.pgs?.name || pg?.name || "N/A"
                 };
@@ -200,7 +215,7 @@ const RoomsScreen = ({ navigation }: any) => {
                 return matchesSearch && matchesPg && matchesStatus && matchesBedStatus;
             });
         }
-    }, [viewMode, rooms, beds, searchTerm, filters, pgs]);
+    }, [viewMode, rooms, beds, searchTerm, filters, pgs, allTenants]);
 
     const stats = useMemo(() => {
         const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
@@ -280,7 +295,7 @@ const RoomsScreen = ({ navigation }: any) => {
             <View style={styles.cardTop}>
                 <View style={styles.cardHeaderLeft}>
                     <Text style={styles.roomNumber}>{item.bed_number}</Text>
-                    <Text style={styles.pgName}>Room {item.display_room_number} • {item.display_pg_name}</Text>
+                    <Text style={styles.pgName}>Room {item.display_room_number} • {item.floor === 0 || item.floor === "0" ? "Ground Floor" : `Floor ${item.floor}`} • {item.display_pg_name}</Text>
                 </View>
 
                 <View style={[styles.miniBadge, { backgroundColor: getStatusColor(item.status) + "12" }]}>
@@ -416,11 +431,20 @@ const RoomsScreen = ({ navigation }: any) => {
                                         setFilterSheetVisible(true);
                                     }}
                                 >
-                                    <Feather
-                                        name="sliders"
-                                        size={18}
-                                        color={filters.property ? COLORS.primary : COLORS.textMuted}
-                                    />
+                                    <View>
+                                        <Feather
+                                            name="sliders"
+                                            size={18}
+                                            color={filters.property || (viewMode === "BEDS" && filters.bedStatus !== "ALL") ? COLORS.primary : COLORS.textMuted}
+                                        />
+                                        {((filters.property ? 1 : 0) + (viewMode === "BEDS" && filters.bedStatus !== "ALL" ? 1 : 0)) > 0 && (
+                                            <View style={styles.filterBadge}>
+                                                <Text style={styles.filterBadgeText}>
+                                                    {(filters.property ? 1 : 0) + (viewMode === "BEDS" && filters.bedStatus !== "ALL" ? 1 : 0)}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </View>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -602,6 +626,8 @@ const createStyles = (COLORS: any) =>
         clearBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
         searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
         filterTrigger: { padding: 4 },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 
         // Real Cards
         listContent: { paddingBottom: 100 },

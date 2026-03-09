@@ -475,7 +475,7 @@ const TenantsScreen = ({ navigation }: any) => {
                         <View style={styles.assignmentRow}>
                             <Feather name="home" size={12} color={COLORS.textMuted} />
                             <Text style={styles.assignmentText} numberOfLines={1}>
-                                {item.pgs?.name || pgs.find(p => p.id === item.pg_id)?.name || "N/A"} • {item.rooms?.room_number || rooms.find(r => r.id === item.room_id)?.room_number || "N/A"}{item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number ? ` (${item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number})` : ""}
+                                {item.pgs?.name || pgs.find(p => p.id === item.pg_id)?.name || "N/A"} • {(item.floor ?? item.rooms?.floor ?? rooms.find(r => r.id === item.room_id)?.floor ?? 0) === 0 ? "GF" : `F${item.floor ?? item.rooms?.floor ?? rooms.find(r => r.id === item.room_id)?.floor}`} • {item.rooms?.room_number || rooms.find(r => r.id === item.room_id)?.room_number || "N/A"}{item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number ? ` (${item.beds?.bed_number || beds.find(b => b.id === item.bed_id)?.bed_number})` : ""}
                             </Text>
                         </View>
                     </View>
@@ -575,7 +575,16 @@ const TenantsScreen = ({ navigation }: any) => {
                                 style={styles.filterTrigger}
                                 onPress={() => { setPendingFilters(filters); setFilterSheetVisible(true); }}
                             >
-                                <Feather name="sliders" size={18} color={(filters.propertyId || filters.status !== "ALL") ? COLORS.primary : COLORS.textMuted} />
+                                <View>
+                                    <Feather name="sliders" size={18} color={(filters.propertyId !== "ALL" || filters.status !== "ALL" || filters.profession !== "ALL" || filters.floor !== "ALL" || filters.room !== "ALL") && (filters.propertyId !== "") ? COLORS.primary : COLORS.textMuted} />
+                                    {((filters.propertyId && filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "ALL" ? 1 : 0) + (filters.profession !== "ALL" ? 1 : 0) + (filters.floor !== "ALL" ? 1 : 0) + (filters.room !== "ALL" ? 1 : 0)) > 0 && (
+                                        <View style={styles.filterBadge}>
+                                            <Text style={styles.filterBadgeText}>
+                                                {((filters.propertyId && filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "ALL" ? 1 : 0) + (filters.profession !== "ALL" ? 1 : 0) + (filters.floor !== "ALL" ? 1 : 0) + (filters.room !== "ALL" ? 1 : 0))}
+                                            </Text>
+                                        </View>
+                                    )}
+                                </View>
                             </TouchableOpacity>
                         </View>
 
@@ -693,6 +702,8 @@ const createStyles = (COLORS: any) => StyleSheet.create({
     clearBadge: { width: 16, height: 16, borderRadius: 8, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center' },
     searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
     filterTrigger: { padding: 4 },
+    filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+    filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
     metaRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 16, marginBottom: 4, paddingHorizontal: 4 },
     selectionGroup: { flexDirection: 'row', alignItems: 'center' },
     selectionCheck: { marginRight: 10 },

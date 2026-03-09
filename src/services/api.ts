@@ -147,8 +147,8 @@ export const paymentAPI = {
 
 // Expense APIs — backend: /api/expenses/
 export const expenseAPI = {
-    getAll: () => apiClient.get('expenses/'),
-    create: (data: any) => apiClient.post('expenses/', data),
+    getAll: () => apiClient.get('expenses'),
+    create: (data: any) => apiClient.post('expenses', data),
     update: (id: string, data: any) => apiClient.request({
         method: 'put',
         url: `/api/expenses/${id}`,
@@ -159,7 +159,7 @@ export const expenseAPI = {
         url: `/api/expenses/${id}`,
     }, `DELETE expenses/${id}`),
     search: async (params: any) => {
-        return apiClient.get('expenses/', params);
+        return apiClient.get('expenses', params);
     },
     getStats: (params: any = {}) => apiClient.get('expenses/stats', params),
     getCategories: () => apiClient.get('expenses/categories'),

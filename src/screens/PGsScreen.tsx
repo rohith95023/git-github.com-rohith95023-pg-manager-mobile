@@ -1,6 +1,6 @@
 import { Feather, MaterialCommunityIcons } from "@expo/vector-icons";
 import { useIsFocused } from "@react-navigation/native";
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import {
     ActivityIndicator,
     Alert,
@@ -28,7 +28,11 @@ const PGsScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
     const isFocused = useIsFocused();
     const styles = useMemo(() => createStyles(COLORS), [COLORS]);
-    const { pgs: allPgs, rooms: allRooms, beds: allBeds, tenants: allTenants, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+    const { pgs: allPgs, rooms: allRooms, beds: allBeds, tenants: allTenants, invoices: allInvoices, loading: globalLoading, refreshing: globalRefreshing, refresh } = useData();
+
+    useEffect(() => {
+        if (isFocused) refresh();
+    }, [isFocused, refresh]);
 
     const [activeTab, setActiveTab] = useState<"Active" | "Archived">("Active");
     const [searchTerm, setSearchTerm] = useState("");
@@ -50,7 +54,18 @@ const PGsScreen = ({ navigation }: any) => {
                 const pgRooms = allRooms.filter(r => r.pg_id === pg.id);
                 const pgBeds = allBeds.filter(b => b.pg_id === pg.id || pgRooms.some(r => r.id === b.room_id));
                 const pgTenants = allTenants.filter(t => t.pg_id === pg.id && t.status === 'ACTIVE');
-                const totalDue = pgTenants.reduce((sum, t) => sum + (t.outstanding_balance || 0), 0);
+
+                // Calculate total due from invoices (most accurate source in V2)
+                const pgInvoices = allInvoices.filter(inv =>
+                    inv.pg_id === pg.id &&
+                    (inv.status?.toUpperCase() === 'UNPAID' || inv.status?.toUpperCase() === 'PARTIAL')
+                );
+
+                const invoiceDue = pgInvoices.reduce((sum, inv) =>
+                    sum + (Number(inv.total_amount || 0) - Number(inv.paid_amount || 0)), 0);
+
+                // Prioritize backend-provided stats if they exist
+                const totalDue = pg.total_pending ?? pg.total_due ?? invoiceDue;
 
                 return {
                     ...pg,
@@ -61,7 +76,7 @@ const PGsScreen = ({ navigation }: any) => {
                     calculated_total_due: totalDue
                 };
             });
-    }, [allPgs, allRooms, allBeds, activeTab, searchTerm]);
+    }, [allPgs, allRooms, allBeds, allTenants, allInvoices, activeTab, searchTerm]);
 
     const loading = globalLoading;
 

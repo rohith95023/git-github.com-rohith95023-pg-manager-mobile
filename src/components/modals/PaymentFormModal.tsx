@@ -94,10 +94,12 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
     const [v2Balance, setV2Balance] = useState<number>(0);
 
     useEffect(() => {
-        if (watchTenantId) {
+        if (watchTenantId && selectedTenant?.outstanding_balance !== undefined) {
+            setV2Balance(Number(selectedTenant.outstanding_balance));
+        } else if (watchTenantId) {
             billingService.getOutstandingBalance(watchTenantId).then(setV2Balance);
         }
-    }, [watchTenantId]);
+    }, [watchTenantId, selectedTenant]);
 
     const outstandingBalance = v2Balance;
 
@@ -328,9 +330,6 @@ const PaymentFormModal: React.FC<PaymentFormModalProps> = ({ visible, onClose, o
                             label="Payment For *"
                             options={[
                                 { label: "Rent", value: "RENT" },
-                                { label: "Deposit", value: "DEPOSIT" },
-                                { label: "Booking", value: "BOOKING" },
-                                { label: "Maint.", value: "MAINTENANCE" },
                                 { label: "Other", value: "OTHER" }
                             ]}
                             value={value}

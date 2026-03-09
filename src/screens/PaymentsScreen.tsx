@@ -38,6 +38,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
     const [refreshing, setRefreshing] = useState(false);
     const [payments, setPayments] = useState<any[]>([]);
     const [pgs, setPgs] = useState<any[]>([]);
+    const [tenantsMap, setTenantsMap] = useState<Record<string, any>>({});
     const [stats, setStats] = useState({
         totalReceived: 0,
         outstandingDues: 0,
@@ -84,7 +85,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 paymentAPI.getAll().catch(() => []),
                 pgAPI.getAll().catch(() => []),
                 statsAPI.getDashboardStats().catch(() => ({})),
-                tenantAPI.getAll().catch(() => []),
+                tenantAPI.search({ limit: 1000 }).catch(() => []),
                 invoiceAPI.getAll().catch(() => [])
             ]);
 
@@ -133,8 +134,10 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                     billing_month: t.move_in_date || null
                 }));
 
-            setPayments([...enrichedPayments, ...outstandingDues]);
+            const allPayments = [...enrichedPayments, ...outstandingDues];
+            setPayments(allPayments);
             setPgs(pgsArr);
+            setTenantsMap(tenantMap);
 
             // Backend might wrap stats in a data envelope
             const ds = dashboardStatsRes?.data || dashboardStatsRes;
@@ -269,7 +272,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                 tenantId,
                 tenant,
                 pg,
-                tenantName: tenant?.full_name || items[0].tenant_name || "Resident",
+                tenantName: tenant?.full_name || (items[0].tenant_name ? items[0].tenant_name.charAt(0).toUpperCase() + items[0].tenant_name.slice(1) : "Resident"),
                 pgName: pg?.name || items[0].pg_name || "—",
                 totalAmount: items.reduce((sum, current) => sum + (Number(current.amount) || 0), 0),
                 items,
@@ -296,6 +299,21 @@ const PaymentsScreen = ({ route, navigation }: any) => {
             case 'PENDING_DUE': return COLORS.danger;
             case 'FAILED': return COLORS.danger;
             default: return COLORS.textMuted;
+        }
+    };
+
+    const formatDate = (dateStr: string) => {
+        if (!dateStr) return "N/A";
+        try {
+            const date = new Date(dateStr);
+            if (isNaN(date.getTime())) return dateStr;
+            return date.toLocaleDateString('en-IN', {
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric'
+            });
+        } catch (e) {
+            return dateStr;
         }
     };
 
@@ -443,7 +461,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                             <View style={styles.detailRow}>
                                 <Feather name="calendar" size={12} color={COLORS.textMuted} />
                                 <Text style={styles.detailText}>
-                                    {group.items[0].payment_date || group.items[0].billing_month || `Joined: ${new Date(group.tenant?.move_in_date).toLocaleDateString()}`}
+                                    {formatDate(group.items[0].payment_date || group.items[0].billing_month) || `Joined: ${formatDate(group.tenant?.move_in_date)}`}
                                 </Text>
                             </View>
                         )}
@@ -487,7 +505,7 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                                     {getInvoiceLabel(subItem)}
                                 </Text>
                                 <Text style={{ fontSize: 11, color: COLORS.textMuted }}>
-                                    {subItem.payment_date || subItem.billing_month || 'Recent Record'}
+                                    {formatDate(subItem.payment_date || subItem.billing_month) || 'Recent Record'}
                                 </Text>
                             </View>
                             <View style={{ alignItems: 'flex-end' }}>
@@ -522,58 +540,64 @@ const PaymentsScreen = ({ route, navigation }: any) => {
         }
     };
 
-    const renderInvoiceItem = ({ item }: { item: any }) => (
-        <View style={styles.groupContainer}>
-            <View style={styles.paymentCard}>
-                <View style={styles.paymentCardHeader}>
-                    <View style={styles.cardHeaderLeft}>
-                        <Text style={styles.residentName} numberOfLines={1}>INV-{String(item.id).slice(0, 6).toUpperCase()}</Text>
-                        <View style={[styles.statusPill, { backgroundColor: getInvoiceStatusColor(item.status, COLORS) + "12" }]}>
-                            <Text style={[styles.statusPillText, { color: getInvoiceStatusColor(item.status, COLORS) }]}>{item.status}</Text>
+    const renderInvoiceItem = ({ item }: { item: any }) => {
+        const tenant = item.tenants || tenantsMap[item.tenant_id];
+        return (
+            <View style={styles.groupContainer}>
+                <View style={styles.paymentCard}>
+                    <View style={styles.paymentCardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <Text style={styles.residentName} numberOfLines={1}>INV-{String(item.id).slice(0, 6).toUpperCase()}</Text>
+                            <View style={[styles.statusPill, { backgroundColor: getInvoiceStatusColor(item.status, COLORS) + "12" }]}>
+                                <Text style={[styles.statusPillText, { color: getInvoiceStatusColor(item.status, COLORS) }]}>{item.status}</Text>
+                            </View>
+                        </View>
+                        <View style={styles.cardHeaderRight}>
+                            <Text style={[styles.paymentAmount, { color: COLORS.text }]}>₹{Number(item.total_amount || 0).toLocaleString()}</Text>
+                            <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Period: {formatDate(item.billing_period_start)}</Text>
                         </View>
                     </View>
-                    <View style={styles.cardHeaderRight}>
-                        <Text style={styles.paymentAmount}>₹{Number(item.total_amount || 0).toLocaleString()}</Text>
-                        <Text style={{ fontSize: 10, color: COLORS.textMuted }}>Period: {new Date(item.billing_period_start).toLocaleDateString([], { month: 'short', year: 'numeric' })}</Text>
-                    </View>
-                </View>
-                <View style={styles.cardDetails}>
-                    <View style={styles.detailRow}>
-                        <Feather name="user" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
-                    </View>
-                    <View style={styles.detailRow}>
-                        <Feather name="home" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.detailText}>{item.tenants?.pgs?.name || "N/A"}</Text>
+                    <View style={styles.cardDetails}>
+                        <View style={styles.detailRow}>
+                            <Feather name="user" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.detailText}>{tenant?.full_name || "N/A"}</Text>
+                        </View>
+                        <View style={styles.detailRow}>
+                            <Feather name="home" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.detailText}>{tenant?.pgs?.name || pgs.find(p => p.id === item.pg_id)?.name || "N/A"}</Text>
+                        </View>
                     </View>
                 </View>
             </View>
-        </View>
-    );
+        );
+    };
 
-    const renderLedgerItem = ({ item }: { item: any }) => (
-        <View style={styles.groupContainer}>
-            <View style={styles.paymentCard}>
-                <View style={styles.paymentCardHeader}>
-                    <View style={styles.cardHeaderLeft}>
-                        <Text style={styles.residentName} numberOfLines={1}>{item.description || "Ledger Entry"}</Text>
-                        <Text style={{ fontSize: 11, color: COLORS.textMuted }}>{new Date(item.created_at).toLocaleDateString()}</Text>
+    const renderLedgerItem = ({ item }: { item: any }) => {
+        const tenant = item.tenants || tenantsMap[item.tenant_id];
+        return (
+            <View style={styles.groupContainer}>
+                <View style={styles.paymentCard}>
+                    <View style={styles.paymentCardHeader}>
+                        <View style={styles.cardHeaderLeft}>
+                            <Text style={styles.residentName} numberOfLines={1}>{item.description || "Ledger Entry"}</Text>
+                            <Text style={{ fontSize: 11, color: COLORS.textMuted }}>{formatDate(item.created_at)}</Text>
+                        </View>
+                        <View style={styles.cardHeaderRight}>
+                            <Text style={[styles.paymentAmount, { color: item.type === 'DEBIT' ? COLORS.danger : COLORS.success }]}>
+                                {item.type === 'DEBIT' ? '-' : '+'}₹{Number(item.amount || 0).toLocaleString()}
+                            </Text>
+                        </View>
                     </View>
-                    <View style={styles.cardHeaderRight}>
-                        <Text style={[styles.paymentAmount, { color: item.type === 'DEBIT' ? COLORS.danger : COLORS.success }]}>
-                            {item.type === 'DEBIT' ? '-' : '+'}₹{Number(item.amount || 0).toLocaleString()}
-                        </Text>
-                    </View>
-                </View>
-                <View style={styles.cardDetails}>
-                    <View style={styles.detailRow}>
-                        <Feather name="user" size={12} color={COLORS.textMuted} />
-                        <Text style={styles.detailText}>{item.tenants?.full_name || "N/A"}</Text>
+                    <View style={styles.cardDetails}>
+                        <View style={styles.detailRow}>
+                            <Feather name="user" size={12} color={COLORS.textMuted} />
+                            <Text style={styles.detailText}>{tenant?.full_name || "N/A"}</Text>
+                        </View>
                     </View>
                 </View>
             </View>
-        </View>
-    );
+        );
+    };
 
     return (
         <SafeAreaView style={styles.container}>
@@ -628,11 +652,20 @@ const PaymentsScreen = ({ route, navigation }: any) => {
                                     style={styles.filterTrigger}
                                     onPress={() => setFilterSheetVisible(true)}
                                 >
-                                    <Feather
-                                        name="sliders"
-                                        size={18}
-                                        color={filters.propertyId !== "ALL" || filters.status !== "" ? COLORS.primary : COLORS.textMuted}
-                                    />
+                                    <View>
+                                        <Feather
+                                            name="sliders"
+                                            size={18}
+                                            color={filters.propertyId !== "ALL" || filters.status !== "" ? COLORS.primary : COLORS.textMuted}
+                                        />
+                                        {((filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "" ? 1 : 0)) > 0 && (
+                                            <View style={styles.filterBadge}>
+                                                <Text style={styles.filterBadgeText}>
+                                                    {(filters.propertyId !== "ALL" ? 1 : 0) + (filters.status !== "" ? 1 : 0)}
+                                                </Text>
+                                            </View>
+                                        )}
+                                    </View>
                                 </TouchableOpacity>
                             </View>
                         </View>
@@ -771,6 +804,8 @@ const createStyles = (COLORS: any) =>
         clearBadge: { width: 20, height: 20, borderRadius: 10, backgroundColor: COLORS.textMuted, justifyContent: 'center', alignItems: 'center', marginRight: 8 },
         searchDivider: { width: 1, height: 24, backgroundColor: COLORS.border, marginHorizontal: 12 },
         filterTrigger: { padding: 4 },
+        filterBadge: { position: 'absolute', top: -6, right: -6, backgroundColor: COLORS.danger, borderRadius: 8, minWidth: 16, height: 16, justifyContent: 'center', alignItems: 'center', borderWidth: 1.5, borderColor: COLORS.card, paddingHorizontal: 4 },
+        filterBadgeText: { color: '#fff', fontSize: 9, fontWeight: '900' },
 
         // List & Cards
         listContent: { paddingBottom: 100 },

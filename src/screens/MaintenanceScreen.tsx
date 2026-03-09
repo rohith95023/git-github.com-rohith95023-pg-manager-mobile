@@ -15,7 +15,6 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import ScreenHeader from "../components/common/ScreenHeader";
 import MaintenanceModal from "../components/modals/MaintenanceModal";
 import useThemePalette from "../hooks/useThemePalette";
-import { maintenanceAPI } from "../services/api";
 
 const MaintenanceScreen = ({ navigation }: any) => {
     const COLORS = useThemePalette();
@@ -30,13 +29,18 @@ const MaintenanceScreen = ({ navigation }: any) => {
     const fetchData = useCallback(async () => {
         try {
             setLoading(true);
-            const data: any = await maintenanceAPI.getAll();
-            const items = Array.isArray(data) ? data : (data?.items || data?.data || []);
-            setRequests(items);
+            // Disabled API call as feature is coming in future update
+            // const data: any = await maintenanceAPI.getAll();
+            // const items = Array.isArray(data) ? data : (data?.items || data?.data || []);
+            // setRequests(items);
+
+            setTimeout(() => {
+                setRequests([]);
+                setLoading(false);
+                setRefreshing(false);
+            }, 300);
         } catch (error) {
-            console.error("Failed to fetch maintenance requests:", error);
-            Alert.alert("Error", "Could not load maintenance data.");
-        } finally {
+            console.error("Failed to load maintenance requests:", error);
             setLoading(false);
             setRefreshing(false);
         }
@@ -54,13 +58,15 @@ const MaintenanceScreen = ({ navigation }: any) => {
     };
 
     const handleAddRequest = () => {
-        setSelectedRequest(null);
-        setModalVisible(true);
+        Alert.alert("Coming Soon", "Maintenance feature will be available in a future update!");
+        // setSelectedRequest(null);
+        // setModalVisible(true);
     };
 
     const handleEditRequest = (request: any) => {
-        setSelectedRequest(request);
-        setModalVisible(true);
+        Alert.alert("Coming Soon", "Maintenance feature will be available in a future update!");
+        // setSelectedRequest(request);
+        // setModalVisible(true);
     };
 
     const getStatusColor = (status: string) => {
@@ -245,8 +251,8 @@ const MaintenanceScreen = ({ navigation }: any) => {
                     ListEmptyComponent={
                         <View style={styles.emptyContainer}>
                             <MaterialCommunityIcons name="wrench" size={60} color={COLORS.textMuted} />
-                            <Text style={styles.emptyTitle}>No Maintenance Tasks</Text>
-                            <Text style={styles.emptySubtitle}>All properties are currently in top shape!</Text>
+                            <Text style={styles.emptyTitle}>Maintenance Coming Soon</Text>
+                            <Text style={styles.emptySubtitle}>This feature is currently under development and will be available in a future update.</Text>
                         </View>
                     }
                 />

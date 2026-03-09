@@ -52,8 +52,14 @@ const Dashboard = ({ navigation, route }: any) => {
 
     // Live occupancy and bed counts
     const occupancyData = useMemo(() => {
-        const totalBeds = beds.length;
-        const occupiedBeds = beds.filter(b => b.status === "OCCUPIED" || b.status === "RESERVED").length;
+        const activeBeds = beds.filter(b => {
+            const room = rooms.find(r => r.id === b.room_id);
+            const pg = pgs.find(p => p.id === (b.pg_id || room?.pg_id));
+            return !b.archived && !room?.archived && !pg?.archived;
+        });
+
+        const totalBeds = activeBeds.length;
+        const occupiedBeds = activeBeds.filter(b => b.status === "OCCUPIED" || b.status === "RESERVED").length;
         const availableBeds = totalBeds - occupiedBeds;
         const rate = totalBeds > 0 ? Math.round((occupiedBeds / totalBeds) * 100) : 0;
 
@@ -63,7 +69,7 @@ const Dashboard = ({ navigation, route }: any) => {
             availableBeds,
             rate: rate || dashboardStats?.occupancyRate || 0
         };
-    }, [beds, dashboardStats]);
+    }, [beds, rooms, pgs, dashboardStats]);
 
     const handleExport = async () => {
         try {
@@ -182,28 +188,32 @@ const Dashboard = ({ navigation, route }: any) => {
                         <View style={[styles.iconPill, { backgroundColor: COLORS.primary + "15" }]}>
                             <Feather name="home" size={14} color={COLORS.primary} />
                         </View>
-                        <Text style={styles.statValue}>{pgs.length > 0 ? pgs.length : (stats?.total_pgs || stats?.totalPGs || kpis?.total_pgs || kpis?.totalPgs || 0)}</Text>
+                        <Text style={styles.statValue}>
+                            {pgs.filter(p => !p.archived && p.status !== 'ARCHIVED').length}
+                        </Text>
                         <Text style={styles.statLabel}>Properties</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.success + "15" }]}>
                             <Feather name="box" size={14} color={COLORS.success} />
                         </View>
-                        <Text style={styles.statValue}>{rooms.length > 0 ? rooms.length : (stats?.active_rooms || stats?.activeRooms || kpis?.active_rooms || kpis?.activeRooms || 0)}</Text>
+                        <Text style={styles.statValue}>
+                            {rooms.filter(r => !r.archived && r.status !== 'ARCHIVED' && !(pgs.find(p => p.id === r.pg_id)?.archived)).length}
+                        </Text>
                         <Text style={styles.statLabel}>Rooms</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.warning + "15" }]}>
                             <Feather name="users" size={14} color={COLORS.warning} />
                         </View>
-                        <Text style={styles.statValue}>{tenants.length > 0 ? tenants.filter(t => t.status === 'ACTIVE').length : (stats?.total_tenants || stats?.totalTenants || kpis?.total_tenants || kpis?.totalTenants || 0)}</Text>
+                        <Text style={styles.statValue}>{tenants.filter(t => t.status === 'ACTIVE').length}</Text>
                         <Text style={styles.statLabel}>Residents</Text>
                     </View>
                     <View style={styles.statBox}>
                         <View style={[styles.iconPill, { backgroundColor: COLORS.danger + "15" }]}>
                             <MaterialCommunityIcons name="bed-outline" size={14} color={COLORS.danger} />
                         </View>
-                        <Text style={styles.statValue}>{beds.length > 0 ? occupancyData.availableBeds : (kpis?.available_beds || kpis?.availableBeds || 0)}</Text>
+                        <Text style={styles.statValue}>{occupancyData.availableBeds}</Text>
                         <Text style={styles.statLabel}>Free Beds</Text>
                     </View>
                 </View>

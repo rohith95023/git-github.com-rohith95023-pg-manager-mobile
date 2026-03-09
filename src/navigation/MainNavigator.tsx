@@ -20,7 +20,6 @@ import { useTheme } from "../context/ThemeContext";
 // Screens
 import ChangePasswordScreen from "../screens/ChangePasswordScreen";
 import Dashboard from "../screens/Dashboard";
-import DuesScreen from "../screens/DuesScreen";
 import ExpensesScreen from "../screens/ExpensesScreen";
 import MaintenanceScreen from "../screens/MaintenanceScreen";
 import NotificationsScreen from "../screens/NotificationsScreen";
@@ -219,15 +218,6 @@ const MainNavigator = () => {
                 options={{
                     drawerItemStyle: { display: 'none' }, // Hidden from sidebar
                     headerTitle: "Reservations"
-                }}
-            />
-            <Drawer.Screen
-                name="Dues"
-                component={DuesScreen}
-                options={{
-                    drawerLabel: "Dues & Collections",
-                    drawerIcon: ({ color }) => <Feather name="alert-circle" size={20} color={color} />,
-                    headerTitle: "Dues & Collections"
                 }}
             />
             <Drawer.Screen

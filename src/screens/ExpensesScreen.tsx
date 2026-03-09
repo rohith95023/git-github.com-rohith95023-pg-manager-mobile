@@ -365,7 +365,7 @@ const ExpensesScreen = ({ navigation }: any) => {
                     label="Property"
                     options={[
                         { label: "All Properties", value: "ALL" },
-                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                        ...pgs.map(pg => ({ label: pg.archived ? `${pg.name} (Archived)` : pg.name, value: pg.id }))
                     ]}
                     value={pendingFilters.propertyId}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, propertyId: value }))}

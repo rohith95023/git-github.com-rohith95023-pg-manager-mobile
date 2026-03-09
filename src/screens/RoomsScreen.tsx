@@ -101,14 +101,41 @@ const RoomsScreen = ({ navigation }: any) => {
         setRoomModalVisible(true);
     };
 
+    // Helper: check if item's parent PG is archived
+    const isPgArchived = (item: any): boolean => {
+        const pg = item.pgs || pgs.find((p: any) => p.id === (item.pg_id || item.rooms?.pg_id || item.pg_id));
+        return pg?.archived === true || pg?.status === 'ARCHIVED' || pg?.status === 'INACTIVE' || pg?.status === 'DELETED';
+    };
+
+    const showArchivedPropertyWarning = () => {
+        setConfirmState({
+            visible: true,
+            title: '⚠️ Property Archived',
+            message: 'This property is archived. You cannot edit, delete, or modify rooms or beds that belong to an archived property. Please restore the property first.',
+            type: 'warning',
+            singleButton: true,
+            cancelText: 'Got It',
+        });
+    };
+
     const handleEditRoom = (room: any) => {
+        if (isPgArchived(room)) {
+            showArchivedPropertyWarning();
+            return;
+        }
         setEditingRoom(room);
         setRoomModalVisible(true);
     };
 
     const handleDeleteRoom = async (id: string, roomNumber: string) => {
+        // Check if parent PG is archived
+        const room = rooms.find((r: any) => r.id === id);
+        if (room && isPgArchived(room)) {
+            showArchivedPropertyWarning();
+            return;
+        }
+
         try {
-            const room = rooms.find((r: any) => r.id === id);
             const count = room?.current_occupancy || 0;
 
             if (count && count > 0) {
@@ -160,15 +187,24 @@ const RoomsScreen = ({ navigation }: any) => {
         const propertyId = filters.property;
         const showArchived = filters.showArchived;
 
-        const isArchivedRoom = (r: any) =>
-            r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
-            r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
+        const isArchivedRoom = (r: any) => {
+            const pg = r.pgs || pgs.find((p: any) => p.id === r.pg_id);
+            return r.archived === true ||
+                r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
 
-        const isArchivedBed = (b: any) =>
-            b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
-            b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" ||
-            b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" ||
-            b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+        const isArchivedBed = (b: any) => {
+            const room = b.rooms || rooms.find((r: any) => r.id === b.room_id);
+            const pg = b.pgs || room?.pgs || pgs.find((p: any) => p.id === (b.pg_id || room?.pg_id));
+            return b.archived === true ||
+                b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
+                room?.status === "MAINTENANCE" || room?.status === "INACTIVE" ||
+                room?.archived === true ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
 
         if (viewMode === "ROOMS") {
             return rooms.map(r => {
@@ -218,8 +254,24 @@ const RoomsScreen = ({ navigation }: any) => {
     }, [viewMode, rooms, beds, searchTerm, filters, pgs, allTenants]);
 
     const stats = useMemo(() => {
-        const isArchiveR = (r: any) => r.status === "MAINTENANCE" || r.status === "INACTIVE" || r.pgs?.status === "INACTIVE" || r.pgs?.status === "DELETED";
-        const isArchiveB = (b: any) => b.status === "MAINTENANCE" || b.status === "INACTIVE" || b.rooms?.status === "MAINTENANCE" || b.rooms?.status === "INACTIVE" || b.rooms?.pgs?.status === "INACTIVE" || b.rooms?.pgs?.status === "DELETED" || b.pgs?.status === "INACTIVE" || b.pgs?.status === "DELETED";
+        const isArchiveR = (r: any) => {
+            const pg = r.pgs || pgs.find((p: any) => p.id === r.pg_id);
+            return r.archived === true ||
+                r.status === "MAINTENANCE" || r.status === "INACTIVE" ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
+
+        const isArchiveB = (b: any) => {
+            const room = b.rooms || rooms.find((r: any) => r.id === b.room_id);
+            const pg = b.pgs || room?.pgs || pgs.find((p: any) => p.id === (b.pg_id || room?.pg_id));
+            return b.archived === true ||
+                b.status === "MAINTENANCE" || b.status === "INACTIVE" ||
+                room?.status === "MAINTENANCE" || room?.status === "INACTIVE" ||
+                room?.archived === true ||
+                pg?.status === "INACTIVE" || pg?.status === "DELETED" ||
+                pg?.archived === true;
+        };
 
         if (viewMode === "ROOMS") {
             const active = rooms.filter(r => !isArchiveR(r));
@@ -317,6 +369,10 @@ const RoomsScreen = ({ navigation }: any) => {
                     <TouchableOpacity
                         style={styles.fixButton}
                         onPress={() => {
+                            if (isPgArchived(item)) {
+                                showArchivedPropertyWarning();
+                                return;
+                            }
                             setSelectedEntity({
                                 id: item.id,
                                 type: 'BED',
@@ -484,7 +540,7 @@ const RoomsScreen = ({ navigation }: any) => {
                     label="Property"
                     options={[
                         { label: "All Properties", value: "" },
-                        ...pgs.map(pg => ({ label: pg.name, value: pg.id }))
+                        ...pgs.map(pg => ({ label: pg.archived ? `${pg.name} (Archived)` : pg.name, value: pg.id }))
                     ]}
                     value={pendingFilters.property || ""}
                     onChange={(value) => setPendingFilters(prev => ({ ...prev, property: value || null }))}

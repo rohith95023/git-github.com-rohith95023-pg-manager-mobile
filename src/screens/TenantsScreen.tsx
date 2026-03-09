@@ -221,9 +221,9 @@ const TenantsScreen = ({ navigation }: any) => {
                     sortBy: filters.sortBy,
                     sortOrder: filters.sortOrder,
                 }),
-                pageNum === 1 ? pgAPI.getAll() : Promise.resolve(pgs),
-                pageNum === 1 ? roomAPI.getAll() : Promise.resolve(rooms),
-                pageNum === 1 ? bedAPI.getAll() : Promise.resolve(beds)
+                pageNum === 1 ? Promise.all([pgAPI.getAll(), pgAPI.getArchived()]).then((res: any[]) => [...(Array.isArray(res[0]) ? res[0] : (res[0]?.data || [])), ...(Array.isArray(res[1]) ? res[1] : (res[1]?.data || []))]) : Promise.resolve(pgs),
+                pageNum === 1 ? Promise.all([roomAPI.getAll(), roomAPI.getArchived()]).then((res: any[]) => [...(Array.isArray(res[0]) ? res[0] : (res[0]?.data || [])), ...(Array.isArray(res[1]) ? res[1] : (res[1]?.data || []))]) : Promise.resolve(rooms),
+                pageNum === 1 ? Promise.all([bedAPI.getAll(), bedAPI.getArchived()]).then((res: any[]) => [...(Array.isArray(res[0]) ? res[0] : (res[0]?.data || [])), ...(Array.isArray(res[1]) ? res[1] : (res[1]?.data || []))]) : Promise.resolve(beds)
             ]);
 
             // tenantAPI.search returns { data: [...] } or { items: [...] } or direct array [...]
@@ -637,7 +637,7 @@ const TenantsScreen = ({ navigation }: any) => {
             >
                 <DropdownSelector
                     label="Property"
-                    options={[{ label: "All Properties", value: "ALL" }, ...pgs.map(pg => ({ label: pg.name, value: pg.id }))]}
+                    options={[{ label: "All Properties", value: "ALL" }, ...pgs.map(pg => ({ label: pg.archived ? `${pg.name} (Archived)` : pg.name, value: pg.id }))]}
                     value={pendingFilters.propertyId}
                     onChange={(v) => setPendingFilters(p => ({ ...p, propertyId: v, floor: "ALL", room: "ALL" }))}
                 />

@@ -104,6 +104,7 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 pgsRes, roomsRes, bedsRes, tenantsRes,
                 paymentsRes, expensesRes, invoicesRes, ledgerRes,
                 statsRes, kpisRes, pnlSumRes, pnlCatRes, groupedLedgerRes,
+                archivedPgsRes, archivedRoomsRes, archivedBedsRes, archivedTenantsRes
             ] = await Promise.allSettled([
                 pgAPI.getAll(),
                 roomAPI.getAll(),
@@ -118,6 +119,10 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                 pnlAPI.getSummary(),
                 pnlAPI.getCategoryStats(),
                 financialAPI.getGroupedLedger(),
+                pgAPI.getArchived(),
+                roomAPI.getArchived(),
+                bedAPI.getArchived(),
+                tenantAPI.getArchived(),
             ]);
 
             const val = (r: PromiseSettledResult<any>) =>
@@ -126,10 +131,22 @@ export const DataProvider = ({ children }: { children: ReactNode }) => {
                     null
                 );
 
-            setPgs(toArray(val(pgsRes), 'pgs'));
-            setRooms(toArray(val(roomsRes), 'rooms'));
-            setBeds(toArray(val(bedsRes), 'beds'));
-            setTenants(toArray(val(tenantsRes), 'tenants'));
+            const activePgs = toArray(val(pgsRes), 'pgs');
+            const archivedPgs = toArray(val(archivedPgsRes), 'archivedPgs').map(p => ({ ...p, archived: true }));
+            setPgs([...activePgs, ...archivedPgs]);
+
+            const activeRooms = toArray(val(roomsRes), 'rooms');
+            const archivedRooms = toArray(val(archivedRoomsRes), 'archivedRooms').map(r => ({ ...r, archived: true }));
+            setRooms([...activeRooms, ...archivedRooms]);
+
+            const activeBeds = toArray(val(bedsRes), 'beds');
+            const archivedBeds = toArray(val(archivedBedsRes), 'archivedBeds').map(b => ({ ...b, archived: true }));
+            setBeds([...activeBeds, ...archivedBeds]);
+
+            const activeTenants = toArray(val(tenantsRes), 'tenants');
+            const archivedTenants = toArray(val(archivedTenantsRes), 'archivedTenants').map(t => ({ ...t, archived: true }));
+            setTenants([...activeTenants, ...archivedTenants]);
+
             setPayments(toArray(val(paymentsRes), 'payments'));
             setExpenses(toArray(val(expensesRes), 'expenses'));
             setInvoices(toArray(val(invoicesRes), 'invoices'));

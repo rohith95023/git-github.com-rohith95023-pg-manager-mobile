@@ -69,7 +69,23 @@ export const roomAPI: any = {
             url: `/api/rooms/${roomId}/recalculate`,
             data: {},
         }, `RECALCULATE rooms/${roomId}`);
-    }
+    },
+    getArchived: () => apiClient.get('rooms/archived'),
+    archive: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/rooms/${id}/archive`,
+            data: {},
+        }, `ARCHIVE rooms/${id}`);
+    },
+    restore: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/rooms/${id}/restore`,
+            data: {},
+        }, `RESTORE rooms/${id}`);
+    },
+    getByPgIdAll: (pgId: string) => apiClient.get(`rooms/pg/${pgId}`),
 };
 
 // Bed APIs — backend: /api/beds/
@@ -96,6 +112,22 @@ export const bedAPI = {
     },
     getStats: (params: any = {}) => apiClient.get('beds/stats', params),
     getAvailableByPg: (pgId: string) => apiClient.get(`beds/pg/${pgId}/available`),
+    getArchived: () => apiClient.get('beds/archived'),
+    getByPgId: (pgId: string) => apiClient.get(`beds/pg/${pgId}`),
+    archive: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/beds/${id}/archive`,
+            data: {},
+        }, `ARCHIVE beds/${id}`);
+    },
+    restore: async (id: string) => {
+        return apiClient.request({
+            method: 'post',
+            url: `/api/beds/${id}/restore`,
+            data: {},
+        }, `RESTORE beds/${id}`);
+    },
 };
 
 // Tenant APIs — backend: /api/tenants/
@@ -127,6 +159,7 @@ export const tenantAPI = {
     checkDuplicateId: async (idType: string, idNumber: string, excludeId?: string) => {
         return apiClient.get('tenants/check-duplicate', { id_type: idType, id_number: idNumber, exclude_id: excludeId });
     },
+    getArchived: () => apiClient.get('tenants/archived'),
 };
 
 // Payment APIs — backend: /api/payments/
